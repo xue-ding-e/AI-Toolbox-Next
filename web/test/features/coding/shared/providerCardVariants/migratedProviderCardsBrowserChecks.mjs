@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -13,8 +14,27 @@ import path from 'node:path';
  * cannot see that the footer geometry regressed or that the row lost its sixth
  * action.
  */
-export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, artifactRoot }) {
+const SCENARIO_COUNTS = {
+  'render-light': 39,
+  'menu-dismiss': 3,
+  'menu-delete': 3,
+  'menu-protected': 4,
+  'detail-cancel': 3,
+  'detail-confirm': 2,
+  'grok-list-refresh': 5,
+  'grok-list-token': 5,
+  'grok-card-refresh': 5,
+  'grok-card-token': 5,
+  'render-dark': 12,
+};
+const MATRIX = ['claude-desktop', 'gemini', 'grok-official', 'grok-custom', 'omo-default', 'omo-other']
+  .flatMap(name => ['list', 'card'].map(view => name + '-' + view));
+
+export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, artifactRoot, exceptions }) {
   const checks = [];
+  const completed = [];
+  const lightBackgrounds = {};
+  let scenarioStart = 0;
   const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
   const check = (name, actual, expected = true) => {
     assert.deepEqual(actual, expected, name);
@@ -34,11 +54,88 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
     await writeFile(path.join(artifactRoot, name + '.png'), Buffer.from(data, 'base64'));
   };
 
+  const finishScenario = async name => {
+    assert.equal(checks.length - scenarioStart, SCENARIO_COUNTS[name], 'Incomplete assertions: ' + name);
+    assert.deepEqual(await fixture('state.unexpectedIPC'), [], 'Mapping fixture must not call a backend');
+    assert.equal(exceptions.length, 0, 'Unhandled browser exceptions remain failures');
+    completed.push(name);
+    scenarioStart = checks.length;
+  };
+  const mouse = async (type, x, y) => send('Input.dispatchMouseEvent', {
+    type, x, y, ...(type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }),
+  });
+  const visibleMenus = '[...document.querySelectorAll(".ant-dropdown")].filter(node => node.getClientRects().length && getComputedStyle(node).display !== "none" && !node.classList.contains("ant-dropdown-hidden")).length';
+  const dismissMenu = async () => {
+    await mouse('mouseMoved', 2, 2);
+    await mouse('mousePressed', 2, 2);
+    await mouse('mouseReleased', 2, 2);
+    await waitFor(visibleMenus + ' === 0');
+  };
+  const stableMenuTarget = async (name, revealed) => {
+    let previous;
+    let stableSamples = 0;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const target = await fixture('menuTarget(' + JSON.stringify(name) + ')');
+      const stationary = previous && ['x', 'y', 'width', 'height']
+        .every(key => Math.abs(target[key] - previous[key]) < 0.25);
+      stableSamples = stationary && target.inViewport && target.hit
+        && target.width > 0 && target.height > 0 && (!revealed || target.opacity === 1)
+        ? stableSamples + 1 : 0;
+      if (stableSamples >= 5) return target;
+      previous = target;
+      await delay(50);
+    }
+    throw new Error('Menu trigger never settled or was not hit-testable: '
+      + JSON.stringify({ name, revealed, target: previous }));
+  };
+  const openDeleteMenu = async name => {
+    // Expanding the list catalog above the compact cards can still be moving
+    // them after its text appears. Never click coordinates cached before that
+    // motion (or the compact card's own hover lift) has settled.
+    await waitFor(visibleMenus + ' === 0', 'no stale dropdown before opening ' + name);
+    assert.equal(await evaluate('Boolean(document.querySelector("[data-provider-detail-panel]"))'), false);
+    await fixture('scrollMenuTarget(' + JSON.stringify(name) + ')');
+    const resting = await stableMenuTarget(name, false);
+    await mouse('mouseMoved', resting.x, resting.y);
+    const revealed = await stableMenuTarget(name, true);
+    await mouse('mouseMoved', revealed.x, revealed.y);
+    // Exactly one real pointer click; no synthetic trigger click or style override.
+    await mouse('mousePressed', revealed.x, revealed.y);
+    await mouse('mouseReleased', revealed.x, revealed.y);
+    try {
+      await waitFor(visibleMenus + ' === 1', 'one visible dropdown for ' + name);
+      return await fixture('deleteMenuState()');
+    } catch (error) {
+      console.error('Menu pointer diagnostics:', JSON.stringify({
+        name, resting, revealed, current: await fixture('menuTarget(' + JSON.stringify(name) + ')'),
+        visibleMenus: await evaluate(visibleMenus),
+        detailOpened: await evaluate('Boolean(document.querySelector("[data-provider-detail-panel]"))'),
+      }));
+      throw error;
+    }
+  };
+  const checkSurfaces = async themeMode => {
+    const mounted = await evaluate('[...document.querySelectorAll("[data-fixture]")].map(node => node.dataset.fixture).sort()');
+    assert.deepEqual(mounted, [...MATRIX].sort(), 'Complete four-mapping/two-view matrix');
+    for (const name of MATRIX) {
+      const observed = await fixture('surfaceStyle(' + JSON.stringify(name) + ')');
+      const rgba = observed.background.match(/^rgba?\(([^)]+)\)$/)?.[1].split(/[,\s]+/).filter(Boolean).map(Number);
+      check(themeMode + ': ' + name + ' paints its actual opaque token surface', {
+        surface: observed.actualSurface && observed.hasBox,
+        token: observed.background === observed.expectedBackground,
+        opaque: Boolean(rgba && rgba.length >= 3 && (rgba.length === 3 || rgba[3] === 1)),
+        theme: Boolean(rgba && rgba.slice(0, 3).every(value => themeMode === 'dark' ? value < 128 : value > 128)),
+        changed: themeMode === 'light' || observed.background !== lightBackgrounds[name],
+      }, { surface: true, token: true, opaque: true, theme: true, changed: true });
+      if (themeMode === 'light') lightBackgrounds[name] = observed.background;
+    }
+  };
+
   const openFixture = async (query) => {
-    const runId = `${query}-${Date.now()}`;
+    const runId = randomUUID();
     await send('Page.navigate', { url: `${baseUrl}/?${query}&runId=${encodeURIComponent(runId)}` });
     await waitFor(
-      "Boolean(window.migratedProviderCardsFixture)"
+      'window.migratedProviderCardsFixture?.state.runId === ' + JSON.stringify(runId)
         + " && Boolean(document.querySelector('[data-fixture=\"grok-custom-list\"]'))",
       `fixture ${query}`,
     );
@@ -127,20 +224,20 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
     Boolean(rowEdges) && Math.abs(rowEdges.right - cardContentEdges.right) <= 2,
   );
 
-  // A virtual (disk-only) login can only be saved.
-  const virtualRowText = await evaluate(`
+  // The virtual row allows save and the existing read actions, but cannot
+  // switch to itself or delete the live login. Assert the full button set.
+  const virtualRowActions = await evaluate(`
     (() => {
       const root = document.querySelector('[data-fixture="gemini-list"]');
       const row = [...root.querySelectorAll('[style*="border-bottom"]')]
         .find(node => node.textContent.includes('local@example.test'));
-      return row ? row.textContent.replace(/\\s+/g, ' ').trim() : null;
+      return row ? [...row.querySelectorAll('button')].map(button => button.textContent.trim()) : null;
     })()
   `);
   check(
-    'the virtual login row offers 「保存当前登录」 and no switch',
-    Boolean(virtualRowText
-      && virtualRowText.includes('保存当前登录')
-      && !virtualRowText.includes('切换')),
+    'the virtual row permits refresh/details/save but no switch or delete',
+    virtualRowActions,
+    ['刷新', '详情', '保存当前登录'],
   );
 
   // The applied stored account offers no switch either (it is the current one).
@@ -169,7 +266,7 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
   const grokOfficialText = await fixture('text("grok-official-list")');
   check(
     'the Grok official card is titled with the shared heading',
-    /官方账号\s*\(1\)/.test(grokOfficialText),
+    /官方账号\s*\(2\)/.test(grokOfficialText),
   );
   // The fold starts closed on the list card; the sixth action lives on a row.
   check('the Grok account list can be opened from its title', await fixture('expandAccounts("grok-official-list")'));
@@ -218,7 +315,8 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
     'the custom Grok card states endpoint, model and masked key',
     grokCustomText.includes('https://grok.example.test/v1')
       && grokCustomText.includes('grok-4 (high)')
-      && grokCustomText.includes('API Key:'),
+      && grokCustomText.includes('API Key: sk-grok-...6789')
+      && !grokCustomText.includes('sk-grok-fixture-key-0123456789'),
   );
 
   /* ---------------------------------------------------------------- OmO Native */
@@ -239,32 +337,144 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
     Boolean(omoOtherSubtitle && omoOtherSubtitle.startsWith('@ai-sdk/') && !omoOtherSubtitle.includes('当前主模型')),
   );
 
-  const defaultDelete = await fixture('deleteMenuItem("omo-default-card")');
+  const defaultDelete = await openDeleteMenu('omo-default-card');
   check(
     'the default provider’s menu greys out delete and explains why',
     Boolean(defaultDelete && defaultDelete.found && defaultDelete.disabled),
   );
 
-  const otherDelete = await fixture('deleteMenuItem("omo-other-card")');
+  await dismissMenu();
+  const otherDelete = await openDeleteMenu('omo-other-card');
   check(
     'an ordinary provider’s menu keeps delete live',
     Boolean(otherDelete && otherDelete.found && !otherDelete.disabled),
   );
 
+  await dismissMenu();
+
+  // Complete the formerly one-sided Grok/OmO mapping matrix.
+  check('Grok official compact card states the current login',
+    (await fixture('subtitle("grok-official-card")')).includes('grok@example.test'));
+  check('Grok custom compact card states its primary model',
+    (await fixture('subtitle("grok-custom-card")')).includes('grok-4 (high)'));
+  await fixture('expandModels("omo-default-list")');
+  await fixture('expandModels("omo-other-list")');
+  await waitFor('migratedProviderCardsFixture.text("omo-default-list").includes("Default Model")'
+    + ' && migratedProviderCardsFixture.text("omo-other-list").includes("Other Model")');
+  check('OmO default list keeps provider identity and its model catalog',
+    /omo-default/.test(await fixture('text("omo-default-list")'))
+      && /Default Model/.test(await fixture('text("omo-default-list")')));
+  check('OmO ordinary list keeps provider identity and its model catalog',
+    /omo-other/.test(await fixture('text("omo-other-list")'))
+      && /Other Model/.test(await fixture('text("omo-other-list")')));
+  await checkSurfaces('light');
+  await finishScenario('render-light');
   await screenshot('migrated-provider-cards-light');
 
-  /* ---------------------------------------------------------------- dark theme */
+  /* ---------------------------------------------------------------- menu behavior */
+
+  await fixture('resetCallbacks()');
+  check('ordinary menu opens with a live delete entry', (await openDeleteMenu('omo-other-card')).disabled, false);
+  await dismissMenu();
+  check('dismissing the menu actually closes it', await evaluate(visibleMenus), 0);
+  check('dismissing a menu invokes no delete callback', await fixture('state.callbacks'), []);
+  await finishScenario('menu-dismiss');
+
+  check('ordinary delete stays actionable on reopening', (await openDeleteMenu('omo-other-card')).disabled, false);
+  await fixture('clickMenuDelete()');
+  await waitFor('migratedProviderCardsFixture.state.callbacks.length === 1');
+  const deletedOther = [{ action: 'delete', fixture: 'omo-other-card', providerId: 'omo-other' }];
+  check('menu delete dispatches the exact ordinary provider once', await fixture('state.callbacks'), deletedOther);
+  check('menu dispatch does not invent a detail confirmation dialog', await evaluate('Boolean(document.querySelector(".ant-modal-confirm"))'), false);
+  await finishScenario('menu-delete');
+  await dismissMenu();
+
+  await fixture('resetCallbacks()');
+  const protectedDelete = await openDeleteMenu('omo-default-card');
+  check('protected delete is disabled', protectedDelete.disabled);
+  check('protected delete exposes the precise reason', protectedDelete.title, '默认渠道不能删除');
+  await fixture('clickMenuDelete()');
+  await delay(100);
+  check('clicking protected delete never dispatches a callback', await fixture('state.callbacks'), []);
+  check('protected delete opens no confirmation', await evaluate('Boolean(document.querySelector(".ant-modal-confirm"))'), false);
+  await finishScenario('menu-protected');
+  await dismissMenu();
+
+  /* ---------------------------------------------------------------- real detail confirmation */
+
+  await fixture('openDetail("omo-other-card")');
+  await waitFor('Boolean(document.querySelector("[data-provider-detail-panel]"))');
+  await fixture('clickDetailDelete()');
+  await waitFor('Boolean(document.querySelector(".ant-modal-confirm"))');
+  check('detail delete opens the real provider confirmation', await evaluate(
+    'document.querySelector(".ant-modal-confirm").textContent.includes("OmO Other")'));
+  check('opening confirmation does not delete', await fixture('state.callbacks'), []);
+  await fixture('answerConfirm(false)');
+  await waitFor('!document.querySelector(".ant-modal-confirm")');
+  check('cancelling the real confirmation invokes no delete', await fixture('state.callbacks'), []);
+  await finishScenario('detail-cancel');
+
+  await fixture('clickDetailDelete()');
+  await waitFor('Boolean(document.querySelector(".ant-modal-confirm"))');
+  check('reopened confirmation still waits for consent', await fixture('state.callbacks'), []);
+  await fixture('answerConfirm(true)');
+  await waitFor('!document.querySelector(".ant-modal-confirm")');
+  check('confirmed detail delete invokes the exact callback once', await fixture('state.callbacks'), deletedOther);
+  await finishScenario('detail-confirm');
+  await fixture('closeDetail()');
+  await waitFor('!document.querySelector("[data-provider-detail-panel]")');
+
+  /* ---------------------------------------------------------------- real Grok callback/loading mapping */
+
+  const idle = [
+    { accountId: 'grok-account-oauth', refresh: false, token: false },
+    { accountId: 'grok-account-other', refresh: false, token: false },
+  ];
+  for (const viewMode of ['list', 'card']) {
+    if (viewMode === 'card') {
+      await fixture('openDetail("grok-official-card")');
+      await waitFor('Boolean(document.querySelector("[data-provider-detail-panel]"))');
+    }
+    for (const action of ['refresh', 'token']) {
+      const scenario = 'grok-' + viewMode + '-' + action;
+      const accountId = action === 'refresh' ? 'grok-account-oauth' : 'grok-account-other';
+      const invocation = [{ action, viewMode, providerId: 'grok-official', accountId }];
+      const click = 'clickRefresh(' + [viewMode, accountId, action].map(value => JSON.stringify(value)).join(',') + ')';
+      const loading = 'loadingState(' + JSON.stringify(viewMode) + ')';
+      await fixture('resetCallbacks()');
+      check(scenario + ': both account rows start idle', await fixture(loading), idle);
+      await fixture(click);
+      await waitFor('migratedProviderCardsFixture.' + loading + '.some(row => row.' + action + ')');
+      check(scenario + ': callback preserves provider and account identity', await fixture('state.callbacks'), invocation);
+      check(scenario + ': only the correct account and action show loading', await fixture(loading),
+        idle.map(row => row.accountId === accountId ? { ...row, [action]: true } : row));
+      await fixture(click);
+      await fixture(click);
+      check(scenario + ': loading clicks do not duplicate the callback', await fixture('state.callbacks'), invocation);
+      await fixture('finishRefresh()');
+      await waitFor('migratedProviderCardsFixture.' + loading + '.every(row => !row.refresh && !row.token)');
+      check(scenario + ': clearing the supplied loading prop restores both rows', await fixture(loading), idle);
+      await finishScenario(scenario);
+    }
+    if (viewMode === 'card') {
+      await fixture('closeDetail()');
+      await waitFor('!document.querySelector("[data-provider-detail-panel]")');
+    }
+  }
+
+  /* ---------------------------------------------------------------- dark actual surfaces */
 
   await openFixture('theme=dark');
-  const darkCardBg = await evaluate(`
-    (() => {
-      const root = document.querySelector('[data-fixture="claude-desktop-card"]');
-      const card = root.querySelector('[class*="card"]');
-      return card ? getComputedStyle(card).backgroundColor : null;
-    })()
-  `);
-  check('the migrated cards render in dark theme', Boolean(darkCardBg) && darkCardBg !== 'rgb(255, 255, 255)');
+  await checkSurfaces('dark');
+  await finishScenario('render-dark');
   await screenshot('migrated-provider-cards-dark');
 
+  assert.deepEqual(completed, Object.keys(SCENARIO_COUNTS), 'Every migrated-card scenario must execute');
+  assert.equal(completed.length, 11, 'Fixed scenario count prevents zero-test success');
+  assert.equal(checks.length, 86, 'Fixed assertion count prevents partial success');
+  await writeFile(path.join(artifactRoot, 'scenarios.json'), JSON.stringify({
+    completed, assertionCounts: SCENARIO_COUNTS, checks, browserExceptions: exceptions,
+  }, null, 2));
+  console.log(`Passed ${completed.length} migrated-provider-card scenarios (${checks.length} assertions).`);
   return checks;
 }
