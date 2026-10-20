@@ -51,6 +51,9 @@ pub async fn sync_mcp_to_ssh(
         return Ok(());
     }
 
+    // Keep this exported phase independently guarded; no cross-session cache.
+    super::sync::with_posix_sync_shell(session, || async {
+
     info!(
         "MCP SSH sync start: sync_mcp={}, sync_skills={}, active_connection_id={}",
         config.sync_mcp, config.sync_skills, config.active_connection_id
@@ -205,6 +208,7 @@ pub async fn sync_mcp_to_ssh(
     let _ = app.emit("ssh-mcp-sync-completed", ());
 
     Ok(())
+    }).await?
 }
 
 /// Sync MCP servers to remote Claude Code ~/.claude.json

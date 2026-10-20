@@ -1,4 +1,5 @@
 mod adapter;
+mod capabilities;
 mod commands;
 pub mod key_file;
 mod mcp_sync;
