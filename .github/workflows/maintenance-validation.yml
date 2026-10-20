@@ -509,3 +509,59 @@ jobs:
           cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway:: -- --test-threads=1 || http_status=$?
           printf 'Gateway lib exit: %s; gateway integration exit: %s\n' "$lib_status" "$http_status"
           test "$lib_status" -eq 0 && test "$http_status" -eq 0
+  gateway-observations-acceptance:
+    # Full Rust acceptance and the synthetic request-detail UI run serially.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-observations-acceptance'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record source and Rust test inventory
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+          cargo test --locked --manifest-path tauri/Cargo.toml -- --list > /tmp/gateway-acceptance-rust-list.txt
+          cat /tmp/gateway-acceptance-rust-list.txt
+          grep -F 'proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies: test' /tmp/gateway-acceptance-rust-list.txt
+          grep -F 'coding::proxy_gateway::runtime::observations::tests::stream_observer_drop_keeps_received_markers_and_stops_reading: test' /tmp/gateway-acceptance-rust-list.txt
+      - name: Full Rust suite including integration and documentation targets
+        run: cargo test --locked --manifest-path tauri/Cargo.toml -- --test-threads=1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: TypeScript check
+        run: pnpm exec tsc --noEmit
+      - name: Full Node suite and existing structure guards
+        run: |
+          pnpm run test:web
+          node scripts/verify-form-modal-layout.mjs
+          node scripts/verify-provider-card-layout.mjs
+          node scripts/verify-official-accounts-shared.mjs
+      - name: Real request detail observation markers with synthetic service data
+        run: |
+          set -euo pipefail
+          node scripts/verify-gateway-request-observations.mjs | tee /tmp/gateway-observations-dom.log
+          grep -F 'Passed 12 localized request-observation scenarios (92 assertions).' /tmp/gateway-observations-dom.log
+          grep -F 'Passed 92 browser checks.' /tmp/gateway-observations-dom.log
+      - name: Frontend production build
+        run: pnpm build
