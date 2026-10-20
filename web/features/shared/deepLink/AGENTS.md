@@ -24,12 +24,15 @@
 - 旧异步 preview/import 返回时不得覆盖或关闭后来收到的新链接；身份检查覆盖成功、失败和 finally。
 - Claude 默认模型沿用角色 fallback 链并剥离 [1M]；Desktop 读取实际上游路由。Codex 默认模型独立于目录顺序。OpenCode alias 转真实模型 ID，只按第一个斜杠分隔 provider/model。
 - profile 保存引用，不复制派生兼容快照，Base URL 的用户覆盖继续优先。
+- 冷启动握手返回可能晚于已送达的热链接；本次监听生命周期收到热链接后，不能再用握手旧值覆盖请求或重开已取消的确认。
 - ready 状态只属于当前 WebView 生命周期；轻量模式重建重新挂监听器再握手，pending latest-wins，不重复回放已送达热链接。
 - URLSearchParams 与 Rust query_pairs 都按 form 编码处理加号。homepage 只输出 http(s)，避免生成成功而接收端拒绝。
 - 被 node:test 直接加载的纯函数保持相对导入，当前 loader 不解析 @/ 别名。
 - 同工具的完整无损克隆仍由原「复制」动作承担，分享只保留跨工具连接语义。
 
 ## 最小验证
+
+- pnpm test:deeplink-handshake 用真实 React 与合成 IPC 验证冷启动、热链接竞争、取消、多次热链接、握手失败及卸载；不替代原生 deep link 或实际导入验收。
 
 - pnpm test 中的 providerShareUrl 和 providerTransfer 用例覆盖所有来源、默认模型、分组、alias、认证和 URL 字符。
 - GUI 检查分享入口、目标/源连接切换、loading/error、取消、复制、重复导入和成功刷新，同时检查亮暗/system 主题、长文本与窄窗口。
