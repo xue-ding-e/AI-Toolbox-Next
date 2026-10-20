@@ -334,6 +334,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   const detailRevisionRef = React.useRef(0);
   const selectedTraceIdRef = React.useRef<string | null>(null);
   const exportNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailExportRef = React.useRef<{ traceId: string; revision: number } | null>(null);
 
   const clearExportNoticeTimer = React.useCallback(() => {
     if (exportNoticeTimerRef.current) {
@@ -344,6 +345,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
 
   React.useEffect(
     () => () => {
+      detailExportRef.current = null;
       clearExportNoticeTimer();
     },
     [clearExportNoticeTimer],
@@ -352,6 +354,8 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   const closeDetail = React.useCallback(() => {
     detailRevisionRef.current += 1;
     selectedTraceIdRef.current = null;
+    detailExportRef.current = null;
+    setExportingDetail(false);
     setSelectedTraceId(null);
     setDetail(null);
   }, []);
@@ -382,6 +386,8 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     async (traceId: string) => {
       const revision = ++detailRevisionRef.current;
       selectedTraceIdRef.current = traceId;
+      detailExportRef.current = null;
+      setExportingDetail(false);
       setSelectedTraceId(traceId);
       setDetail(null);
       setDetailLoading(true);
@@ -635,29 +641,41 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   };
 
   const handleExportDetail = async () => {
-    if (!detail || exportingDetail) {
+    if (!detail || detailExportRef.current) {
       return;
     }
-    const exportPath = await save({
-      title: t('gateway.page.requests.exportDetail'),
-      defaultPath: buildRequestDetailExportFileName(detail),
-      filters: [
-        {
-          name: 'JSON',
-          extensions: ['json'],
-        },
-      ],
-    });
-    if (!exportPath) {
-      return;
-    }
-
+    // The ref locks synchronously, before React commits the disabled button.
+    // Keep ownership across both the picker and backend export; a later detail
+    // or unmount detaches UI updates without changing this operation's trace.
+    const owner = { traceId: detail.trace_id, revision: detailRevisionRef.current };
+    detailExportRef.current = owner;
     setExportingDetail(true);
-    setError(null);
-    setNotice(null);
-    clearExportNoticeTimer();
+    const ownsDetail = () => detailExportRef.current === owner
+      && detailRevisionRef.current === owner.revision
+      && selectedTraceIdRef.current === owner.traceId;
     try {
-      await exportProxyGatewayRequestLogDetail(detail.trace_id, exportPath);
+      const exportPath = await save({
+        title: t('gateway.page.requests.exportDetail'),
+        defaultPath: buildRequestDetailExportFileName(detail),
+        filters: [
+          {
+            name: 'JSON',
+            extensions: ['json'],
+          },
+        ],
+      });
+      if (!exportPath) {
+        return;
+      }
+      if (ownsDetail()) {
+        setError(null);
+        setNotice(null);
+        clearExportNoticeTimer();
+      }
+      await exportProxyGatewayRequestLogDetail(owner.traceId, exportPath);
+      if (!ownsDetail()) {
+        return;
+      }
       const exportDoneNotice = t('gateway.page.requests.exportDone');
       setNoticeKind('success');
       setNotice(exportDoneNotice);
@@ -666,9 +684,14 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         exportNoticeTimerRef.current = null;
       }, EXPORT_NOTICE_DURATION_MS);
     } catch (exportError) {
-      setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(exportError) }));
+      if (ownsDetail()) {
+        setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(exportError) }));
+      }
     } finally {
-      setExportingDetail(false);
+      if (detailExportRef.current === owner) {
+        detailExportRef.current = null;
+        setExportingDetail(false);
+      }
     }
   };
 
