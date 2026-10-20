@@ -39,13 +39,18 @@ export const loadProviderListState = (): Promise<ProviderListState> => {
   if (!statePromise) {
     statePromise = getProviderListState()
       .then((state) => {
-        cachedState = normalize(state);
+        const loaded = normalize(state);
+        // Controls are usable while this read is pending. Keep locally-known
+        // changes per key, without dropping untouched preferences from storage.
+        cachedState = {
+          sort_modes: { ...loaded.sort_modes, ...cachedState.sort_modes },
+          last_used: { ...loaded.last_used, ...cachedState.last_used },
+          view_modes: { ...loaded.view_modes, ...cachedState.view_modes },
+        };
       })
-      // A failed read settles to defaults rather than rejecting: callers render
-      // the default order/layout, which is always a valid view.
-      .catch(() => {
-        cachedState = EMPTY_STATE;
-      });
+      // A failed read keeps defaults and any changes made while it was pending,
+      // rather than rejecting or resetting a user's already-selected preference.
+      .catch(() => {});
   }
   // Re-reads resolve from the CURRENT cache, not the load-time snapshot:
   // writers replace `cachedState`, and a KeepAlive LRU eviction can
