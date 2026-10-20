@@ -41,7 +41,8 @@ jobs:
           done
           printf '%s\n' "${pinned[@]}" | tee /tmp/ai-native-evidence/apt-versions.txt
           sudo apt-get install -y "${pinned[@]}"
-          WebKitWebDriver --version | tee /tmp/ai-native-evidence/webkit-version.txt
+          dpkg-query -W -f='${Package} ${Version}\n' webkit2gtk-driver | tee /tmp/ai-native-evidence/webkit-version.txt
+          WebKitWebDriver --help | tee /tmp/ai-native-evidence/webkit-help.txt
           ldd "$(command -v WebKitWebDriver)" | tee /tmp/ai-native-evidence/webkit-libraries.txt
           # Fail before expensive compilation if Ubuntu's driver ABI is incompatible.
           dpkg-query -W -f='${Package} ${source:Version}\n' webkit2gtk-driver libwebkit2gtk-4.1-0 | tee /tmp/ai-native-evidence/webkit-package-sources.txt
