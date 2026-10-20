@@ -9,7 +9,7 @@ host_config=pathlib.Path(os.environ.get('XDG_CONFIG_HOME',str(host_home/'.config
 host_data=pathlib.Path(os.environ.get('XDG_DATA_HOME',str(host_home/'.local/share')))
 host_cache=pathlib.Path(os.environ.get('XDG_CACHE_HOME',str(host_home/'.cache')))
 watched=[host_config/'autostart',host_config/'mimeapps.list',host_data/'applications',
-         host_data/'com.ai-toolbox',host_cache/'com.ai-toolbox',host_home/'.ai-toolbox']
+         host_data/'com.ai-toolbox',host_cache/'com.ai-toolbox',host_home/'.ai-toolbox',host_home/'.kimi-code']
 def sentinel():
     values={}
     for base in watched:
@@ -22,13 +22,13 @@ def sentinel():
     return values
 before_host=sentinel()
 root=pathlib.Path(tempfile.mkdtemp(prefix='ai-native-profile-')).resolve()
-for name in ('home','config','share','cache','runtime','tmp','data','codex','xvfb-framebuffers'):
+for name in ('home','config','share','cache','runtime','tmp','data','codex','kimi','xvfb-framebuffers'):
     (root/name).mkdir(mode=0o700)
 env={'PATH':'/usr/bin:/bin','LANG':'en_US.UTF-8','LC_ALL':'en_US.UTF-8',
      'SMOKE_NODE':str(pathlib.Path(os.environ['NATIVE_NODE']).resolve(strict=True)),
      'HOME':str(root/'home'),'XDG_CONFIG_HOME':str(root/'config'),'XDG_DATA_HOME':str(root/'share'),
      'XDG_CACHE_HOME':str(root/'cache'),'XDG_RUNTIME_DIR':str(root/'runtime'),'TMPDIR':str(root/'tmp'),
-     'AI_TOOLBOX_DATA_DIR':str(root/'data'),'CODEX_HOME':str(root/'codex'),
+     'AI_TOOLBOX_DATA_DIR':str(root/'data'),'CODEX_HOME':str(root/'codex'),'KIMI_CODE_HOME':str(root/'kimi'),
      'SMOKE_ROOT':str(root),'SMOKE_BINARY':str(binary),'SMOKE_EVIDENCE':str(evidence),
      'SMOKE_SCRIPT':str(pathlib.Path(__file__).with_name('native_smoke.py')),'SMOKE_DRIVER':str(tools/'bin/tauri-driver')}
 # The inner shell inherits ONLY this allowlist; xvfb/dbus add their own addresses.
