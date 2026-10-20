@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   frontend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-password-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-success-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-confirm-options') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-routes') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-errors') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-request-export-lifecycle')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-password-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-success-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-confirm-options') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-routes') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-errors') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-request-export-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/provider-card-migration')
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -56,6 +56,19 @@ jobs:
             done
             node scripts/verify-gateway-request-export-ownership.mjs || result=1
             node scripts/verify-gateway-request-observations.mjs || result=1
+            exit "$result"
+          elif [ "$VALIDATION_REF" = "refs/heads/maintenance/provider-card-migration" ]; then
+            result=0
+            pnpm run test:web || result=1
+            node scripts/verify-form-modal-layout.mjs || result=1
+            node scripts/verify-provider-card-layout.mjs || result=1
+            node scripts/verify-official-accounts-shared.mjs || result=1
+            node scripts/verify-migrated-provider-cards.mjs || result=1
+            node scripts/verify-provider-card-view.mjs || result=1
+            node scripts/verify-provider-card-spacing.mjs || result=1
+            node scripts/verify-kimi-official-account-card.mjs || result=1
+            node scripts/verify-gemini-account-pending.mjs || result=1
+            node scripts/verify-official-account-pending.mjs || result=1
             exit "$result"
           elif [ "$VALIDATION_REF" = "refs/heads/test/settings-restore-errors" ]; then
             SETTINGS_RESTORE_CHECK_GROUP=error-recovery node scripts/verify-settings-restore-routes.mjs
