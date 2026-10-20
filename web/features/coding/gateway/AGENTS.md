@@ -86,6 +86,7 @@ sequenceDiagram
 - **进度状态必须来自后端，不能只存组件 state**：`GatewayPage` 切 tab 会卸载 `GatewayRequestsView`，本地 `rebuilding`/`rebuildProgress` 随之丢失。轮询 effect 必须在每次挂载时无条件拉一次后端快照并据此恢复重建态，不能以本地 `rebuilding` 作为是否轮询的前置条件（那正是「切 tab 回来进度条消失」的原因）。后端对**运行中**任务返回可重复读取的快照，对**已结束**任务只返回一次（读取即消费），这样重新进入页面能补报一次结果，又不会每次访问都弹「重建完成」。
 - 请求详情 Body tab 如果后端同时返回 `request_body` 与不同的 `upstream_request_body`，要分别显示“收到的请求体（原始）”和“实际发出的请求体（整流/转换后）”；相同或没有上游快照时只显示一段。
 - 请求详情「请求记录」tab 在 `native_tools` / `rewrites` 非空时追加两段：原生工具（`kind · 已声明 · 已转发 · 已调用`，只列已成立的维度）与网关改写（`kind`，悬停显示 detail）。两者**只在详情里展示**：列表接口读 SQLite 摘要，不携带这些字段；请求记录关闭或只有 SQLite 摘要时字段为空，直接不渲染这两段，不要补默认值。未知 `kind` 在详情里原样显示（详情用于排查，与列表徽章的「未知值静默」规则不同）。
+- 详情标记的 DOM 回归用 `node scripts/verify-gateway-request-observations.mjs`：直接挂载真实 `GatewayRequestsView`，仅把 services 桶缩到真实 `proxyGatewayApi`，IPC 只返回合成列表、详情和空的重建状态；不得读取真实请求日志或复制详情渲染逻辑。固定 6 个场景 × 中英两语言，校验 92 项断言与浏览器异常，防止零场景假通过。过滤目前由 `declared=true / forwarded=false / used=false` 加 `native_tool_filtered` 改写表示，不能凭空要求独立 filtered 文案；旧记录不从正文推测标记，summary 仅按文本渲染。此夹具只验证组件 DOM，不代表桌面 GUI、完整页面、后端采集或真实 JSONL 已验收。
 - 请求详情 Response tab 如果后端同时返回 `upstream_response_body` 与不同的 `response_body`，要分别显示“上游原始响应（转换前）”和“返回给客户端的响应（转换后）”；相同或没有上游快照时只显示一段。
 - 请求详情里的长 body / headers / response 文本块默认折叠并提供复制，折叠条件要同时考虑行数和字符长度；压缩 JSON 这类大型单行文本也不能直接把 `<pre>` 全展开。
 - `gateway-failover` 属于代理流量中的后台状态事件，只能用于刷新状态、统计或请求记录；不要触发全局 notification/message 弹窗，避免每次上游故障转移都打断客户端使用。
