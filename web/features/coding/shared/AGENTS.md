@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 13472)
-Total output lines: 154
-
 # Coding Shared 前端模块说明
 
 ## 一句话职责
@@ -52,7 +49,36 @@ Total output lines: 154
   - **作用域教训（本仓库同一天犯过两次）**：这两种外观都是在「明细侧栏」上提的需求，**列表布局不许跟着变**（用户 2026-10-13：「列表的样式不要变啊，列表样式的模型列表怎么也没有折叠了」）。共享组件加外观参数时，先数一遍调用点，再决定谁是新外观。回归：`test:codex-card-view` 里「list row keeps the card's type scale / its grip / the width of its labelled actions」四条。
 - `ModelListSection.tsx` 是"支持自定义模型"形态（Codex 类）的模型列表区，**两种形态由 `appearance` 选**：`'card'`（默认，列表卡片）= 原来的 Collapse（工具栏就是折叠头，默认收起，行缩进 18px 让开 caret）；`'detail'`（明细侧栏）= **常开区块**（2026-10-12 用户指定），工具栏读起来就是下方列表的标题，行不缩进（没有 caret 要让）。两种形态渲染**同一个工具栏节点**，所以两侧的操作永远一致。只有拥有模型目录的 provider 才渲染它；不支持自定义模型的 CLI（Claude Code 类）不渲染。**`rowKeyOf` 默认 `model.id`，但同一上游模型以多个菜单名出现时必须用组合键**——且不能从 display 反推（`display.name` 会回退成上游 id），要用对象身份查表（见 `CodexProviderCard` 的 `rowKeyByDisplay`）。见 §4.2.3。
 - `ModelListSection.module.less`：折叠形态要 `transparentCollapse`（antd Collapse 每一层都画自己的底色，漏掉就会在**有底色的卡片**上露出白色标题条——该规则原本在 codex / grok 各自 `.less` 里逐字重复，漏 import 时完全看不出来，能潜伏很久），常开形态只需区块自己不画底色，行则靠 `transparentRows`（同名 prop 自动施加）。**CLI 侧不要再自己写一份透明规则。**
-- `providerConfig/ProviderFormSections.tsx` 是供应商编…1472 tokens truncated… stopPropagation span 双保险）。这是通用坑，不只针对排序菜单。
+- `providerConfig/ProviderFormSections.tsx` 是供应商编辑弹窗的**分区编排**（模型映射 → 高级设置 → 计费 → 请求头 → 模型改写 → 速度档改写 → 备注）。`modelMapping` 是可选 prop：**有映射表的 CLI 传，没有的不传**（Codex 的模型目录在卡片列表上，弹窗里没有映射表，这是有意差异）。`advancedSettings` 由调用方传——编辑器随 CLI 变（Claude 的 JSON vs Codex 的 TOML），校验规则也不同。备注区文案走 `common.provider.notes`/`notesPlaceholder`（各 CLI 相同，无 `i18nPrefix`）。顶部通用字段（渠道/名称/URL/Key）刻意不共享，各 CLI 的校验和渠道联动差异太大。见 §4.2.6。
+- `providerServiceTiers/`（issue #414，界面叫「速度档改写」）是"按模型改写速度档"的 meta 读写对，与 `providerModelRewrites/` 同构：`meta.modelServiceTiers: ModelServiceTierEntry[]`，每行 = 上游模型 + 目标档位（`priority` = Fast / `ultrafast`）。**与模型目录里的 `serviceTiers` 是两回事**——那个只写进生成的 Codex `model_catalog`，告诉 Codex 该模型支持哪些档；这个是网关在转发时补写 `service_tier`。网关只在目标协议是 OpenAI Chat / Responses、且请求自身没有指定高级档时才改写，所以 CLI 显式选的档位永远优先。当前只在 Codex 供应商弹窗接线（`showModelServiceTiers` 可选 prop，默认跟 `editable`），其它 CLI 不传；后端运行时对任何 provider meta 都生效。
+- `gateway/useGatewaySupportedCliKeys.ts` 提供"该 CLI 能否被网关接管"的判定，供供应商表单的协议下拉置灰用。判定源是后端 `GatewayCliKey::supported_mvp()`（经命令 `proxy_gateway_supported_cli_keys` 暴露），**不要在前端维护镜像列表**。加载中返回 `undefined`，调用方只在明确 `false` 时置灰（避免加载瞬间锁死用户）。注意与 `GATEWAY_USAGE_TOOLS` 区分：后者只是统计收集，不代表能接管。见 §4.2.7。
+
+## 关键流程
+
+```mermaid
+sequenceDiagram
+  participant Page as Tool Page
+  participant Shared as shared/*
+  participant Api as module service/api
+
+  Page->>Shared: provide translation/service/tool context
+  Shared->>Api: invoke module-specific operations
+  Api-->>Shared: business data
+  Shared-->>Page: consistent UI behavior
+```
+
+## 易错点与历史坑（Gotchas）
+
+- `providerListStateCache` 的单飞 Promise 只缓存初次读取完成状态，不能缓存返回的状态对象。每次 `loadProviderListState()` 都要在自己的 continuation 中读取当前缓存，否则本地布局/排序更新后，KeepAlive 重挂载仍拿到旧对象。回归见 `providerListStateCache.test.ts`；这是模块状态链验证，不是原生整页验收。
+
+- 不要把 `shared/` 写成新的业务层。它应该统一交互语义，而不是偷存一份自己的持久化状态。
+- 供应商批量选择的 `allIds` 必须由 owning page 按真实可删除条件过滤；卡片复选框统一消费 hook 的 `isSelectable`，避免全选排除了默认项、卡片却仍显示可选。进入选择模式时禁用供应商拖拽。确认执行时使用最新的可选集合和页面回调，防止弹窗打开期间切换默认项后误删。
+- 批量删除回调只有整批成功才返回成功状态；失败时先刷新 owning module，再保留尚未删除的选择。绑定官方账号的 Codex/Grok/Gemini/Kimi provider 也应排除，不能让第一条后端拒绝中断整批后再静默清空选择。
+- 收藏备份统一先经 `backupProvidersBeforeDelete` 完成整批准备；任一备份失败就停止删除并显示供应商名。不要复用吞掉异常的 best-effort wrapper，也不要在循环中一边删除一边取下一条备份；DSH 的多个渠道可能共享凭据，前一次删除会改变后一次读取的凭据状态。
+- 供应商列表的"最近使用"写入约定：DB 型 tab（claudecode/claudedesktop/codex/grok/geminicli/kimi/openclaw）在各自后端 apply 汇聚函数内调用 `record_provider_last_used_in_sqlite_state`，覆盖托盘和窗口两条路径；配置文件型 tab（opencode/pi/omp/hermes/dsh）在托盘 internal 记录，窗口路径由页面在"设为默认模型/应用"成功后调 `noteProviderUsed`（内部走 `record_provider_last_used` command）兜底。前端重复记录与后端记录重叠是幂等无害的，页面接入时必须调用它以同步 hook 内存缓存。
+- 非 `custom` 排序模式或搜索词非空时必须禁用拖拽：DB 型页面传 `sensors={[]}` 给 `DndContext`，共享 `ProviderCard` 传 `draggable={false}`（同时隐藏把手）。否则过滤/排序后的卡片顺序与 `sort_index` 错位，拖拽会把错误顺序写回后端。
+- **让用户可见能力消失的状态，必须在界面上说明原因。** 上一条的禁用是**有意**的，但用户看到的只是一个没有把手的列表，能得出的唯一结论是「拖拽坏了」——2026-10-08 用户就是这样报的 bug，而实现层完全正确（他的 tab 持久化在「按创建时间」排序）。凡是要隐藏/禁用某个能力，就在**用户视线内的同一控件**上说明原因与恢复方式：页面把 `sortMode !== 'custom'` 传给 `ProviderListSection.dragDisabledBySort`，由排序按钮渲染 tooltip（`common.providerSort.dragDisabledHint`）。不要只写进文档或提交说明——用户不会去读。见 `docs/new-cli-onboarding-sop.md` 13.1 模式五十九。
+- 在 Collapse `extra` 里放 antd Dropdown 时，只在触发按钮上 `stopPropagation` 不够：菜单浮层虽 portal 到 `document.body`，但 React 合成事件沿**组件树**冒泡（portal 的 React 祖先链），menu item 点击仍会触发 Collapse header 的 onClick 导致面板收起。必须同时在 menu `onClick` 里对 `domEvent.stopPropagation()`（`ProviderSortDropdown` 还在外层包了一个 stopPropagation span 双保险）。这是通用坑，不只针对排序菜单。
 - antd 6 的 `Button size="small"` 默认字号是 `token.fontSize`（14px），不是 12px（`button/style/token.js` 中 `contentFontSizeSM ?? token.fontSize`）。供应商区标题 extra 的 link 按钮族约定显式 `style={{ fontSize: 12 }}`（DESIGN.md 紧凑层级）；给某页 extra 新增按钮时，若该页原有按钮漏写该样式，先补齐再保持整组一致，否则同组按钮会出现 12px/14px 混排。
 - `useProviderListSort` 用模块级缓存让所有 tab 共享一次 `get_provider_list_state` 往返；hydrate 完成前排序模式回退 `custom` 且页面必须仍以默认顺序渲染，不能因慢读显示空列表。`provider_last_used` 的 key 形如 `<module>:<providerId>`，删除 provider 后残留条目无害（排序时不会渲染），不做清理。
 - 最近使用与创建时间必须按解析后的时间点比较；后端写本地 RFC3339 offset，前端即时缓存写 UTC ISO 字符串，不能直接按字符串排序。缺失或无效时间排后，同一时间保持原顺序。
