@@ -1,37 +1,75 @@
-# Preparation only. Do not dispatch until the shared Windows window is released.
-# Requires the reviewed probe.py at scripts/probe-ssh433.py on the same branch.
-name: SSH PowerShell 5.1 compatibility measurement
+name: SSH preflight production compilation and gate tests
 on:
   workflow_dispatch:
-concurrency:
-  group: ai-toolbox-ssh433-windows-measurement
-  cancel-in-progress: false
 permissions:
   contents: read
+concurrency:
+  group: ai-toolbox-maintenance-validation
+  cancel-in-progress: false
 jobs:
-  measure:
+  rust-preflight:
     if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/ssh433-powershell51'
-    runs-on: windows-2022
-    timeout-minutes: 8
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # verified official v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Record exact source commit
-        shell: pwsh
-        run: git rev-parse HEAD
-      - name: Measure existing command templates in isolated temporary paths
-        shell: pwsh
-        env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
-        run: python scripts/probe-ssh433.py "$env:GITHUB_WORKSPACE"
-      - name: Preserve raw output and explicit case verdicts
+      - name: Install previously validated exact Rust toolchain
+        timeout-minutes: 5
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt
+      - name: Install existing Linux test dependencies
+        timeout-minutes: 8
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record source and format only candidate files
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ssh433-rust-evidence
+          git rev-parse HEAD | tee /tmp/ssh433-rust-evidence/source.txt
+          rustc +1.99.1 --version | tee /tmp/ssh433-rust-evidence/toolchain.txt
+          cargo +1.99.1 --version | tee -a /tmp/ssh433-rust-evidence/toolchain.txt
+          sha256sum tauri/Cargo.lock > /tmp/ssh433-rust-evidence/lock-before.txt
+          for name in capabilities mod commands mcp_sync skills_sync sync; do
+            rustfmt +1.99.1 --edition 2021 --config skip_children=true "tauri/src/coding/ssh/$name.rs"
+          done
+          git diff --check
+          git diff > /tmp/ssh433-rust-evidence/format.diff
+          cp tauri/src/coding/ssh/{capabilities,mod,commands,mcp_sync,skills_sync,sync}.rs /tmp/ssh433-rust-evidence/
+          sha256sum tauri/src/coding/ssh/{capabilities,mod,commands,mcp_sync,skills_sync,sync}.rs > /tmp/ssh433-rust-evidence/tested-source-sha256.txt
+      - name: Compile actual production wiring and run gate tests
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          timeout 1550s cargo +1.99.1 test --locked --manifest-path tauri/Cargo.toml --lib coding::ssh::capabilities -- --list 2>&1 | tee /tmp/ssh433-rust-evidence/gate-list.log
+          for name in rejected_probe_never_invokes_write_closure timeout_never_invokes_write_closure accepted_probe_invokes_write_once_and_preserves_result; do
+            grep -Fx "coding::ssh::capabilities::gate_tests::$name: test" /tmp/ssh433-rust-evidence/gate-list.log
+          done
+          grep -Fx 'coding::ssh::capabilities::tests::accepts_only_the_expected_probe_response: test' /tmp/ssh433-rust-evidence/gate-list.log
+          timeout 120s cargo +1.99.1 test --locked --manifest-path tauri/Cargo.toml --lib coding::ssh::capabilities -- --nocapture 2>&1 | tee /tmp/ssh433-rust-evidence/gate.log
+          grep -F 'test result: ok. 4 passed;' /tmp/ssh433-rust-evidence/gate.log
+      - name: Existing SSH state and session regressions
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          timeout 120s cargo +1.99.1 test --locked --manifest-path tauri/Cargo.toml --lib coding::ssh::commands::tests -- --nocapture 2>&1 | tee /tmp/ssh433-rust-evidence/state.log
+          timeout 120s cargo +1.99.1 test --locked --manifest-path tauri/Cargo.toml --lib coding::ssh::session::tests -- --nocapture 2>&1 | tee /tmp/ssh433-rust-evidence/session.log
+          grep -E 'test result: ok\. [1-9][0-9]* passed;' /tmp/ssh433-rust-evidence/state.log
+          grep -E 'test result: ok\. [1-9][0-9]* passed;' /tmp/ssh433-rust-evidence/session.log
+          sha256sum tauri/Cargo.lock > /tmp/ssh433-rust-evidence/lock-after.txt
+          diff /tmp/ssh433-rust-evidence/lock-{before,after}.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # verified official v4
         with:
-          name: ssh433-powershell51-measurements
-          path: ${{ runner.temp }}/ai-ssh433-*/
-          if-no-files-found: error
+          name: ssh433-rust-validation
+          path: /tmp/ssh433-rust-evidence/
           retention-days: 7
+          if-no-files-found: warn
