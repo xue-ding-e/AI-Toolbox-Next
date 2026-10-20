@@ -5,6 +5,7 @@ Artifacts are kept in a new OS temp directory; no existing files are deleted.
 import base64
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -133,6 +134,27 @@ for case in manifest['cases']:
     else:
         case['verdict'] = 'fixture control failed; command execution skipped, inconclusive'
     (root / 'results.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+# Execute the exact production Rust probe constant, never a reconstructed probe.
+capability_source = (repo / 'tauri/src/coding/ssh/capabilities.rs').read_text(encoding='utf-8')
+probe_matches = re.findall(r'POSIX_SYNC_PROBE: &str =\s*("(?:\\.|[^"\\])*")', capability_source)
+if len(probe_matches) != 1:
+    raise RuntimeError('Expected exactly one production probe constant')
+probe = json.loads(probe_matches[0])
+manifest['production_probe'] = probe
+manifest['probe_cases'] = []
+for name, executable in [('powershell51', shell), ('git-sh', str(pathlib.Path(os.environ['ProgramFiles']) / 'Git/usr/bin/sh.exe')), ('git-bash', str(pathlib.Path(os.environ['ProgramFiles']) / 'Git/bin/bash.exe'))]:
+    item = {'name': name, 'executable': executable}
+    if not pathlib.Path(executable).is_file():
+        raise RuntimeError('Required comparison shell unavailable: ' + executable)
+    result = invoke(probe) if name == 'powershell51' else subprocess.run([executable, '-c', probe], capture_output=True, timeout=15)
+    capture(item, 'execute', result)
+    item['expectation'] = 'nonzero; no success marker' if name == 'powershell51' else 'zero; exact POSIX success marker'
+    item['expectation_met'] = (result.returncode != 0 and result.stdout.strip() != b'AI_TOOLBOX_POSIX_SYNC_V1') if name == 'powershell51' else (result.returncode == 0 and result.stdout.strip() == b'AI_TOOLBOX_POSIX_SYNC_V1')
+    manifest['probe_cases'].append(item)
+(root / 'results.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
 print('Measurement complete; consult per-case verdicts, not process success. No SSH operation performed.')
 if any(not c['positive_control_passed'] or c.get('expectation_met') is False or c.get('parser_expectation_met') is False for c in manifest['cases']):
+    sys.exit(1)
+
+if any(not c['expectation_met'] for c in manifest['probe_cases']):
     sys.exit(1)
