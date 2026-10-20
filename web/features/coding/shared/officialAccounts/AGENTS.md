@@ -33,7 +33,7 @@
 - **行级动作按语义固定五个**（`onApply` / `onSaveLocal` / `onRefresh` / `onViewDetails` / `onDelete`），**谁传哪个就渲染哪个**。CLI 没有的动作不传即可，组件不做「这个 CLI 有没有这个能力」的判断。
 - **虚拟行（`isVirtual`）只给一个动作：保存。** 它镜像的是磁盘上已经生效的那份登录——切到它自己是无意义的，删掉它也不会让 CLI 登出。保存之后它变成普通行，切换/删除随之出现。
 - **已应用的行不画切换按钮**（画「默认」徽章）。曾把「切换」画成 disabled：一个灰掉的「切换」挨着「默认」，说的是同一件事两遍。
-- **`pending` 带的是 `{accountId, action}`，不是一个 id。** 同一时刻可能有两行在不同动作上（Codex 刷新一个、保存另一个），只给 id 会让转圈落在错误的按钮上。
+- **`pending` 按 `{accountId, action}` 定位，独立并发时传数组。** 共享区块兼容原单项/null，并逐项匹配；不能把不同动作的 pending 用优先级三元表达式压成一个。2026-10-20 Gemini 实跑确认：刷新保存账号和保存本地账号可同时 pending，刷新优先的映射会掩盖保存 loading。Gemini 因此保留两项；其他调用方的单项输入仍兼容，但兼容不等于已验证各页操作互斥。按钮仍只禁止自身 loading 时的重复点击，不应顺手全局禁用其他行或动作。
 
 ## 关键约束（改这里之前必读）
 
@@ -68,6 +68,8 @@
 `pnpm run test:codex-official-accounts`、`pnpm run test:official-account-card`（Kimi）与
 `pnpm run test:zcode-official-account`（真浏览器：几何 + 标题形状 + 折叠真点击 +
 **说明句的 `getComputedStyle` 颜色/字号**——三端各一份，接线各测各的）。
+
+`node scripts/verify-official-account-pending.mjs` 是共享区块的独立近邻夹具，固定 8 个状态场景 / 40 项断言：单项 save/apply/delete 和 null、数组跨行/同行双动作、清一项及清空。每态核完整行/动作 loading 矩阵、pending 重复点击零回调、其余动作仍精确回调、零 IPC、零浏览器异常。只挂真实区块并记录合成回调，未执行真实账号操作；这些兼容近邻随修复新增，没有独立修复前 RED，不替代 Gemini 真实映射层的原 1/6 回归。
 
 ## 何时更新本文件
 
