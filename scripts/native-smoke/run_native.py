@@ -25,6 +25,7 @@ root=pathlib.Path(tempfile.mkdtemp(prefix='ai-native-profile-')).resolve()
 for name in ('home','config','share','cache','runtime','tmp','data','codex','xvfb-framebuffers'):
     (root/name).mkdir(mode=0o700)
 env={'PATH':'/usr/bin:/bin','LANG':'en_US.UTF-8','LC_ALL':'en_US.UTF-8',
+     'SMOKE_NODE':str(pathlib.Path(os.environ['NATIVE_NODE']).resolve(strict=True)),
      'HOME':str(root/'home'),'XDG_CONFIG_HOME':str(root/'config'),'XDG_DATA_HOME':str(root/'share'),
      'XDG_CACHE_HOME':str(root/'cache'),'XDG_RUNTIME_DIR':str(root/'runtime'),'TMPDIR':str(root/'tmp'),
      'AI_TOOLBOX_DATA_DIR':str(root/'data'),'CODEX_HOME':str(root/'codex'),

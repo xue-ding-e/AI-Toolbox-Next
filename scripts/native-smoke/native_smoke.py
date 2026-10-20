@@ -5,6 +5,8 @@ BINARY = pathlib.Path(os.environ['SMOKE_BINARY']).resolve()
 EVIDENCE = pathlib.Path(os.environ['SMOKE_EVIDENCE']).resolve()
 BASE = 'http://127.0.0.1:4444'
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
+class NativeSafetyStop(Exception): pass
+
 session = None
 stages = []
 locator_observations = {}
@@ -32,6 +34,7 @@ def wait(predicate, seconds=40):
         try:
             value = predicate()
             if value: return value
+        except NativeSafetyStop: raise
         except Exception as error: last = str(error)
         time.sleep(.2)
     raise AssertionError(f'Timeout: {last}')
@@ -116,6 +119,58 @@ def collect_popup_diagnostics(label):
     except Exception as error: errors['screenshot']=str(error)
     (EVIDENCE / (label+'-diagnostic-errors.json')).write_text(json.dumps(errors,indent=2))
 
+
+def ssh_snapshot(label):
+    import subprocess
+    result = subprocess.run([os.environ['SMOKE_NODE'], str(pathlib.Path(__file__).with_name('ssh_snapshot.cjs')), str(ROOT/'data'/'ai-toolbox.db')], check=True, capture_output=True, text=True, timeout=10)
+    value = json.loads(result.stdout)
+    (EVIDENCE / ('ssh-'+label+'.json')).write_text(json.dumps(value, indent=2))
+    # A nonempty connection/active state is a stop condition, never auto-cleaned.
+    if value['count'] != 0 or value['active'] != '':
+        raise NativeSafetyStop(f'Unexpected SSH state; no recovery attempted: {value}')
+    return value
+
+def ssh_cancel_smoke():
+    modal = "//div[@role='dialog'][.//div[contains(concat(' ',normalize-space(@class),' '),' ant-modal-title ') and normalize-space()='SSH Config Sync Settings']]"
+    form = "//div[@role='dialog'][.//div[contains(concat(' ',normalize-space(@class),' '),' ant-modal-title ') and normalize-space()='New Connection']]"
+    enabled = modal + "//span[normalize-space()='Enable SSH Sync']/following-sibling::button[@role='switch']"
+    new = modal + "//span[normalize-space()='Active Connection:']/ancestor::div[.//button[.//span[@aria-label='plus']]][1]//button[.//span[@aria-label='plus']]"
+    name = form + "//input[@id='name']"
+    cancel = form + "//button[span[normalize-space()='Cancel']]"
+    click("//div[contains(concat(' ',normalize-space(@class),' '),' ssh-status-indicator ')]")
+    wait(lambda: xpath(enabled))
+    before = ssh_snapshot('before-enable')
+    assert before['enabled'] == 0 and attr(enabled, 'aria-checked') == 'false'
+    click(enabled)
+    wait(lambda: attr(enabled, 'aria-checked') == 'true')
+    wait(lambda: ssh_snapshot('enabled')['enabled'] == 1)
+    click(new)
+    wait(lambda: xpath(name))
+    assert attr(name, 'value') == ''
+    field = xpath(name)
+    request('POST', f'/session/{session}/element/{field}/value', {'text':'cancel-only-synthetic-name'})
+    assert attr(name, 'value') == 'cancel-only-synthetic-name'
+    screenshot('ssh-draft-name.png')
+    click(cancel)
+    wait(lambda: not request('POST', f'/session/{session}/elements', {'using':'xpath','value':form}))
+    ssh_snapshot('after-cancel')
+    click(new)
+    wait(lambda: xpath(name))
+    expected = {'name':'', 'host':'', 'port':'22', 'username':'', 'privateKeyPath':'', 'passphrase':''}
+    observed = {key:attr(form + "//*[@id='"+key+"']", 'value') for key in expected}
+    assert observed == expected, observed
+    selected = form + "//label[contains(concat(' ',normalize-space(@class),' '),' ant-radio-wrapper-checked ')][.//input[@value='key']]"
+    xpath(selected)
+    ssh_snapshot('reopened')
+    screenshot('ssh-reopened-defaults.png')
+    click(cancel)
+    wait(lambda: not request('POST', f'/session/{session}/elements', {'using':'xpath','value':form}))
+    click(enabled)
+    wait(lambda: attr(enabled, 'aria-checked') == 'false')
+    wait(lambda: ssh_snapshot('restored-disabled')['enabled'] == 0)
+    click(modal + "//button[@aria-label='Close']")
+    record('ssh-unsaved-name-cancel-reopen', connection_count=0, active_connection='', restored_enabled=False)
+
 def launch():
     global session
     before = pids()
@@ -148,6 +203,7 @@ try:
     assert initial_theme in ('Dark','深色','Light','浅色','System','Follow System','跟随系统'), initial_theme
     target_labels = ('Light','浅色') if initial_theme in ('Dark','深色') else ('Dark','深色')
     record('native-empty-profile-rendered', pid=first, initial_theme=initial_theme)
+    ssh_cancel_smoke()
     old = settings_fingerprint()
     click(THEME)
     collect_popup_diagnostics('popup-open')
