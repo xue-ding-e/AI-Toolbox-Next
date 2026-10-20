@@ -31,12 +31,16 @@ export const useDeepLinkImport = (
     let unlistenImport: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
     let active = true;
+    // A live event is newer than the cold-start slot drained by the handshake.
+    // Its IPC response can arrive later; do not replace (or reopen) that request.
+    let receivedLiveRequest = false;
 
     const setup = async () => {
       unlistenImport = await listen<DeepLinkImportRequest>(
         'deep-link-import',
         (event) => {
           if (active) {
+            receivedLiveRequest = true;
             setRequest(event.payload);
           }
         },
@@ -56,7 +60,7 @@ export const useDeepLinkImport = (
       }
 
       const pending = await markDeepLinkFrontendReady();
-      if (active && pending) {
+      if (active && pending && !receivedLiveRequest) {
         setRequest(pending);
       }
     };
