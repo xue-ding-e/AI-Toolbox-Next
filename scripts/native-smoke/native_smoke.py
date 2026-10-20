@@ -304,10 +304,19 @@ def kimi_crud_smoke():
     edit_name=edit+"//input[@id='name']"
     menu('Edit');wait(lambda: xpath(edit_name));assert attr(edit_name,'value')==name_a
     screenshot('kimi-created-reopened.png')
-    request('POST',f'/session/{session}/element/{xpath(edit_name)}/clear',{})
+    # A new run uses one real user keyboard edit, not a retry of element clear.
+    field=xpath(edit_name)
+    request('POST',f'/session/{session}/element/{field}/click',{})
+    focused=request('GET',f'/session/{session}/element/active')
+    if focused[ELEMENT] != field: raise NativeSafetyStop('Synthetic name input is not focused')
+    (EVIDENCE/'kimi-name-focus.json').write_text(json.dumps({'syntheticNameFocused':True}))
+    request('POST',f'/session/{session}/actions',{'actions':[{'type':'key','id':'kimi-name-edit','actions':[
+        {'type':'keyDown','value':'\ue009'},{'type':'keyDown','value':'a'},
+        {'type':'keyUp','value':'a'},{'type':'keyUp','value':'\ue009'},
+        {'type':'keyDown','value':'\ue003'},{'type':'keyUp','value':'\ue003'}]}]})
     cleared = attr(edit_name,'value')
     (EVIDENCE/'kimi-name-cleared.json').write_text(json.dumps({'empty':cleared=='','length':len(cleared)}))
-    if cleared != '': raise NativeSafetyStop('Standard element clear did not empty name')
+    if cleared != '': raise NativeSafetyStop('Standard select-all/backspace did not empty name')
     request('POST',f'/session/{session}/element/{xpath(edit_name)}/value',{'text':name_b})
     entered = attr(edit_name,'value')
     (EVIDENCE/'kimi-name-entered.json').write_text(json.dumps({'matchesSyntheticB':entered==name_b,'length':len(entered)}))
