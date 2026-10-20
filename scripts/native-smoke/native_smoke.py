@@ -331,7 +331,7 @@ def kimi_crud_smoke():
     click(edit+"//button[span[normalize-space()='Cancel']]");wait(modal_retired)
     menu('Delete')
     confirm="//div[@role='dialog'][.//*[normalize-space()='Are you sure you want to delete provider \""+name_b+"\"?']]"
-    xpath(confirm)
+    wait(lambda: xpath(confirm))
     if kimi_snapshot('before-delete-confirm',owned_id,[name_b])['count'] != 1:
         raise NativeSafetyStop('Owned provider missing before delete')
     click(confirm+"//button[span[normalize-space()='OK']]");wait(modal_retired)
