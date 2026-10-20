@@ -898,4 +898,4 @@ description: "可选的描述"
 | skills_clear_git_cache | 清空 Git 缓存 |
 | skills_get_git_cache_path | 获取缓存路径 |
 
-- 旧分组迁移回归从缺少 `group_id` 的合成 SQLite JSONB 记录进入真实 `get_managed_skills` / `get_skill_groups`，验证旧名称迁移、已有 registry 大小写匹配、来源元数据保留及关闭重开幂等。来源分组由 `source_type/source_ref` 计算，不应为纯仓库来源臆造手动 registry。`legacy_group_migration_` 测试不等同已复现 issue #434，报告尚缺升级前后版本；本地未运行 Rust，结果以定向 CI 为准。
+- 旧分组迁移回归从缺少 `group_id` 的合成 SQLite JSONB 记录进入真实 `get_managed_skills` / `get_skill_groups`，验证旧名称迁移、已有 registry 大小写匹配、来源元数据保留及关闭重开幂等。来源分组由 `source_type/source_ref` 计算，不应为纯仓库来源臆造手动 registry。`legacy_group_migration_` 测试不等同已复现 issue #434，报告尚缺升级前后版本；本地未运行 Rust；定向 CI 39367131752 已验证 3 项新增迁移与 3 项既有偏好邻域，6 项通过。
