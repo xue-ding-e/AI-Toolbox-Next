@@ -1,0 +1,29 @@
+{
+  "base": "925759bb34d7d622e336d1cb75f938f744358a03",
+  "tested_commit": "83aaf07e134ead510ed4dc6885cb27093c2cccef",
+  "run_url": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39367131752",
+  "job_id": 118446417946,
+  "conclusion": "success",
+  "log_sha256": "b6ebcf6c4bff1797b25939d50083fb29aeb93e5a8fc24c881daed309a952791a",
+  "command": "cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1",
+  "result": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 3022,
+    "new_named_regressions": 3
+  },
+  "coverage": [
+    "Legacy JSONB without group_id enters production list/group migration; source/user metadata preserved.",
+    "Existing case-insensitive group registry reused without changing its metadata.",
+    "Close and reopen temporary SQLite database preserves migrated records and stable group IDs; repeated reads are idempotent.",
+    "Repository-only source records do not create custom groups."
+  ],
+  "limits": [
+    "Coverage-only; no production behavior changed and no defect reproduced.",
+    "Upstream issue 434 does not specify before/after versions; this does not establish its cause or resolve it.",
+    "Source grouping and custom groups are separate; v1.1.9 and v1.2.0-beta both initialize groupMode to custom.",
+    "No full historical database schema upgrade, real user database, Skills page DOM, native CLI or filesystem synchronization tested.",
+    "No frontend or full Cargo rerun; remaining eleven CI jobs skipped."
+  ]
+}
