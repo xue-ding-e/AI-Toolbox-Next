@@ -181,6 +181,91 @@ def ssh_cancel_smoke():
         'script': "return !document.querySelector('.ant-modal-mask') && Array.from(document.querySelectorAll('.ant-modal-wrap')).every(e => getComputedStyle(e).display === 'none')", 'args': []}))
     record('ssh-unsaved-name-escape-reopen', connection_count=0, active_connection='', restored_enabled=False)
 
+def kimi_paths_guard():
+    # Existence/metadata only. Never read a credential or CLI config file.
+    root = ROOT.absolute()
+    for target in [pathlib.Path(os.environ['HOME']), pathlib.Path(os.environ['KIMI_CODE_HOME'])]:
+        if not target.is_absolute() or not target.is_relative_to(root):
+            raise NativeSafetyStop('Kimi/HOME path escapes disposable root')
+        current = root
+        for part in target.relative_to(root).parts:
+            current = current / part
+            if current.is_symlink(): raise NativeSafetyStop('Symlink in disposable path')
+        if not target.resolve().is_relative_to(root): raise NativeSafetyStop('Resolved path escapes root')
+    kimi = pathlib.Path(os.environ['KIMI_CODE_HOME'])
+    for target in [kimi/'config.toml', kimi/'credentials', pathlib.Path(os.environ['HOME'])/'.kimi-code']:
+        if target.is_symlink() or target.exists():
+            raise NativeSafetyStop('Unexpected Kimi config/credentials/default-root exists; content not read')
+    return {'homeInsideTemp':True,'kimiInsideTemp':True,'configAbsent':True,'credentialsAbsent':True,'defaultRootAbsent':True}
+
+def kimi_snapshot(label, expected_id='', names=()):
+    import subprocess
+    paths = kimi_paths_guard()
+    result = subprocess.run([os.environ['SMOKE_NODE'],str(pathlib.Path(__file__).with_name('kimi_snapshot.cjs')),
+                             str(ROOT/'data'/'ai-toolbox.db'),expected_id,json.dumps(names)],capture_output=True,text=True,timeout=10)
+    if result.returncode: raise NativeSafetyStop('Kimi observer failed; schema/state must not be treated as empty')
+    data=json.loads(result.stdout)
+    (EVIDENCE/('kimi-'+label+'.json')).write_text(json.dumps({'paths':paths,**data},indent=2))
+    return data
+
+def modal_retired():
+    return request('POST',f'/session/{session}/execute/sync',{'script':"return !document.querySelector('.ant-modal-mask') && Array.from(document.querySelectorAll('.ant-modal-wrap')).every(e => getComputedStyle(e).display === 'none')",'args':[]})
+
+def kimi_crud_smoke():
+    name_a='native-synthetic-kimi-A'; name_b='native-synthetic-kimi-B'
+    kimi_snapshot('before-navigation')
+    click("//header//span[normalize-space()='Kimi']/parent::div")
+    section="//*[@id='kimi-providers']"
+    wait(lambda: xpath(section))
+    # The normal header must display the actual isolated config path.
+    expected_path=str(pathlib.Path(os.environ['KIMI_CODE_HOME'])/'config.toml')
+    wait(lambda: request('POST',f'/session/{session}/execute/sync',{'script':'return document.body.innerText.includes(arguments[0])','args':[expected_path]}))
+    kimi_snapshot('empty')
+    click(section+"//button[.//span[@aria-label='plus']]")
+    form="//div[@role='dialog'][.//div[contains(concat(' ',normalize-space(@class),' '),' ant-modal-title ') and normalize-space()='Add Provider']]"
+    field=form+"//input[@id='name']"
+    wait(lambda: xpath(field))
+    request('POST',f'/session/{session}/element/{xpath(field)}/value',{'text':name_a})
+    click(form+"//input[@id='category']/ancestor::div[contains(concat(' ',normalize-space(@class),' '),' ant-select ')][1]")
+    click("//div[contains(concat(' ',normalize-space(@class),' '),' ant-select-item-option ')][div[contains(concat(' ',normalize-space(@class),' '),' ant-select-item-option-content ') and normalize-space()='Official Account']]")
+    kimi_snapshot('before-create')
+    click(form+"//button[span[normalize-space()='OK']]")
+    wait(modal_retired)
+    created=wait(lambda: (value if value['count']==1 else None) if (value:=kimi_snapshot('created',names=[name_a])) else None)
+    owned_id=created['row']['id']
+    card=section+"//*[@data-provider-id='"+owned_id+"']"
+    def menu(action):
+        state=kimi_snapshot('before-'+action.lower(),owned_id,[name_a,name_b])
+        if state['count'] != 1: raise NativeSafetyStop('Owned provider missing before action')
+        click(card+"//button[.//span[@aria-label='more']]")
+        click("//*[@role='menuitem'][.//span[normalize-space()='"+action+"']]")
+    edit="//div[@role='dialog'][.//div[contains(concat(' ',normalize-space(@class),' '),' ant-modal-title ') and normalize-space()='Edit Provider']]"
+    edit_name=edit+"//input[@id='name']"
+    menu('Edit');wait(lambda: xpath(edit_name));assert attr(edit_name,'value')==name_a
+    screenshot('kimi-created-reopened.png')
+    request('POST',f'/session/{session}/element/{xpath(edit_name)}/clear',{})
+    request('POST',f'/session/{session}/element/{xpath(edit_name)}/value',{'text':name_b})
+    if kimi_snapshot('before-update',owned_id,[name_a])['count'] != 1:
+        raise NativeSafetyStop('Owned provider missing before update')
+    click(edit+"//button[span[normalize-space()='OK']]");wait(modal_retired)
+    wait(lambda: (v['row'] and v['row']['name']==name_b) if (v:=kimi_snapshot('updated',owned_id,[name_a,name_b])) else False)
+    menu('Edit');wait(lambda: xpath(edit_name));assert attr(edit_name,'value')==name_b
+    screenshot('kimi-updated-reopened.png')
+    click(edit+"//button[span[normalize-space()='Cancel']]");wait(modal_retired)
+    menu('Delete')
+    confirm="//div[@role='dialog'][.//*[normalize-space()='Are you sure you want to delete provider \""+name_b+"\"?']]"
+    xpath(confirm)
+    if kimi_snapshot('before-delete-confirm',owned_id,[name_b])['count'] != 1:
+        raise NativeSafetyStop('Owned provider missing before delete')
+    click(confirm+"//button[span[normalize-space()='OK']]");wait(modal_retired)
+    wait(lambda: kimi_snapshot('deleted',owned_id,[name_b])['count']==0)
+    kimi_snapshot('empty-final')
+    assert not request('POST',f'/session/{session}/elements',{'using':'xpath','value':section+"//*[@data-provider-id]"})
+    screenshot('kimi-deleted-empty.png')
+    record('kimi-unapplied-synthetic-crud',created_id=owned_id,applied=False,accounts=0,final_count=0)
+    click("//header//span[normalize-space()='Settings' or normalize-space()='设置']/parent::div")
+    wait(lambda: xpath(THEME))
+
 def launch():
     global session
     before = pids()
@@ -207,12 +292,14 @@ def close_normally():
 
 EVIDENCE.mkdir(parents=True, exist_ok=True)
 try:
+    kimi_paths_guard()
     first = launch()
     screenshot('first-launch.png')
     initial_theme = text(THEME)
     assert initial_theme in ('Dark','深色','Light','浅色','System','Follow System','跟随系统'), initial_theme
     target_labels = ('Light','浅色') if initial_theme in ('Dark','深色') else ('Dark','深色')
     record('native-empty-profile-rendered', pid=first, initial_theme=initial_theme)
+    kimi_crud_smoke()
     ssh_cancel_smoke()
     old = settings_fingerprint()
     click(THEME)
@@ -230,7 +317,9 @@ try:
     screenshot('theme-saved.png')
     close_normally()
     record('first-normal-native-exit')
+    kimi_snapshot('before-restart')
     second = launch()
+    kimi_snapshot('after-restart')
     assert first != second, 'Expected a fresh native process'
     assert text(THEME) in target_labels, 'Theme did not survive native restart'
     assert attr(CLOSE, 'aria-checked') == 'false', 'Close setting did not persist'

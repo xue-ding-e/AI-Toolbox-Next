@@ -32,6 +32,7 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/ai-native-evidence
           node scripts/native-smoke/sqlite_preflight.cjs v22.23.3 | tee /tmp/ai-native-evidence/sqlite-preflight.json
+          node scripts/native-smoke/kimi_preflight.cjs v22.23.3 | tee /tmp/ai-native-evidence/kimi-preflight.json
       - name: Install and record official system prerequisites
         timeout-minutes: 7
         run: |
