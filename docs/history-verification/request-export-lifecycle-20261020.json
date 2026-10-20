@@ -1,0 +1,34 @@
+{
+  "scope": "Request detail export lifecycle through real React component and real dialog/API wrappers, using synthetic IPC only",
+  "baseline": "36209322660b223ee6b9c9eeba67149a197cc002",
+  "tested_green": "2f3cf8978dddcff696a964de427d9ed595ea3c9d",
+  "red": {
+    "run": 39370835938,
+    "job": 118458109603,
+    "head": "9d7439c71b789ab5150bdc5d8abeac7997f34ccb",
+    "log_sha256": "20f26c5d24ee26f71634ef4ce79bf785cec0fa1fa3d22c27960adc55681d93d5",
+    "results": "Success 8, cancellation 8 and export pending 11 checks passed. Picker rejection produced an unhandled Synthetic picker rejection and no visible error. Repeated clicks while picker pending invoked the synthetic picker three times instead of one. TypeScript and build passed."
+  },
+  "green": {
+    "run": 39372493707,
+    "job": 118463261941,
+    "log_sha256": "0d42d05008f23fc885e3426a60b6b7c58707b640fd4c0144e4fca305f9ab3eb3",
+    "export_scenarios": 5,
+    "export_checks": 46,
+    "ownership_scenarios": 3,
+    "ownership_checks": 69,
+    "existing_marker_scenarios": 12,
+    "existing_marker_checks": 92,
+    "typescript": "passed",
+    "build": "passed",
+    "other_jobs_skipped": 11
+  },
+  "behavior": "Synchronous lock covers picker and export within one detail session. Cancellation, failure and success release it. Stale completions cannot modify a new detail session; already started operations retain their original trace and chosen destination and are not cancelled.",
+  "limits": [
+    "The three ownership cases were added after RED and have no independent pre-fix RED.",
+    "Synthetic IPC does not prove native picker reentrancy or modal hit testing.",
+    "No real file export, native desktop, complete page routing, full Node or Rust suite was run for this change.",
+    "The lock is detail-session scoped, not a global external-operation mutex."
+  ],
+  "history": "Same-function test/fix commits consolidated, with separate CI and evidence commits. The consolidated functional and CI tree is identical to the tested GREEN tree."
+}
