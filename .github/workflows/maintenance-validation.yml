@@ -54,6 +54,8 @@ jobs:
               echo "EXPORT_SCENARIO=$scenario"
               GATEWAY_REQUEST_EXPORT_CASE="$scenario" node scripts/verify-gateway-request-export.mjs || result=1
             done
+            node scripts/verify-gateway-request-export-ownership.mjs || result=1
+            node scripts/verify-gateway-request-observations.mjs || result=1
             exit "$result"
           elif [ "$VALIDATION_REF" = "refs/heads/test/settings-restore-errors" ]; then
             SETTINGS_RESTORE_CHECK_GROUP=error-recovery node scripts/verify-settings-restore-routes.mjs
