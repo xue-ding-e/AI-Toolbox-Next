@@ -1,0 +1,43 @@
+{
+  "upstream": "e5b51864b6aed8ef17b13702c5aac24116369ea1",
+  "port": "6d7047cba80e7daed4fe45fdf8510830662c407f",
+  "baseline": "21b3a8a9f95cee446e3800e7f843030cc94b5aa0",
+  "tested_green": "341f9ec9dad8ade7e2620376d8a03aa0911fe01d",
+  "consolidated_same_tree": "a0cace62037e274ac760f06e83a00daa1d7756d6",
+  "first_run": {
+    "id": 39377630756,
+    "job": 118479234004,
+    "sha256": "76c2a13608ba864352d93d56369659ae4ac39ed321de00c2729b30acdd916144",
+    "results": "Node 1081, TypeScript, three structural guards, shared card view 53, spacing 2, official account 26 and build passed. Migrated-card fixture stopped at visible-dropdown wait; this is not classified as a product defect. Gemini concurrent refresh/save produced a real component assertion failure: refresh loading true, local-save loading false. No claim that later callback assertions executed."
+  },
+  "green": {
+    "id": 39379635144,
+    "job": 118485536527,
+    "sha256": "2b2440d1d5de8adf3420739507dc63da1937fd66ce30629a335501933974a19b",
+    "node_pass": 1081,
+    "fail": 0,
+    "migrated_scenarios": 11,
+    "migrated_checks": 86,
+    "gemini_scenarios": 1,
+    "gemini_checks": 6,
+    "shared_pending_scenarios": 8,
+    "shared_pending_checks": 40,
+    "existing_card_view_checks": 53,
+    "existing_spacing_checks": 2,
+    "existing_official_account_checks": 26,
+    "dom_checks_total": 213,
+    "typescript": "passed",
+    "three_structural_guards": "passed",
+    "build": "passed",
+    "other_jobs_skipped": 11
+  },
+  "preservation": "Original upstream author/date retained. Package test command keeps the Next auth guard; both locale files retain Next auth additions. AGPL/NOTICE, dependencies and Rust are unchanged. The upstream mirror is not advanced by this selective port.",
+  "limits": [
+    "New shared pending cases have no independent pre-fix RED.",
+    "Menu positioning was made stable with actual pointer hit testing; the first timeout does not prove animation was its cause.",
+    "Most action assertions use DOM click with synthetic callback accounting; no real account refresh, credentials or native files are used.",
+    "The four full page hosts, their drag-and-drop persistence and native UI were not exercised by this migrated-card fixture.",
+    "This is full Node plus selected browser fixtures, not the complete pnpm test browser collection or Rust acceptance.",
+    "No release or deployment."
+  ]
+}
