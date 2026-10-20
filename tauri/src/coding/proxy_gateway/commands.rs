@@ -838,6 +838,7 @@ fn load_request_log_detail(
 fn sanitize_request_log_detail_for_display(
     mut detail: GatewayRequestLogDetail,
 ) -> GatewayRequestLogDetail {
+    request_log::sanitize_observation_rewrites(&mut detail.rewrites);
     detail.summary.path = request_log::redact_request_path(&detail.summary.path);
     detail.summary.upstream_url = detail
         .summary
@@ -888,6 +889,10 @@ fn truncate_body_text(body: Option<String>) -> Option<String> {
 }
 
 fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
+    // Old JSONL records may predate source-side diagnostic sanitization. Work on
+    // a copy so exporting also remains safe without rewriting historical logs.
+    let mut rewrites = detail.rewrites.clone();
+    request_log::sanitize_observation_rewrites(&mut rewrites);
     let summary = &detail.summary;
     let requested_model = summary.requested_model.as_deref();
     let upstream_model = summary.upstream_model_id.as_deref();
@@ -912,7 +917,7 @@ fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
         // Detail-only markers: absent from the SQLite summary on purpose.
         "observations": {
             "native_tools": detail.native_tools,
-            "rewrites": detail.rewrites,
+            "rewrites": rewrites,
         },
         "request": {
             "headers": redact_header_map(detail.request_headers.as_ref()),
@@ -1441,6 +1446,32 @@ mod tests {
             persisted.contains("lossy_conversion"),
             "keep useful diagnostic kinds"
         );
+    }
+
+    #[test]
+    fn privacy_lossy_observations_from_old_logs_are_safe_for_display_and_export() {
+        const SECRET: &str = "synthetic_plain_private_value";
+        let mut detail = request_detail_fixture();
+        detail
+            .rewrites
+            .push(super::super::types::GatewayRequestRewrite {
+                kind: "lossy_conversion".into(),
+                detail: Some(format!("/untrusted/{SECRET}: {SECRET}")),
+            });
+        // Old logs need protection even without a recorded privacy mapping.
+        assert!(detail.privacy.is_none());
+        let displayed = sanitize_request_log_detail_for_display(detail.clone());
+        assert_eq!(displayed.rewrites[0].kind, "lossy_conversion");
+        assert!(!serde_json::to_string(&displayed.rewrites)
+            .unwrap()
+            .contains(SECRET));
+        let exported = build_request_log_detail_export(&detail);
+        assert_eq!(
+            exported["observations"]["rewrites"][0]["kind"],
+            "lossy_conversion"
+        );
+        assert!(!exported["observations"].to_string().contains(SECRET));
+        assert!(detail.rewrites[0].detail.as_ref().unwrap().contains(SECRET));
     }
 
     #[test]
