@@ -1,5 +1,5 @@
 """Draft: real native WebDriver smoke; no invoke mocking or storage writes."""
-import base64, hashlib, json, os, pathlib, sqlite3, time, urllib.request, urllib.error
+import base64, hashlib, json, os, pathlib, sqlite3, time, urllib.request, urllib.error, shutil
 ROOT = pathlib.Path(os.environ['SMOKE_ROOT']).resolve()
 BINARY = pathlib.Path(os.environ['SMOKE_BINARY']).resolve()
 EVIDENCE = pathlib.Path(os.environ['SMOKE_EVIDENCE']).resolve()
@@ -80,6 +80,42 @@ def screenshot(name):
     encoded = request('GET', f'/session/{session}/screenshot')
     (EVIDENCE / name).write_bytes(base64.b64decode(encoded))
 
+
+def collect_popup_diagnostics(label):
+    # Observation only. No style, DOM, storage or application mutations.
+    script = """
+      const selectors=['.ant-select-open','.ant-select-open input[role=combobox]',
+        '.ant-select-dropdown','.rc-virtual-list-holder','.rc-virtual-list-holder-inner',
+        '.ant-select-item-option','.ant-select-item-option-content'];
+      const info = element => {
+        const rect=element.getBoundingClientRect(), css=getComputedStyle(element);
+        return {tag:element.tagName,classes:element.className,text:(element.textContent || "").slice(0,300),
+          rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+          style:Object.fromEntries(['display','visibility','opacity','overflow','overflow-x','overflow-y',
+            'position','z-index','transform','clip','clip-path','content-visibility','animation-name',
+            'animation-play-state','pointer-events'].map(key=>[key,css.getPropertyValue(key)]))};
+      };
+      return {viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},
+        elements:selectors.flatMap(selector=>Array.from(document.querySelectorAll(selector)).map(element=>{
+          const ancestors=[];for(let p=element.parentElement;p;p=p.parentElement)ancestors.push(info(p));
+          return {selector,...info(element),ancestors};
+        }))};
+    """
+    errors={}
+    try:
+        shutil.copyfile(ROOT/'xvfb-framebuffers'/'Xvfb_screen0', EVIDENCE/(label+'.xwd'))
+    except Exception as error: errors['native-framebuffer']=str(error)
+    try:
+        value=request('POST', f'/session/{session}/execute/sync', {'script':script,'args':[]})
+        (EVIDENCE / (label+'-geometry.json')).write_text(json.dumps(value,indent=2))
+    except Exception as error: errors['geometry']=str(error)
+    try:
+        (EVIDENCE / (label+'-source.html')).write_text(request('GET',f'/session/{session}/source'))
+    except Exception as error: errors['source']=str(error)
+    try: screenshot(label+'.png')
+    except Exception as error: errors['screenshot']=str(error)
+    (EVIDENCE / (label+'-diagnostic-errors.json')).write_text(json.dumps(errors,indent=2))
+
 def launch():
     global session
     before = pids()
@@ -114,6 +150,7 @@ try:
     record('native-empty-profile-rendered', pid=first, initial_theme=initial_theme)
     old = settings_fingerprint()
     click(THEME)
+    collect_popup_diagnostics('popup-open')
     click("//div[contains(@class,'ant-select-item-option-content') and (normalize-space()='" + target_labels[0] + "' or normalize-space()='" + target_labels[1] + "')]")
     wait(lambda: text(THEME) in target_labels)
     wait(lambda: settings_fingerprint() not in (None, old))
@@ -142,7 +179,10 @@ except Exception as error:
     if session:
         try:
             (EVIDENCE / 'failure.html').write_text(request('GET', f'/session/{session}/source'))
-        except Exception: pass
+        except Exception as source_error:
+            (EVIDENCE / 'failure-source-error.txt').write_text(str(source_error))
         try: screenshot('failure.png')
-        except Exception: pass
+        except Exception as screenshot_error:
+            (EVIDENCE / 'failure-screenshot-error.txt').write_text(str(screenshot_error))
+        collect_popup_diagnostics('popup-failure')
     raise
