@@ -151,9 +151,16 @@ def ssh_cancel_smoke():
     request('POST', f'/session/{session}/element/{field}/value', {'text':'cancel-only-synthetic-name'})
     assert attr(name, 'value') == 'cancel-only-synthetic-name'
     screenshot('ssh-draft-name.png')
-    click(cancel)
+    # Observe focus without mutating it; send a real WebDriver Escape key pair.
+    focused = request('GET', f'/session/{session}/element/active')
+    assert focused[ELEMENT] == field, 'Synthetic name input must retain focus'
+    (EVIDENCE / 'ssh-escape-focus.json').write_text(json.dumps({'name_input_focused': True}))
+    request('POST', f'/session/{session}/actions', {'actions': [{
+        'type': 'key', 'id': 'ssh-cancel-keyboard', 'actions': [
+            {'type': 'keyDown', 'value': '\ue00c'}, {'type': 'keyUp', 'value': '\ue00c'}]}]})
     wait(lambda: not request('POST', f'/session/{session}/elements', {'using':'xpath','value':form}))
-    ssh_snapshot('after-cancel')
+    xpath(modal)  # Escape closes only the child; the parent must remain visible.
+    ssh_snapshot('after-escape')
     click(new)
     wait(lambda: xpath(name))
     expected = {'name':'', 'host':'', 'port':'22', 'username':'', 'privateKeyPath':'', 'passphrase':''}
@@ -172,7 +179,7 @@ def ssh_cancel_smoke():
     # Wait for the actual modal exit; displayed underlying controls can still be masked.
     wait(lambda: request('POST', f'/session/{session}/execute/sync', {
         'script': "return !document.querySelector('.ant-modal-mask') && Array.from(document.querySelectorAll('.ant-modal-wrap')).every(e => getComputedStyle(e).display === 'none')", 'args': []}))
-    record('ssh-unsaved-name-cancel-reopen', connection_count=0, active_connection='', restored_enabled=False)
+    record('ssh-unsaved-name-escape-reopen', connection_count=0, active_connection='', restored_enabled=False)
 
 def launch():
     global session
