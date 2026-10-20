@@ -409,3 +409,53 @@ jobs:
           for module in coding::open_code::commands coding::open_code::v2_migration coding::open_code::free_models; do
             cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
           done
+  gateway-observations-regression:
+    # Synthetic loopback HTTP/SSE and temporary export files only.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-observations-regression'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record exact source and toolchain
+        run: |
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+      - name: Verify exact HTTP and export regression selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway::native_tools_http:: -- --list > /tmp/gateway-observations-http.txt
+          cat /tmp/gateway-observations-http.txt
+          test "$(grep -c '^proxy_gateway::native_tools_http::.*: test$' /tmp/gateway-observations-http.txt)" -eq 8
+          for name in a_native_search_is_marked_declared_forwarded_and_used a_tool_dropped_by_protocol_conversion_is_marked_filtered detail_only_markers_do_not_exist_without_request_logging streaming_native_search_keeps_declared_forwarded_and_used_without_bodies streaming_filtered_search_keeps_the_request_rewrite_without_bodies streaming_used_search_is_observed_before_response_conversion_without_bodies streaming_text_marker_is_not_tool_usage privacy_lossy_observations_do_not_persist_secrets_without_bodies; do
+            grep -Fx "proxy_gateway::native_tools_http::${name}: test" /tmp/gateway-observations-http.txt
+          done
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies -- --exact --list > /tmp/gateway-observations-export.txt
+          cat /tmp/gateway-observations-export.txt
+          test "$(grep -c ': test$' /tmp/gateway-observations-export.txt)" -eq 1
+          grep -Fx 'coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies: test' /tmp/gateway-observations-export.txt
+      - name: Run both regression groups serially and retain failures
+        shell: bash
+        run: |
+          set -uo pipefail
+          http_status=0
+          export_status=0
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway::native_tools_http:: -- --test-threads=1 || http_status=$?
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies -- --exact --test-threads=1 || export_status=$?
+          printf 'HTTP regression exit: %s; export regression exit: %s\n' "$http_status" "$export_status"
+          test "$http_status" -eq 0 && test "$export_status" -eq 0
