@@ -1,45 +1,37 @@
-name: Compaction regression
+# Preparation only. Do not dispatch until the shared Windows window is released.
+# Requires the reviewed probe.py at scripts/probe-ssh433.py on the same branch.
+name: SSH PowerShell 5.1 compatibility measurement
 on:
   workflow_dispatch:
+concurrency:
+  group: ai-toolbox-ssh433-windows-measurement
+  cancel-in-progress: false
 permissions:
   contents: read
-concurrency:
-  group: ai-toolbox-maintenance-validation
-  cancel-in-progress: false
 jobs:
-  websocket-regression:
-    if: github.ref == 'refs/heads/maintenance/compaction-refusal-memory'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
+  measure:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/ssh433-powershell51'
+    runs-on: windows-2022
+    timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # verified official v4
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record toolchain and disk
-        run: |
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify all five regressions are selected
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib websocket_compaction_refusal_memory -- --list > /tmp/compaction-tests.txt
-          cat /tmp/compaction-tests.txt
-          for name in ignores_failed_event ignores_incomplete_event ignores_failed_snapshot ignores_incomplete_snapshot keeps_ordinary_refusal; do
-            grep -Fx "coding::proxy_gateway::runtime::websocket::tests::websocket_compaction_refusal_memory_${name}: test" /tmp/compaction-tests.txt
-          done
-          test "$(grep -c '^coding::proxy_gateway::runtime::websocket::tests::websocket_compaction_refusal_memory_.*: test$' /tmp/compaction-tests.txt)" -eq 5
-      - name: Real WebSocket refusal-memory regression
-        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib websocket_compaction_refusal_memory -- --nocapture
+      - name: Record exact source commit
+        shell: pwsh
+        run: git rev-parse HEAD
+      - name: Measure existing command templates in isolated temporary paths
+        shell: pwsh
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: python scripts/probe-ssh433.py "$env:GITHUB_WORKSPACE"
+      - name: Preserve raw output and explicit case verdicts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # verified official v4
+        with:
+          name: ssh433-powershell51-measurements
+          path: ${{ runner.temp }}/ai-ssh433-*/
+          if-no-files-found: error
+          retention-days: 7
