@@ -83,6 +83,10 @@ HTTP 本地隐私错误按客户端协议输出：OpenAI 使用 `error.message/t
 
 日志中已知原值的替换只匹配原始文本范围，保护已有占位符，生成的占位符不再参与替换。单字符密码等短值不能递归改写 token 前缀或使日志反复膨胀；超出匹配限额时省略正文。
 
+`GatewayRequestLogDetail.rewrites` 的 `lossy_conversion` 诊断不属于正文存储，不能原样复制协议 warning：modality、未知 content type 和 MIME 都可能是任意请求字符串。`request_log::safe_lossy_observation_detail` 只输出有限集合的固定结构说明；完整白名单路径形状只用于选择说明，数组下标、原始路径、类型/MIME 和其它请求值都不进入结果，未知旧文案回退固定摘要。runtime 在创建条目时处理，旧 JSONL 详情的 display/export 边界再次使用同一幂等 helper。此规则不依赖 privacy 或 body/header 开关，保留 `lossy_conversion` kind，既不改写历史 JSONL，也不改变发给请求客户端的原 `X-Transformer-Lossy` header。
+
+新增回归覆盖三类真实 warning 生成、无凭据标签的合成私有字符串、非白名单/超长路径、重复规整，以及没有 privacy 映射的旧详情 display/export。既有 HTTP → JSONL 回归由独立夹具验证。当前修复仅完成本地静态准备；本地缺少 Cargo/rustfmt，尚未验证 GREEN，不能据此宣称真实用户发生过泄漏或全套验证通过。
+
 ## 验证与参考
 
 核心回归位于 `privacy/tests.rs`；真实本机 HTTP/WS 往返位于 `runtime/websocket/privacy_tests.rs` 和 `privacy_matrix_tests.rs`。测试创建真实 SQLite provider 配置、本机网关与模拟上游，经网络检查实际出站正文、认证、客户端文本/工具参数、用量、日志和终态，不替代真实 CLI 二进制及第三方渠道联调。现有 WebSocket、协议转换、SQLite 与全量测试仍是交付门禁。
