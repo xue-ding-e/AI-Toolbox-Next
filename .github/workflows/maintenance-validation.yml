@@ -565,3 +565,36 @@ jobs:
           grep -F 'Passed 92 browser checks.' /tmp/gateway-observations-dom.log
       - name: Frontend production build
         run: pnpm build
+  skills-legacy-group-migration:
+    # Only synthetic records in temporary SQLite files; no installed CLI data.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/skills-legacy-group-migration'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Verify exact legacy group regression selection
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests::legacy_group_migration_ -- --list > /tmp/skills-legacy-group-tests.txt
+          cat /tmp/skills-legacy-group-tests.txt
+          test "$(grep -c '^coding::skills::skill_store::tests::legacy_group_migration_.*: test$' /tmp/skills-legacy-group-tests.txt)" -eq 3
+          for name in legacy_group_migration_preserves_source_metadata_and_survives_reopen legacy_group_migration_reuses_existing_case_insensitive_registry legacy_group_migration_does_not_invent_custom_groups_for_repository_sources; do
+            grep -Fx "coding::skills::skill_store::tests::$name: test" /tmp/skills-legacy-group-tests.txt
+          done
+      - name: Run migration and neighboring preferences tests serially
+        run: |
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
