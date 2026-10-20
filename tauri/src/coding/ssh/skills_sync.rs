@@ -180,6 +180,9 @@ pub(super) async fn sync_skills_to_ssh_with_warnings(
         info!("Skills SSH sync skipped: enabled={}", config.enabled);
         return Ok(());
     }
+    // Keep this exported phase independently guarded; no cross-session cache.
+    super::sync::with_posix_sync_shell(session, || async {
+
     info!(
         "Skills SSH sync start: active_connection_id={}, remote_central_dir={}",
         config.active_connection_id, SSH_CENTRAL_DIR
@@ -501,6 +504,8 @@ pub(super) async fn sync_skills_to_ssh_with_warnings(
     let _ = app.emit("ssh-skills-sync-completed", ());
 
     Ok(())
+    }).await?
+
 }
 
 #[cfg(test)]

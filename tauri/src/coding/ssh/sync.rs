@@ -4,6 +4,21 @@ use super::types::{
 };
 use std::path::{Path, PathBuf};
 
+/// Verify the actual command shell before starting a sync phase. Do not infer
+/// compatibility from an OS banner, SSH authentication or an installed `uname`.
+/// No success cache: a reconnect/default-shell change must be checked again.
+pub(super) async fn with_posix_sync_shell<F, W, T>(session: &SshSession, write: F) -> Result<T, String>
+where
+    F: FnOnce() -> W,
+    W: std::future::Future<Output = T>,
+{
+    super::capabilities::guard_sync_operation(
+        session.exec_command(super::capabilities::POSIX_SYNC_PROBE),
+        std::time::Duration::from_secs(10),
+        write,
+    ).await
+}
+
 type CurrentFileReporter<'a> = &'a (dyn Fn(String) + Send + Sync);
 
 pub async fn manage_remote_skill_target(

@@ -486,6 +486,27 @@ pub async fn do_full_sync(
     module: Option<&str>,
     skip_modules: Option<&[String]>,
 ) -> SyncResult {
+    // A failed preflight returns normally so every caller retains its existing
+    // sync-lock release, persisted status and completion-event handling.
+    sync::with_posix_sync_shell(session, || {
+        do_full_sync_checked(state, app, session, config, module, skip_modules)
+    }).await.unwrap_or_else(|error| SyncResult {
+        success: false,
+        synced_files: vec![],
+        skipped_files: vec![],
+        errors: vec![error],
+        warnings: vec![],
+    })
+}
+
+async fn do_full_sync_checked(
+    state: &SqliteDbState,
+    app: &tauri::AppHandle,
+    session: &SshSession,
+    config: &SSHSyncConfig,
+    module: Option<&str>,
+    skip_modules: Option<&[String]>,
+) -> SyncResult {
     let total_mapping_count = config.file_mappings.len();
     let enabled_mapping_count = config.file_mappings.iter().filter(|m| m.enabled).count();
     let disabled_mapping_count = total_mapping_count.saturating_sub(enabled_mapping_count);
