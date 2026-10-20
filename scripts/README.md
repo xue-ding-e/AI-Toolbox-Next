@@ -91,6 +91,22 @@ GATEWAY_REQUEST_EXPORT_OWNERSHIP_CASE=export-unmount node scripts/verify-gateway
 - Uses the same dependencies and unchanged shared runner as the original export fixture. The only service alias is the real `proxyGatewayApi`; the actual dialog wrapper is retained. The strict IPC allowlist contains list/detail, idle rebuild progress, save, and export only. All paths and DTOs are fixed synthetic values, with no native picker, filesystem export, credentials, real request logs or external service.
 - These neighboring cases were added with the ownership guard after the initial lifecycle RED run; they have no independent pre-fix RED evidence. Do not present them as the original tests-first reproduction or as complete race coverage. The switch uses a programmatic click on the real row, which does not prove modal hit testing or native-dialog behavior. Global browser exceptions remain failures, including rejected promises; none are consumed or marked expected.
 
+## verify-migrated-provider-cards.mjs
+
+Mount the real Claude Desktop, Gemini CLI, Grok and OmO Native provider mapping components:
+
+```bash
+node scripts/verify-migrated-provider-cards.mjs
+```
+
+- Uses the existing Chromium/Vite runner (`--browser`, `--output`) and locked dependencies; no dependency or production change. The 11 named scenarios and 86 assertions have per-scenario and total count gates.
+- Six synthetic provider shapes × two layouts produce exactly 12 surfaces in each theme. Existing role/tag/footer/account/model smoke is retained; Grok official/custom compact cards and OmO default/ordinary list cards complete the formerly partial matrix.
+- Light/dark checks target the actual `.ant-card` or `[data-provider-card-clickable]` painted surface. Each must have a box, an opaque background matching its selected/container token, appropriate light/dark channels, and a changed background across themes. A transparent outer wrapper cannot pass as a dark card.
+- OmO compact menus use real pointer hover/click to open, without fixture style overrides. Closing a menu has zero callbacks; ordinary delete dispatches its exact provider once; clicking a protected delete has zero callbacks and retains the reason. This menu dispatch does not itself open a confirmation. The separate real detail sidebar does: both cancelling and confirming its `Modal.confirm` are checked.
+- Grok list and compact-detail modes each exercise ordinary refresh and Token refresh. Two synthetic account IDs detect row/action mixups; callbacks record exact provider/account IDs and drive the existing loading props. Pending repeat clicks must not duplicate the callback, and clearing the supplied prop restores both rows. The fixture adds no callback guard of its own.
+- No actual account, credential, backend request or filesystem deletion is involved. Import-time platform shims remain; all IPC calls fail closed. Shared browser exceptions are never suppressed. `scenarios.json`, light/dark screenshots and the runner diagnostics are written to the printed artifact directory.
+- These are strengthened component DOM acceptance checks, not evidence of a production bug or native/full-page GUI coverage. Syntax/static checks alone do not establish that the browser scenarios passed.
+
 ## transparent-white.js
 
 Convert white/near-white pixels to transparent in a PNG image.
