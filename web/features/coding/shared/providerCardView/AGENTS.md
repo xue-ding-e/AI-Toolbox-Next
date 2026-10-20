@@ -76,6 +76,7 @@
 - `pnpm run test:migrated-provider-cards`：四家（claudedesktop / geminicli / grok / omo_native）的真实映射层，固定 11 个具名场景 / 86 项断言；6 种合成 provider 形态 × list/card 的 12 个表面在亮暗两主题都必须出现。保留角色绑定、tierAlias、footer 几何、官方账号与模型工具栏 smoke，并补 Grok 双布局刷新回调/逐账号逐动作 loading、OmO 菜单删除/关闭/保护及侧栏确认取消/确认成功。菜单直接分发回调，侧栏才自带 `Modal.confirm`，测试不可伪造页面确认。暗色必须定位实际 `.ant-card` 或 `[data-provider-card-clickable]` 表面，核不透明、主题 token、明暗变化；不能以 `[class*="card"]` 命中透明外壳且“非白色”判绿。回调仅记录合成 ID 并驱动输入 loading prop，全部 IPC fail closed，共享浏览器异常门禁不变。此测试补强本身不是生产 bug 复现，也不代表真实账号刷新、文件删除或完整页面/桌面 GUI 验收。
 - `pnpm run test:provider-list-locate` / `test:provider-list-drag`：列表布局未受影响。
 - 暗色 surface 夹具的预期色必须按实际来源取：普通列表 `.ant-card` 用真实 `ConfigProvider` 上下文的 `theme.useToken().token.colorBgContainer`，紧凑卡用 App.css 的 `--color-bg-container`，已应用高亮用 `--color-bg-selected`；前两者在暗色下不保证同值。修 oracle 不能放宽实际 surface、不透明与主题切换门禁。
+- 夹具在展开上方模型目录后，文本出现不代表折叠高度动画已结束。菜单指针操作须先滚入视口、等待真实按钮坐标稳定并命中，再 hover，等浮起位移和 opacity 稳定后重新取坐标单击；不要重试点击碰运气，也不要通过改样式或绕过真实触发器来消除超时。菜单打开前须没有旧 dropdown，失败保留坐标和命中诊断。
 
 ## 何时更新本文件
 
