@@ -211,10 +211,62 @@ def kimi_snapshot(label, expected_id='', names=()):
 def modal_retired():
     return request('POST',f'/session/{session}/execute/sync',{'script':"return !document.querySelector('.ant-modal-mask') && Array.from(document.querySelectorAll('.ant-modal-wrap')).every(e => getComputedStyle(e).display === 'none')",'args':[]})
 
+def navigate_kimi_visible():
+    # Observe geometry only; no JS scroll/focus/click or DOM mutation.
+    script = """
+      const tabs=document.querySelectorAll('[data-node-key="kimi"] > [role="tab"]');
+      if(tabs.length!==1) throw Error('Kimi tab is not unique');
+      const tab=tabs[0], strip=tab.closest('.ant-tabs-nav-wrap');
+      if(!strip) throw Error('No normal scroll strip');
+      const info=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return {
+        x:r.x,y:r.y,width:r.width,height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,
+        display:s.display,visibility:s.visibility,opacity:s.opacity,overflowX:s.overflowX,overflowY:s.overflowY,
+        transform:s.transform,scrollLeft:e.scrollLeft,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth};};
+      const t=info(tab),n=info(strip),ancestors=[];
+      let clip={left:0,top:0,right:innerWidth,bottom:innerHeight};
+      for(let e=strip;e;e=e.parentElement){const a=info(e);ancestors.push(a);
+        if(['auto','scroll','hidden','clip'].includes(a.overflowX)){clip.left=Math.max(clip.left,a.left);clip.right=Math.min(clip.right,a.right);}
+        if(['auto','scroll','hidden','clip'].includes(a.overflowY)){clip.top=Math.max(clip.top,a.top);clip.bottom=Math.min(clip.bottom,a.bottom);}}
+      const x=Math.floor((Math.max(n.left,clip.left)+Math.min(n.right,clip.right))/2),
+            y=Math.floor((Math.max(n.top,clip.top)+Math.min(n.bottom,clip.bottom))/2);
+      const hit=document.elementFromPoint(x,y),cx=(t.left+t.right)/2,cy=(t.top+t.bottom)/2,
+            target=document.elementFromPoint(cx,cy);
+      return {tab:t,strip:n,ancestors,clip,viewport:{width:innerWidth,height:innerHeight},x,y,
+        stripHit:!!hit&&strip.contains(hit),targetHit:!!target&&(target===tab||tab.contains(target)),
+        targetInside:t.left>=clip.left&&t.right<=clip.right&&t.top>=clip.top&&t.bottom<=clip.bottom,
+        targetStyled:t.width>0&&t.height>0&&t.display!=='none'&&t.visibility==='visible'&&Number(t.opacity)>0};
+    """
+    def observe(label):
+        value=request('POST',f'/session/{session}/execute/sync',{'script':script,'args':[]})
+        matches=request('POST',f'/session/{session}/elements',{'using':'xpath','value':"//*[@data-node-key='kimi']/*[@role='tab']"})
+        value['displayed']=[request('GET',f'/session/{session}/element/{e[ELEMENT]}/displayed') for e in matches]
+        (EVIDENCE/('kimi-nav-'+label+'.json')).write_text(json.dumps(value,indent=2))
+        return value
+    def visible(v): return v['targetInside'] and v['targetHit'] and v['targetStyled'] and v['displayed']==[True]
+    before=observe('before')
+    shutil.copyfile(ROOT/'xvfb-framebuffers'/'Xvfb_screen0',EVIDENCE/'kimi-nav-before.xwd')
+    if not visible(before):
+        if not before['stripHit'] or before['strip']['overflowX'] not in ('auto','scroll'):
+            raise NativeSafetyStop('No visible normal horizontal scroll target')
+        delta=round((before['tab']['left']+before['tab']['right'])/2-before['x'])
+        remaining=before['strip']['scrollWidth']-before['strip']['clientWidth']-before['strip']['scrollLeft']
+        delta=min(delta,round(remaining)) if delta>0 else max(delta,-round(before['strip']['scrollLeft']))
+        if delta==0: raise NativeSafetyStop('No valid wheel delta to reveal Kimi')
+        action={'type':'wheel','id':'kimi-nav-wheel','actions':[{'type':'scroll','origin':'viewport',
+                 'x':before['x'],'y':before['y'],'deltaX':delta,'deltaY':0,'duration':250}]}
+        (EVIDENCE/'kimi-nav-wheel.json').write_text(json.dumps(action,indent=2))
+        # Exactly one wheel action. Unsupported/error or no visibility change stops this run.
+        request('POST',f'/session/{session}/actions',{'actions':[action]})
+        wait(lambda: visible(observe('after-wheel')),20)
+    after=observe('before-click')
+    if not visible(after): raise NativeSafetyStop('Kimi remains clipped or covered')
+    shutil.copyfile(ROOT/'xvfb-framebuffers'/'Xvfb_screen0',EVIDENCE/'kimi-nav-visible.xwd')
+    click("//*[@data-node-key='kimi']/*[@role='tab']")
+
 def kimi_crud_smoke():
     name_a='native-synthetic-kimi-A'; name_b='native-synthetic-kimi-B'
     kimi_snapshot('before-navigation')
-    click("//header//span[normalize-space()='Kimi']/parent::div")
+    navigate_kimi_visible()
     section="//*[@id='kimi-providers']"
     wait(lambda: xpath(section))
     # The normal header must display the actual isolated config path.
