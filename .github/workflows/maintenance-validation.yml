@@ -409,3 +409,159 @@ jobs:
           for module in coding::open_code::commands coding::open_code::v2_migration coding::open_code::free_models; do
             cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
           done
+  gateway-observations-regression:
+    # Synthetic loopback HTTP/SSE and temporary export files only.
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/test/gateway-observations-regression' || github.ref == 'refs/heads/test/gateway-observation-privacy-red' || github.ref == 'refs/heads/fix/gateway-observations-reviewed')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record exact source and toolchain
+        run: |
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+      - name: Verify exact HTTP and export regression selection
+        if: github.ref == 'refs/heads/test/gateway-observations-regression'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway::native_tools_http:: -- --list > /tmp/gateway-observations-http.txt
+          cat /tmp/gateway-observations-http.txt
+          test "$(grep -c '^proxy_gateway::native_tools_http::.*: test$' /tmp/gateway-observations-http.txt)" -eq 8
+          for name in a_native_search_is_marked_declared_forwarded_and_used a_tool_dropped_by_protocol_conversion_is_marked_filtered detail_only_markers_do_not_exist_without_request_logging streaming_native_search_keeps_declared_forwarded_and_used_without_bodies streaming_filtered_search_keeps_the_request_rewrite_without_bodies streaming_used_search_is_observed_before_response_conversion_without_bodies streaming_text_marker_is_not_tool_usage privacy_lossy_observations_do_not_persist_secrets_without_bodies; do
+            grep -Fx "proxy_gateway::native_tools_http::${name}: test" /tmp/gateway-observations-http.txt
+          done
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies -- --exact --list > /tmp/gateway-observations-export.txt
+          cat /tmp/gateway-observations-export.txt
+          test "$(grep -c ': test$' /tmp/gateway-observations-export.txt)" -eq 1
+          grep -Fx 'coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies: test' /tmp/gateway-observations-export.txt
+      - name: Run both regression groups serially and retain failures
+        if: github.ref == 'refs/heads/test/gateway-observations-regression'
+        shell: bash
+        run: |
+          set -uo pipefail
+          http_status=0
+          export_status=0
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway::native_tools_http:: -- --test-threads=1 || http_status=$?
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies -- --exact --test-threads=1 || export_status=$?
+          printf 'HTTP regression exit: %s; export regression exit: %s\n' "$http_status" "$export_status"
+          test "$http_status" -eq 0 && test "$export_status" -eq 0
+      - name: Verify and run only the synthetic JSONL privacy regression
+        if: github.ref == 'refs/heads/test/gateway-observation-privacy-red'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name=proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding "$name" -- --exact --list > /tmp/gateway-privacy-test.txt
+          cat /tmp/gateway-privacy-test.txt
+          test "$(grep -c ': test$' /tmp/gateway-privacy-test.txt)" -eq 1
+          grep -Fx "${name}: test" /tmp/gateway-privacy-test.txt
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding "$name" -- --exact --test-threads=1
+      - name: Verify GREEN regression names and run gateway neighbors serially
+        if: github.ref == 'refs/heads/fix/gateway-observations-reviewed'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway:: -- --list > /tmp/gateway-green-lib.txt
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway:: -- --list > /tmp/gateway-green-http.txt
+          cat /tmp/gateway-green-lib.txt /tmp/gateway-green-http.txt
+          test "$(grep -c '^proxy_gateway::native_tools_http::.*: test$' /tmp/gateway-green-http.txt)" -eq 8
+          grep -Fx "proxy_gateway::native_tools_http::a_native_search_is_marked_declared_forwarded_and_used: test" /tmp/gateway-green-http.txt
+          grep -Fx "proxy_gateway::native_tools_http::a_tool_dropped_by_protocol_conversion_is_marked_filtered: test" /tmp/gateway-green-http.txt
+          grep -Fx "proxy_gateway::native_tools_http::detail_only_markers_do_not_exist_without_request_logging: test" /tmp/gateway-green-http.txt
+          grep -Fx "proxy_gateway::native_tools_http::streaming_native_search_keeps_declared_forwarded_and_used_without_bodies: test" /tmp/gateway-green-http.txt
+          grep -Fx "proxy_gateway::native_tools_http::streaming_filtered_search_keeps_the_request_rewrite_without_bodies: test" /tmp/gateway-green-http.txt
+          grep -Fx "proxy_gateway::native_tools_http::streaming_used_search_is_observed_before_response_conversion_without_bodies: test" /tmp/gateway-green-http.txt
+          grep -Fx "proxy_gateway::native_tools_http::streaming_text_marker_is_not_tool_usage: test" /tmp/gateway-green-http.txt
+          grep -Fx "proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies: test" /tmp/gateway-green-http.txt
+          grep -Fx "coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::commands::tests::privacy_lossy_observations_from_old_logs_are_safe_for_display_and_export: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::request_log::tests::privacy_lossy_observation_summaries_are_allowlisted_and_idempotent: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::request_log::tests::privacy_lossy_observation_sanitization_preserves_other_rewrites: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::http_io::tests::header_write_failure_keeps_preread_native_tool_observations: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::privacy_lossy_warnings_never_copy_request_values_into_observations: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_handles_split_utf8_multiline_and_mixed_delimiters: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_ignores_text_and_other_protocol_markers: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_recognizes_anthropic_and_gemini_native_events: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_bounds_oversized_events_and_recovers_after_the_delimiter: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_handles_complete_eof_and_flattened_events_without_guessing: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_flushes_flattened_events_when_the_cap_splits_utf8: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_observer_is_lazy_and_preserves_chunks_errors_and_request_markers: test" /tmp/gateway-green-lib.txt
+          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_observer_drop_keeps_received_markers_and_stops_reading: test" /tmp/gateway-green-lib.txt
+          lib_status=0
+          http_status=0
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway:: -- --test-threads=1 || lib_status=$?
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway:: -- --test-threads=1 || http_status=$?
+          printf 'Gateway lib exit: %s; gateway integration exit: %s\n' "$lib_status" "$http_status"
+          test "$lib_status" -eq 0 && test "$http_status" -eq 0
+  gateway-observations-acceptance:
+    # Full Rust acceptance and the synthetic request-detail UI run serially.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-observations-acceptance'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record source and Rust test inventory
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+          cargo test --locked --manifest-path tauri/Cargo.toml -- --list > /tmp/gateway-acceptance-rust-list.txt
+          cat /tmp/gateway-acceptance-rust-list.txt
+          grep -F 'proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies: test' /tmp/gateway-acceptance-rust-list.txt
+          grep -F 'coding::proxy_gateway::runtime::observations::tests::stream_observer_drop_keeps_received_markers_and_stops_reading: test' /tmp/gateway-acceptance-rust-list.txt
+      - name: Full Rust suite including integration and documentation targets
+        run: cargo test --locked --manifest-path tauri/Cargo.toml -- --test-threads=1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: TypeScript check
+        run: pnpm exec tsc --noEmit
+      - name: Full Node suite and existing structure guards
+        run: |
+          pnpm run test:web
+          node scripts/verify-form-modal-layout.mjs
+          node scripts/verify-provider-card-layout.mjs
+          node scripts/verify-official-accounts-shared.mjs
+      - name: Real request detail observation markers with synthetic service data
+        run: |
+          set -euo pipefail
+          node scripts/verify-gateway-request-observations.mjs | tee /tmp/gateway-observations-dom.log
+          grep -F 'Passed 12 localized request-observation scenarios (92 assertions).' /tmp/gateway-observations-dom.log
+          grep -F 'Passed 92 browser checks.' /tmp/gateway-observations-dom.log
+      - name: Frontend production build
+        run: pnpm build
