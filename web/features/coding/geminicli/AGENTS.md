@@ -29,6 +29,7 @@
 
 ## Minimal Verification
 
+- `node scripts/verify-gemini-account-pending.mjs` is a separate tests-first component fixture (one scenario / six assertions) for simultaneous `refreshingOfficialAccountId` and `savingOfficialAccountId`. Both target buttons must remain loading and ignore repeated clicks; callbacks record only synthetic IDs, and all IPC fails closed. Keep its result separate from the migrated-card render/action suite. Adding the candidate alone does not establish a reproduction or authorize changing production pending behavior.
 - At least verify TypeScript compiles after route, service, i18n, and page registration changes.
 - At least verify the page uses `tool="geminicli"` for the shared session manager.
 - Verify the Gemini page sidebar has no standalone Usage/Quota section and that official accounts render under the Google Official provider card.

@@ -51,7 +51,7 @@ document.documentElement.dataset.theme = resolvedTheme;
 updateGatewayProviderProfiles(gatewayProfiles);
 
 const noop = () => {};
-const state = { runId: parameters.get('runId'), callbacks: [], unexpectedIPC: [] };
+const state = { runId: parameters.get('runId'), callbacks: [], unexpectedIPC: [], antdContainer: null };
 window.__TAURI_INTERNALS__ = {
   invoke: async (command, args) => {
     state.unexpectedIPC.push({ command, args });
@@ -365,10 +365,13 @@ window.migratedProviderCardsFixture = {
     const surface = this.surface(name);
     const rect = surface.getBoundingClientRect();
     const background = getComputedStyle(surface).backgroundColor;
-    const token = name.startsWith('claude-desktop-') || name.startsWith('gemini-')
-      ? '--color-bg-selected' : '--color-bg-container';
+    const accented = name.startsWith('claude-desktop-') || name.startsWith('gemini-');
+    // CardShell uses Antd's container token at rest; compact cards use App.css.
+    // Applied cards in either layout use the shared selected-background token.
+    if (!state.antdContainer) throw new Error('ConfigProvider tokens are not ready');
     const probe = document.createElement('span');
-    probe.style.backgroundColor = 'var(' + token + ')';
+    probe.style.backgroundColor = accented ? 'var(--color-bg-selected)'
+      : name.endsWith('-list') ? state.antdContainer : 'var(--color-bg-container)';
     document.body.append(probe);
     const expectedBackground = getComputedStyle(probe).backgroundColor;
     probe.remove();
@@ -440,6 +443,12 @@ window.migratedProviderCardsFixture = {
   finishRefresh() { document.querySelector('[data-fixture-finish-refresh]').click(); },
 };
 
+function ThemeTokenProbe() {
+  const { token } = theme.useToken();
+  React.useLayoutEffect(() => { state.antdContainer = token.colorBgContainer; }, [token.colorBgContainer]);
+  return null;
+}
+
 function FixtureHost() {
   const [pending, setPending] = React.useState(null);
   const refresh = (viewMode, action) => (provider, account) => {
@@ -449,6 +458,7 @@ function FixtureHost() {
   };
   return (
     <ConfigProvider theme={{ algorithm: resolvedTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
+      <ThemeTokenProbe />
       <MemoryRouter>
         <button data-fixture-finish-refresh onClick={() => setPending(null)}>Finish synthetic refresh</button>
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>

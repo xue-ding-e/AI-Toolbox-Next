@@ -101,11 +101,24 @@ node scripts/verify-migrated-provider-cards.mjs
 
 - Uses the existing Chromium/Vite runner (`--browser`, `--output`) and locked dependencies; no dependency or production change. The 11 named scenarios and 86 assertions have per-scenario and total count gates.
 - Six synthetic provider shapes × two layouts produce exactly 12 surfaces in each theme. Existing role/tag/footer/account/model smoke is retained; Grok official/custom compact cards and OmO default/ordinary list cards complete the formerly partial matrix.
-- Light/dark checks target the actual `.ant-card` or `[data-provider-card-clickable]` painted surface. Each must have a box, an opaque background matching its selected/container token, appropriate light/dark channels, and a changed background across themes. A transparent outer wrapper cannot pass as a dark card.
+- Light/dark checks target the actual `.ant-card` or `[data-provider-card-clickable]` painted surface. Each must have a box, an opaque background matching its selected/container token, appropriate light/dark channels, and a changed background across themes. Unaccented list cards use `colorBgContainer` read by `theme.useToken()` inside the actual `ConfigProvider`; compact cards use the App.css container token, and accented cards use its selected token. Do not assume the two container colors are identical. A transparent outer wrapper cannot pass as a dark card.
 - OmO compact menus use real pointer hover/click to open, without fixture style overrides. Closing a menu has zero callbacks; ordinary delete dispatches its exact provider once; clicking a protected delete has zero callbacks and retains the reason. This menu dispatch does not itself open a confirmation. The separate real detail sidebar does: both cancelling and confirming its `Modal.confirm` are checked.
 - Grok list and compact-detail modes each exercise ordinary refresh and Token refresh. Two synthetic account IDs detect row/action mixups; callbacks record exact provider/account IDs and drive the existing loading props. Pending repeat clicks must not duplicate the callback, and clearing the supplied prop restores both rows. The fixture adds no callback guard of its own.
 - No actual account, credential, backend request or filesystem deletion is involved. Import-time platform shims remain; all IPC calls fail closed. Shared browser exceptions are never suppressed. `scenarios.json`, light/dark screenshots and the runner diagnostics are written to the printed artifact directory.
 - These are strengthened component DOM acceptance checks, not evidence of a production bug or native/full-page GUI coverage. Syntax/static checks alone do not establish that the browser scenarios passed.
+
+## verify-gemini-account-pending.mjs
+
+Separate tests-first characterization of concurrent Gemini account actions:
+
+```bash
+node scripts/verify-gemini-account-pending.mjs
+```
+
+- One scenario / six assertions mounts the real `GeminiCliProviderCard` list layout with both existing pending props: a saved account refreshing while the virtual local account is saving.
+- The real account fold is opened and both target actions must remain loading. Each receives two actual DOM clicks; neither may dispatch another callback. Callbacks only record fixed synthetic provider/account IDs and deliberately contain no pending guard.
+- Before/after loading and callback evidence are collected before assertions, so a failed loading assertion still leaves the repeated-click result in `dual-pending.json`. Shared browser exceptions remain failures; all backend IPC fails closed.
+- This candidate does not modify production pending semantics and has not established a reproduction until executed. It is separate from the migrated-card 11/86 suite, and does not claim Gemini page, real-account, file-save or native GUI acceptance.
 
 ## transparent-white.js
 
