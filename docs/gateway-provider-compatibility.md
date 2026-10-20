@@ -1238,6 +1238,7 @@ single/failover 模式下，网关总开关与 provider 的原始 `supports_webs
 - 本地 HTTP 隐私错误按入站协议格式化：OpenAI `error.message/type/code`、Anthropic 顶层 `type:error`、Gemini 数字 code/status；非法 JSON、请求签名拒绝和响应还原失败都保持客户端可解析的 envelope。
 - 完全关闭后的新请求沿用既有兼容链路；旧上游历史不会被改写。引用过期映射或其它 provider 的 `previous_response_id` 需要新建会话。
 - 回归包括 `privacy/tests.rs`、`runtime/websocket/privacy_tests.rs`、`runtime/websocket/privacy_matrix_tests.rs`：七入口 × 四种目标协议 × 开关两态 × JSON/SSE/HTTP 强制 SSE 聚合，以及本节 Ollama、legacy completion、协议错误和开启保护后的 single/failover WS 426→HTTP 往返。
+- 观测诊断的 tests-first 补充见架构文档 §11.4：`native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies` 通过真实 Chat→Responses HTTP 路由和 JSONL 检查合成敏感 modality；正文与 Header 均不存储，但保留文本仍须实际命中隐私替换。独立 export 回归直接调用生产导出 helper 并读回临时文件，不能宣称覆盖 IPC。本步只补测试，运行结果待验证，不改变渠道 wire 兼容或宣称隐私问题已复现/修复。
 
 ## 8. 维护流程
 

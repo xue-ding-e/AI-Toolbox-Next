@@ -554,6 +554,10 @@ SQLite v17 只新增可空 `reasoning_effort`，列表和 SQLite 摘要详情回
 
 回归入口：`runtime/observability.rs::tests` 的快照方言/metrics-only 往返/60 秒边界，`runtime.rs::tests` 的真实转发、转换、Copilot 失败协议/effort 往返、进行中计数、failover 和 restart，`usage_stats.rs::tests` 的列表/详情/缓存与延迟聚合，`session_import::tests` 的原生会话导入、身份冲突、旧账本/旧快照收敛和去重，`tauri/tests/sqlite_jsonb.rs` 的 v17/v18/v19/v20 迁移，以及前端 `gatewayFormatters.test.ts`。
 
+#### 请求详情观测回归边界
+
+`tauri/tests/coding/proxy_gateway/native_tools_http.rs` 增加 tests-first 合成 HTTP/SSE 回归：声明/转发/过滤标记保留、协议回转前的上游原生工具使用采集，以及普通文本不应误标工具使用（含 JSON 负控）。测试保持请求日志开启，关闭正文/Header 存储；先消费客户端响应并断言正文/正常唯一终态，再读取 JSONL 观测标记。隐私用例把合成密码形态值放入 modality 和保留文本，先验证出站文本实际脱敏，再断言诊断不持久化原值。`commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies` 对合成旧详情直接调用生产 export builder/writer，并非 IPC 测试。本步仅补回归候选，运行结果待验证，不代表已证实泄露或完成修复；不改变生产逻辑与参考项目 baseline。
+
 ## 12. 上游 URL、query 与 auth
 
 协议转换不只影响 body，也会影响上游 endpoint。相关逻辑在 `runtime/upstream.rs`。
