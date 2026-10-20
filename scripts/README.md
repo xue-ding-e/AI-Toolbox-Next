@@ -41,6 +41,20 @@ Notes:
 - `i18n:find-key` shows values and static usage locations for a key or prefix.
 - `i18n:prune` only removes high-confidence unused keys under an explicit `--prefix`; avoid broad cleanup because dynamic keys can be resolved at runtime.
 
+## verify-gateway-request-observations.mjs
+
+Run the real Gateway request-list/detail component against synthetic IPC DTOs:
+
+```bash
+node scripts/verify-gateway-request-observations.mjs
+```
+
+- Uses the existing Chromium/Vite fixture runner; accepts its `--browser` and `--output` options. Requires the repository's locked frontend dependencies and an already installed Chromium browser; adds no dependency.
+- Exactly 12 scenarios (6 cases × Chinese/English) and 92 assertions cover independent declared/forwarded/used flags, filtered tools, rewrite summaries and missing details, legacy records, empty arrays, and literal HTML-like summaries.
+- The services alias points to the real gateway API wrappers. A strict synthetic IPC allowlist permits only list/detail reads and the view's idle rebuild-status poll; every other command fails the fixture. No credentials, real request logs, user data, or external service is needed.
+- Writes `scenarios.json` and the shared runner's `results.json` into the printed artifact directory. Scenario/assertion counts and unhandled browser exceptions are failure gates.
+- This is component DOM regression coverage, not desktop GUI, full-page, backend observation collection, or real JSONL acceptance. Running it is a separate step from syntax checks or TypeScript checks.
+
 ## transparent-white.js
 
 Convert white/near-white pixels to transparent in a PNG image.
