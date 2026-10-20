@@ -1,6 +1,6 @@
 use super::paths::ProxyGatewayPaths;
 use super::types::{
-    GatewayRequestLogDetail, GatewayRequestLogRecord, GatewayRequestLogSummary,
+    GatewayRequestLogDetail, GatewayRequestLogRecord, GatewayRequestLogSummary, GatewayRequestRewrite,
     ProxyGatewayRequestLogListInput, ProxyGatewaySettings,
 };
 use chrono::{Duration, NaiveDate, Utc};
@@ -18,6 +18,126 @@ const MAX_LOG_LIST_LIMIT: usize = 500;
 /// persisted detail locator works never hit that fallback; this only guards
 /// the residual case so an oversized log can no longer freeze the app.
 const MAX_FALLBACK_SCAN_FILE_KB: u64 = 8 * 1024;
+
+/// Lossy warnings can quote arbitrary request values (modality, content type or
+/// MIME). Keep only a fixed structural explanation in logs, independently of
+/// body storage and privacy settings. Never copy even a path from an old log:
+/// only these complete path shapes, with numeric array indexes, are recognized.
+const SAFE_LOSSY_DETAILS: &[(&[&str], &str)] = &[
+    (
+        &["/modalities/*"],
+        "Requested modality cannot be preserved by protocol conversion",
+    ),
+    (
+        &["/audio"],
+        "Audio output options cannot be preserved by protocol conversion",
+    ),
+    (
+        &["/parallel_tool_calls"],
+        "Parallel tool-call options cannot be preserved by protocol conversion",
+    ),
+    (
+        &["/messages/*/content/*"],
+        "Message content cannot be preserved by protocol conversion",
+    ),
+    (
+        &[
+            "/input/*",
+            "/input/*/content/*",
+            "/output/*",
+            "/output/*/content/*",
+        ],
+        "Response history items cannot be preserved by protocol conversion",
+    ),
+    (
+        &[
+            "/tools/*",
+            "/tools/*/googleSearch",
+            "/tools/*/codeExecution",
+            "/tools/*/urlContext",
+        ],
+        "Tool declarations cannot be preserved by protocol conversion",
+    ),
+    (
+        &[
+            "/contents/*/parts/*/inlineData",
+            "/contents/*/parts/*/fileData",
+        ],
+        "Media content cannot be preserved by protocol conversion",
+    ),
+    (
+        &[
+            "/generationConfig/topK",
+            "/generationConfig/responseLogprobs",
+            "/generationConfig/logprobs",
+            "/generationConfig/responseModalities",
+            "/generationConfig/imageConfig",
+        ],
+        "Generation options cannot be preserved by protocol conversion",
+    ),
+    (
+        &["/cachedContent"],
+        "Cached-content references cannot be preserved by protocol conversion",
+    ),
+    (
+        &["/safetySettings"],
+        "Safety settings cannot be preserved by protocol conversion",
+    ),
+];
+const UNKNOWN_LOSSY_DETAIL: &str = "Some request features cannot be preserved by protocol conversion";
+
+pub(super) fn safe_lossy_observation_detail(detail: &str) -> &'static str {
+    // Already-normalized records must remain stable across display and export.
+    if let Some((_, summary)) = SAFE_LOSSY_DETAILS
+        .iter()
+        .find(|(_, summary)| *summary == detail)
+    {
+        return *summary;
+    }
+    let Some((path, _)) = detail.split_once(": ") else {
+        return UNKNOWN_LOSSY_DETAIL;
+    };
+    // Bound path matching for malformed legacy text; no path bytes enter the result.
+    if path.len() > 128 {
+        return UNKNOWN_LOSSY_DETAIL;
+    }
+    for (patterns, summary) in SAFE_LOSSY_DETAILS {
+        if patterns
+            .iter()
+            .any(|pattern| observation_path_matches(path, pattern))
+        {
+            return *summary;
+        }
+    }
+    UNKNOWN_LOSSY_DETAIL
+}
+
+fn observation_path_matches(path: &str, pattern: &str) -> bool {
+    let mut segments = path.split('/');
+    for expected in pattern.split('/') {
+        let Some(segment) = segments.next() else {
+            return false;
+        };
+        if expected == "*" {
+            if segment.is_empty() || !segment.bytes().all(|byte| byte.is_ascii_digit()) {
+                return false;
+            }
+        } else if segment != expected {
+            return false;
+        }
+    }
+    segments.next().is_none()
+}
+
+pub(super) fn sanitize_observation_rewrites(rewrites: &mut [GatewayRequestRewrite]) {
+    for rewrite in rewrites {
+        if rewrite.kind == "lossy_conversion" {
+            if let Some(detail) = &mut rewrite.detail {
+                *detail = safe_lossy_observation_detail(detail).to_string();
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestLogLocation {
@@ -524,6 +644,66 @@ mod tests {
     use super::*;
     use crate::coding::proxy_gateway::types::{GatewayCliKey, ProxyGatewaySettings};
     use chrono::Utc;
+
+    #[test]
+    fn privacy_lossy_observation_summaries_are_allowlisted_and_idempotent() {
+        const SECRET: &str = "synthetic_private_value_without_a_credential_label";
+        for (path, expected) in [
+            ("/modalities/1", "Requested modality"),
+            ("/messages/2/content/3", "Message content"),
+            ("/contents/0/parts/0/inlineData", "Media content"),
+            ("/tools/0", "Tool declarations"),
+            ("/generationConfig/topK", "Generation options"),
+        ] {
+            let warning = format!("{path}: unsupported value '{SECRET}'");
+            let safe = safe_lossy_observation_detail(&warning);
+            assert!(safe.starts_with(expected), "{safe}");
+            assert!(!safe.contains(SECRET));
+            assert!(!safe.contains(path), "only fixed structural text may survive");
+            assert_eq!(safe_lossy_observation_detail(safe), safe);
+        }
+        // Unknown, malformed and request-controlled paths cannot be echoed,
+        // including an apparent valid prefix followed by a dynamic suffix.
+        for path in [
+            SECRET.to_string(),
+            format!("/messages/{SECRET}/content/0"),
+            format!("/messages/0/content/0/{SECRET}"),
+            format!("/generationConfig/{SECRET}"),
+            "/modalities/".to_string(),
+            "/modalities/-1".to_string(),
+            "/modalities/1".repeat(30),
+        ] {
+            let warning = format!("{path}: {SECRET}");
+            assert_eq!(safe_lossy_observation_detail(&warning), UNKNOWN_LOSSY_DETAIL);
+        }
+        assert_eq!(safe_lossy_observation_detail(SECRET), UNKNOWN_LOSSY_DETAIL);
+        assert_eq!(
+            safe_lossy_observation_detail(UNKNOWN_LOSSY_DETAIL),
+            UNKNOWN_LOSSY_DETAIL
+        );
+    }
+
+    #[test]
+    fn privacy_lossy_observation_sanitization_preserves_other_rewrites() {
+        let mut rewrites = vec![
+            GatewayRequestRewrite {
+                kind: "lossy_conversion".into(),
+                detail: Some("/modalities/0: arbitrary private text".into()),
+            },
+            GatewayRequestRewrite {
+                kind: "native_tool_filtered".into(),
+                detail: Some("web_search".into()),
+            },
+        ];
+        let original_other = rewrites[1].clone();
+        sanitize_observation_rewrites(&mut rewrites);
+        assert_eq!(rewrites[0].kind, "lossy_conversion");
+        assert_eq!(
+            rewrites[0].detail.as_deref(),
+            Some("Requested modality cannot be preserved by protocol conversion")
+        );
+        assert_eq!(rewrites[1], original_other);
+    }
 
     #[test]
     fn redact_headers_redacts_authorization_and_cookie() {
