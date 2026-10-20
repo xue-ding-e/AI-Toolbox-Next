@@ -1,5 +1,5 @@
 """Draft: real native WebDriver smoke; no invoke mocking or storage writes."""
-import base64, hashlib, json, os, pathlib, sqlite3, time, urllib.request
+import base64, hashlib, json, os, pathlib, sqlite3, time, urllib.request, urllib.error
 ROOT = pathlib.Path(os.environ['SMOKE_ROOT']).resolve()
 BINARY = pathlib.Path(os.environ['SMOKE_BINARY']).resolve()
 EVIDENCE = pathlib.Path(os.environ['SMOKE_EVIDENCE']).resolve()
@@ -7,6 +7,7 @@ BASE = 'http://127.0.0.1:4444'
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 session = None
 stages = []
+locator_observations = {}
 
 def record(stage, **details):
     stages.append({"stage": stage, "status": "passed", **details})
@@ -15,8 +16,11 @@ def record(stage, **details):
 def request(method, path, body=None):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(BASE + path, data=data, method=method, headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=35) as response:
-        result = json.load(response).get('value')
+    try:
+        with urllib.request.urlopen(req, timeout=35) as response:
+            result = json.load(response).get('value')
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f'WebDriver {method} {path}: HTTP {error.code}: {error.read().decode()}') from error
     if isinstance(result, dict) and result.get('error'):
         raise RuntimeError(result)
     return result
@@ -33,7 +37,12 @@ def wait(predicate, seconds=40):
     raise AssertionError(f'Timeout: {last}')
 
 def xpath(value):
-    return request('POST', f'/session/{session}/element', {'using': 'xpath', 'value': value})[ELEMENT]
+    matches=request('POST', f'/session/{session}/elements', {'using':'xpath','value':value})
+    displayed=[request('GET', f'/session/{session}/element/{entry[ELEMENT]}/displayed') for entry in matches]
+    locator_observations[value]={'count':len(matches),'displayed':displayed}
+    (EVIDENCE / 'locator-observations.json').write_text(json.dumps(locator_observations,indent=2))
+    assert len(matches)==1 and displayed==[True], locator_observations[value]
+    return matches[0][ELEMENT]
 
 def click(value):
     element = wait(lambda: xpath(value))
@@ -82,10 +91,10 @@ def launch():
     # Read-only DOM/environment inspection. No injected invocation or mutations.
     wait(lambda: request('POST', f'/session/{session}/execute/sync', {'script': 'return !!window.__TAURI_INTERNALS__ && document.body.innerText.length > 20', 'args': []}))
     click("//header//span[normalize-space()='Settings' or normalize-space()='设置']/parent::div")
-    wait(lambda: xpath("//*[normalize-space()='Current Theme:' or normalize-space()='当前主题:']/parent::div//div[contains(@class,'ant-select')]") )
+    wait(lambda: xpath(THEME))
     return next(iter(current))
 
-THEME = "//*[normalize-space()='Current Theme:' or normalize-space()='当前主题:']/parent::div//div[contains(@class,'ant-select-selector')]"
+THEME = "//*[normalize-space()='Current Theme:' or normalize-space()='当前主题:']/parent::div//div[contains(concat(' ',normalize-space(@class),' '),' ant-select ')]"
 CLOSE = "//*[normalize-space()='Minimize to Tray on Close' or normalize-space()='关闭时最小化到托盘']/parent::div//button[@role='switch']"
 
 def close_normally():
@@ -131,6 +140,9 @@ except Exception as error:
     (EVIDENCE / 'failure.txt').write_text(str(error))
     (EVIDENCE / 'failed-stage.json').write_text(json.dumps({'completed': stages, 'error':str(error)},indent=2))
     if session:
+        try:
+            (EVIDENCE / 'failure.html').write_text(request('GET', f'/session/{session}/source'))
+        except Exception: pass
         try: screenshot('failure.png')
         except Exception: pass
     raise
