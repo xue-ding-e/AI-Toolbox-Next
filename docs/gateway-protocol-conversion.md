@@ -516,6 +516,8 @@ Chat / Anthropic / Gemini 聚合同样 fail-closed：只要缺少对应协议的
 6. 如果最终目标是 OpenAI Responses，旁路记录 Codex response history。
 7. 用请求阶段保留下来的同一 `Pipeline` / `PipelineContext` 包装 client-facing reverse stream。
 
+原生工具诊断在步骤 2 后、所有 provider filter / namespace restore / 协议转换之前，按实际 target protocol 旁路观察上游 SSE。`RequestObservations::observe_sse_stream` 保持 pull-through，不改变 chunk、错误、EOF、取消或背压；复用 usage parser 的 SSE delimiter、多行 data 和受限 flattened 字段读取，只接受结构化 JSON 工具标记，不能在最终客户端文本中搜索 `web_search_call`。流式 `DebugHttpResponse` 必须保留请求阶段的声明/转发/改写记录，JSONL 构建时合并共享的有限工具种类；共享状态不保存正文，因此不依赖 body/header 存储开关，也覆盖首包失败与客户端取消路径。观测单事件缓存上限为 256 KiB，超过上限的未完成事件忽略到下一标准分隔符后恢复，诊断失败不影响响应传输。
+
 ### 11.3 普通 JSON 响应
 
 非流 JSON 响应路径：
@@ -557,6 +559,8 @@ SQLite v17 只新增可空 `reasoning_effort`，列表和 SQLite 摘要详情回
 #### 请求详情观测回归边界
 
 `tauri/tests/coding/proxy_gateway/native_tools_http.rs` 增加 tests-first 合成 HTTP/SSE 回归：声明/转发/过滤标记保留、协议回转前的上游原生工具使用采集，以及普通文本不应误标工具使用（含 JSON 负控）。测试保持请求日志开启，关闭正文/Header 存储；先消费客户端响应并断言正文/正常唯一终态，再读取 JSONL 观测标记。隐私用例把合成密码形态值放入 modality 和保留文本，先验证出站文本实际脱敏，再断言诊断不持久化原值。`commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies` 对合成旧详情直接调用生产 export builder/writer，并非 IPC 测试。本步仅补回归候选，运行结果待验证，不代表已证实泄露或完成修复；不改变生产逻辑与参考项目 baseline。
+
+2026-10-20 的定向 RED（run `39349776718`，基线 `bcf80d1f61cde2077667228af569b92252770c7d`）实际证实四条 SSE 观测断言失败：请求声明/转发状态丢失、过滤改写丢失、跨协议回转前的使用标记丢失，以及普通 Chat 文本误标工具使用。三条原有 HTTP 回归通过。本次生产修复保持这些集成测试不变，新增 scanner 分片/多行/UTF-8/混合分隔符、文本负控、协议身份、超限恢复、EOF/flattened，以及真实 stream 包装器惰性读取、错误透传、丢弃/取消后的标记保留及 HTTP header 写失败的预读标记保留单测。当前环境无 Cargo/rustfmt，尚未运行修复后的 Rust 测试，不据静态检查宣称 GREEN；隐私/导出由独立变更处理，本节不据此宣称该问题已修复。参考项目 baseline 不变。
 
 ## 12. 上游 URL、query 与 auth
 

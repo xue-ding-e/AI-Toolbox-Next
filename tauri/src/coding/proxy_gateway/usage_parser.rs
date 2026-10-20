@@ -1157,7 +1157,7 @@ fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
 
 /// Locate the physically earliest SSE block delimiter (`\n\n` or `\r\n\r\n`)
 /// and return its position plus length.
-fn find_sse_block_delimiter(bytes: &[u8]) -> Option<(usize, usize)> {
+pub(super) fn find_sse_block_delimiter(bytes: &[u8]) -> Option<(usize, usize)> {
     let lf = bytes
         .windows(2)
         .position(|window| window == b"\n\n")
@@ -1173,7 +1173,7 @@ fn find_sse_block_delimiter(bytes: &[u8]) -> Option<(usize, usize)> {
     }
 }
 
-fn parse_sse_data_block(block: &[u8]) -> Option<Value> {
+pub(super) fn parse_sse_data_block(block: &[u8]) -> Option<Value> {
     let text = String::from_utf8_lossy(block);
     let mut data_lines = Vec::new();
     for line in text.lines() {

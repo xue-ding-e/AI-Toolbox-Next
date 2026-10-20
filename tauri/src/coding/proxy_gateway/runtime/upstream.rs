@@ -2608,6 +2608,8 @@ async fn build_gateway_response(
             Some(snapshot) => snapshot_response_stream(response.bytes_stream(), snapshot),
             None => response.bytes_stream(),
         };
+        let raw_body_stream =
+            observations.observe_sse_stream(raw_body_stream, provider.target_protocol);
         // Restore before other stream wrappers (native Responses passthrough only).
         let raw_body_stream = if should_restore_xai_namespaces {
             wrap_namespace_restore_sse_stream(raw_body_stream, xai_namespace_restore_map)
@@ -2684,7 +2686,7 @@ async fn build_gateway_response(
             failover: false,
             source_protocol,
             stream_outcome: GatewayStreamOutcome::NotStreaming,
-            observations: Default::default(),
+            observations,
             note: format!(
                 "streaming forwarded to provider id={} name={}",
                 provider.id, provider.name
