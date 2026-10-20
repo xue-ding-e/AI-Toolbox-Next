@@ -1,6 +1,7 @@
 /**
  * Mounts the four migrated provider mapping layers directly, with no page and
- * no IPC stubs beyond what the modules touch at import time.
+ * synthetic props/callbacks. Import-time platform shims are retained, while
+ * every backend invocation fails closed.
  *
  * Why not the real pages: the four pages each call dozens of Tauri commands on
  * mount, and the claims this fixture guards belong to the mapping layers — the
@@ -14,7 +15,8 @@
  *   disabled drag renders no handle.
  * - Gemini CLI: the official card's name row is `🔗 官方账号 (n)`, its second
  *   line is the switching explanation, the account block's rows span the card's
- *   content width, and a virtual row offers only 「保存当前登录」.
+ *   content width, and a virtual row offers save rather than switch/delete
+ *   (the existing refresh/details read actions are retained).
  * - Grok: the official row's sixth action (refresh token) is rendered through
  *   the shared section's extra-action slot, and the model toolbar keeps the
  *   documented order.
@@ -23,6 +25,7 @@
  *   greys out delete.
  */
 import './ProviderCardSpacingStubs.js';
+import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { ConfigProvider, theme } from 'antd';
@@ -48,6 +51,14 @@ document.documentElement.dataset.theme = resolvedTheme;
 updateGatewayProviderProfiles(gatewayProfiles);
 
 const noop = () => {};
+const state = { runId: parameters.get('runId'), callbacks: [], unexpectedIPC: [], antdContainer: null };
+window.__TAURI_INTERNALS__ = {
+  invoke: async (command, args) => {
+    state.unexpectedIPC.push({ command, args });
+    throw new Error('Unexpected migrated-card fixture IPC: ' + command);
+  },
+};
+const recordDelete = (fixture, providerId) => state.callbacks.push({ action: 'delete', fixture, providerId });
 
 /* ------------------------------------------------------------------ Claude Desktop */
 
@@ -177,6 +188,15 @@ const grokOfficialAccounts = [
     updatedAt: '2026-01-01T00:00:00Z',
   },
 ];
+
+// A second synthetic account catches loading accidentally applied to every row.
+grokOfficialAccounts.push({
+  ...grokOfficialAccounts[0],
+  id: 'grok-account-other',
+  name: 'Other Grok login',
+  email: 'other-grok@example.test',
+  isApplied: false,
+});
 
 const grokCustomProvider = {
   id: 'grok-custom',
@@ -326,99 +346,174 @@ window.migratedProviderCardsFixture = {
     return node ? node.textContent.replace(/\s+/g, ' ').trim() : null;
   },
 
-  /**
-   * Opens the compact card's "more" menu and reports the delete entry's state.
-   * Returns `null` when the block has no menu button.
-   */
-  async deleteMenuItem(name) {
-    const root = cards(name)[0];
-    const button = root?.querySelector('[data-provider-card-actions] button');
-    if (!button) return null;
-    // The hover-revealed trigger is opacity 0 until the pointer enters, and a
-    // synthetic click on it is dispatched but the dropdown may not open while
-    // the button is considered hidden. Reveal it for the duration of the check.
-    const host = button.closest('[data-provider-card-actions]');
-    const previousOpacity = host?.style.opacity ?? '';
-    if (host) host.style.opacity = '1';
-    // Snapshot before the click: an earlier card's menu stays mounted after it
-    // closes, and both cards carry a 删除 entry (only one disabled), so a query
-    // by visibility alone can answer with the wrong menu. The node that appears
-    // is the one this click opened.
-    const mountedBefore = new Set(document.querySelectorAll('.ant-dropdown'));
-    button.click();
-    await new Promise(resolve => setTimeout(resolve, 300));
-    const menu = [...document.querySelectorAll('.ant-dropdown')]
-      .find(node => !mountedBefore.has(node));
-    const items = [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])];
-    const deleteItem = items.find(item => item.textContent.includes('删除'));
-    const result = deleteItem
-      ? {
-          found: true,
-          disabled: deleteItem.getAttribute('aria-disabled') === 'true'
-            || deleteItem.classList.contains('ant-dropdown-menu-item-disabled'),
-          title: deleteItem.getAttribute('title'),
-        }
-      : { found: false };
-    document.body.click();
-    if (host) host.style.opacity = previousOpacity;
-    await new Promise(resolve => setTimeout(resolve, 200));
-    return result;
+  expandModels(name) {
+    const header = cards(name)[0]?.querySelector('.ant-collapse-header');
+    if (!header) throw new Error('Missing real model-list header: ' + name);
+    header.click();
   },
+
+  state,
+  resetCallbacks() { state.callbacks.length = 0; },
+  surface(name) {
+    const root = cards(name)[0];
+    const selector = name.endsWith('-list') ? '.ant-card' : '[data-provider-card-clickable]';
+    const nodes = root?.querySelectorAll(selector);
+    if (nodes?.length !== 1) throw new Error('Expected one actual card surface: ' + name);
+    return nodes[0];
+  },
+  surfaceStyle(name) {
+    const surface = this.surface(name);
+    const rect = surface.getBoundingClientRect();
+    const background = getComputedStyle(surface).backgroundColor;
+    const accented = name.startsWith('claude-desktop-') || name.startsWith('gemini-');
+    // CardShell uses Antd's container token at rest; compact cards use App.css.
+    // Applied cards in either layout use the shared selected-background token.
+    if (!state.antdContainer) throw new Error('ConfigProvider tokens are not ready');
+    const probe = document.createElement('span');
+    probe.style.backgroundColor = accented ? 'var(--color-bg-selected)'
+      : name.endsWith('-list') ? state.antdContainer : 'var(--color-bg-container)';
+    document.body.append(probe);
+    const expectedBackground = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { background, expectedBackground, hasBox: rect.width > 0 && rect.height > 0,
+      actualSurface: surface.matches(name.endsWith('-list') ? '.ant-card' : '[data-provider-card-clickable]') };
+  },
+  scrollMenuTarget(name) {
+    const button = cards(name)[0]?.querySelector('[data-provider-card-actions] button');
+    if (!button) throw new Error('Missing real compact menu trigger: ' + name);
+    button.scrollIntoView({ block: 'center', behavior: 'instant' });
+  },
+  menuTarget(name) {
+    const button = cards(name)[0]?.querySelector('[data-provider-card-actions] button');
+    if (!button) throw new Error('Missing real compact menu trigger: ' + name);
+    const rect = button.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {
+      x, y, width: rect.width, height: rect.height,
+      inViewport: x > 0 && x < innerWidth && y > 0 && y < innerHeight,
+      hit: Boolean(hit && button.contains(hit)),
+      opacity: Number(getComputedStyle(button.closest('[data-provider-card-actions]')).opacity),
+      hitTag: hit?.tagName ?? null,
+      hitClass: hit?.getAttribute('class') ?? null,
+    };
+  },
+  deleteMenuItem() {
+    const menus = [...document.querySelectorAll('.ant-dropdown')].filter(node =>
+      node.getClientRects().length && getComputedStyle(node).display !== 'none'
+      && !node.classList.contains('ant-dropdown-hidden'));
+    if (menus.length !== 1) throw new Error('Expected exactly one visible dropdown');
+    const items = [...menus[0].querySelectorAll('[role="menuitem"]')]
+      .filter(item => item.textContent.trim() === i18n.t('common.delete'));
+    if (items.length !== 1) throw new Error('Expected one actual delete menu item');
+    return items[0];
+  },
+  deleteMenuState() {
+    const item = this.deleteMenuItem();
+    return { found: true, disabled: item.getAttribute('aria-disabled') === 'true'
+      || item.classList.contains('ant-dropdown-menu-item-disabled'), title: item.getAttribute('title') };
+  },
+  clickMenuDelete() { this.deleteMenuItem().click(); },
+  openDetail(name) { this.surface(name).click(); },
+  closeDetail() { document.querySelector('[data-provider-detail-close]').click(); },
+  clickDetailDelete() {
+    const buttons = [...document.querySelectorAll('[data-provider-detail-footer] button')]
+      .filter(button => button.textContent.trim() === i18n.t('common.delete'));
+    if (buttons.length !== 1) throw new Error('Expected one real detail delete button');
+    buttons[0].click();
+  },
+  answerConfirm(confirm) {
+    const modal = document.querySelector('.ant-modal-confirm');
+    const label = i18n.t(confirm ? 'common.confirm' : 'common.cancel');
+    const button = [...(modal?.querySelectorAll('button') ?? [])]
+      .find(node => node.textContent.replace(/\s+/g, '') === label.replace(/\s+/g, ''));
+    if (!button) throw new Error('Missing real confirmation button: ' + label);
+    button.click();
+  },
+  accountRoot(viewMode) {
+    return viewMode === 'list' ? cards('grok-official-list')[0]
+      : document.querySelector('[data-provider-detail-panel]');
+  },
+  refreshButton(viewMode, accountId, action) {
+    const account = grokOfficialAccounts.find(item => item.id === accountId);
+    const row = [...this.accountRoot(viewMode).querySelectorAll('[style*="border-bottom"]')]
+      .find(node => [...node.querySelectorAll('*')].some(child =>
+        !child.children.length && child.textContent.trim() === account.email));
+    const label = i18n.t(action === 'refresh' ? 'common.officialAccount.refresh' : 'grok.provider.officialAccountRefreshToken');
+    const button = [...(row?.querySelectorAll('button') ?? [])]
+      .find(node => node.textContent.trim() === label);
+    if (!button) throw new Error('Missing actual account action: ' + accountId + '/' + action);
+    return button;
+  },
+  clickRefresh(viewMode, accountId, action) { this.refreshButton(viewMode, accountId, action).click(); },
+  loadingState(viewMode) {
+    return grokOfficialAccounts.map(account => ({
+      accountId: account.id,
+      refresh: this.refreshButton(viewMode, account.id, 'refresh').classList.contains('ant-btn-loading'),
+      token: this.refreshButton(viewMode, account.id, 'token').classList.contains('ant-btn-loading'),
+    }));
+  },
+  finishRefresh() { document.querySelector('[data-fixture-finish-refresh]').click(); },
 };
 
-createRoot(document.getElementById('root')).render(
-  <ConfigProvider theme={{ algorithm: resolvedTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
-    <MemoryRouter>
-      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div data-fixture="claude-desktop-list">
-          <ClaudeDesktopProviderCard {...claudeDesktopProps} viewMode="list" />
-        </div>
-        <div data-fixture="claude-desktop-card">
-          <ClaudeDesktopProviderCard {...claudeDesktopProps} viewMode="card" />
-        </div>
+function ThemeTokenProbe() {
+  const { token } = theme.useToken();
+  React.useLayoutEffect(() => { state.antdContainer = token.colorBgContainer; }, [token.colorBgContainer]);
+  return null;
+}
 
-        <div data-fixture="gemini-list">
-          <GeminiCliProviderCard {...geminiProps} viewMode="list" />
+function FixtureHost() {
+  const [pending, setPending] = React.useState(null);
+  const refresh = (viewMode, action) => (provider, account) => {
+    // Record every call: the fixture must not implement a missing product guard.
+    state.callbacks.push({ action, viewMode, providerId: provider.id, accountId: account.id });
+    setPending({ viewMode, action, accountId: account.id });
+  };
+  return (
+    <ConfigProvider theme={{ algorithm: resolvedTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
+      <ThemeTokenProbe />
+      <MemoryRouter>
+        <button data-fixture-finish-refresh onClick={() => setPending(null)}>Finish synthetic refresh</button>
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {['list', 'card'].map(viewMode => (
+            <React.Fragment key={viewMode}>
+              <div data-fixture={'claude-desktop-' + viewMode}>
+                <ClaudeDesktopProviderCard {...claudeDesktopProps} viewMode={viewMode} />
+              </div>
+              <div data-fixture={'gemini-' + viewMode}>
+                <GeminiCliProviderCard {...geminiProps} viewMode={viewMode} />
+              </div>
+              <div data-fixture={'grok-official-' + viewMode}>
+                <GrokProviderCard {...grokCommonProps} provider={grokOfficialProvider} isApplied={false}
+                  officialAccounts={grokOfficialAccounts} viewMode={viewMode}
+                  onOfficialAccountRefresh={refresh(viewMode, 'refresh')}
+                  onOfficialAccountRefreshToken={refresh(viewMode, 'token')}
+                  refreshingOfficialAccountId={pending?.viewMode === viewMode && pending.action === 'refresh' ? pending.accountId : null}
+                  refreshingOfficialTokenAccountId={pending?.viewMode === viewMode && pending.action === 'token' ? pending.accountId : null}
+                />
+              </div>
+              <div data-fixture={'grok-custom-' + viewMode}>
+                <GrokProviderCard {...grokCommonProps} provider={grokCustomProvider} isApplied={false} viewMode={viewMode} />
+              </div>
+              {omoProviders.map((provider, index) => {
+                const name = (index === 0 ? 'omo-default-' : 'omo-other-') + viewMode;
+                return (
+                  <div data-fixture={name} key={provider.key}>
+                    <OmoNativeProviderCard {...omoProps} provider={provider} viewMode={viewMode}
+                      defaultModelId={index === 0 ? 'model-default' : undefined}
+                      deleteDisabledReason={index === 0 ? '默认渠道不能删除' : undefined}
+                      onDelete={() => recordDelete(name, provider.key)}
+                    />
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          ))}
         </div>
-        <div data-fixture="gemini-card">
-          <GeminiCliProviderCard {...geminiProps} viewMode="card" />
-        </div>
+      </MemoryRouter>
+    </ConfigProvider>
+  );
+}
 
-        <div data-fixture="grok-official-list">
-          <GrokProviderCard
-            {...grokCommonProps}
-            provider={grokOfficialProvider}
-            isApplied={false}
-            officialAccounts={grokOfficialAccounts}
-            viewMode="list"
-          />
-        </div>
-        <div data-fixture="grok-custom-list">
-          <GrokProviderCard
-            {...grokCommonProps}
-            provider={grokCustomProvider}
-            isApplied={false}
-            viewMode="list"
-          />
-        </div>
-
-        <div data-fixture="omo-default-card">
-          <OmoNativeProviderCard
-            {...omoProps}
-            provider={omoProviders[0]}
-            viewMode="card"
-            defaultModelId="model-default"
-            deleteDisabledReason="默认渠道不能删除"
-          />
-        </div>
-        <div data-fixture="omo-other-card">
-          <OmoNativeProviderCard
-            {...omoProps}
-            provider={omoProviders[1]}
-            viewMode="card"
-          />
-        </div>
-      </div>
-    </MemoryRouter>
-  </ConfigProvider>,
-);
+createRoot(document.getElementById('root')).render(<FixtureHost />);
