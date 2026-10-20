@@ -71,14 +71,48 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
     await mouse('mouseReleased', 2, 2);
     await waitFor(visibleMenus + ' === 0');
   };
+  const stableMenuTarget = async (name, revealed) => {
+    let previous;
+    let stableSamples = 0;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const target = await fixture('menuTarget(' + JSON.stringify(name) + ')');
+      const stationary = previous && ['x', 'y', 'width', 'height']
+        .every(key => Math.abs(target[key] - previous[key]) < 0.25);
+      stableSamples = stationary && target.inViewport && target.hit
+        && target.width > 0 && target.height > 0 && (!revealed || target.opacity === 1)
+        ? stableSamples + 1 : 0;
+      if (stableSamples >= 5) return target;
+      previous = target;
+      await delay(50);
+    }
+    throw new Error('Menu trigger never settled or was not hit-testable: '
+      + JSON.stringify({ name, revealed, target: previous }));
+  };
   const openDeleteMenu = async name => {
-    const { x, y } = await fixture('menuTarget(' + JSON.stringify(name) + ')');
-    // Real hover/click events reveal the existing trigger; no DOM styling is changed.
-    await mouse('mouseMoved', x, y);
-    await mouse('mousePressed', x, y);
-    await mouse('mouseReleased', x, y);
-    await waitFor(visibleMenus + ' === 1');
-    return fixture('deleteMenuState()');
+    // Expanding the list catalog above the compact cards can still be moving
+    // them after its text appears. Never click coordinates cached before that
+    // motion (or the compact card's own hover lift) has settled.
+    await waitFor(visibleMenus + ' === 0', 'no stale dropdown before opening ' + name);
+    assert.equal(await evaluate('Boolean(document.querySelector("[data-provider-detail-panel]"))'), false);
+    await fixture('scrollMenuTarget(' + JSON.stringify(name) + ')');
+    const resting = await stableMenuTarget(name, false);
+    await mouse('mouseMoved', resting.x, resting.y);
+    const revealed = await stableMenuTarget(name, true);
+    await mouse('mouseMoved', revealed.x, revealed.y);
+    // Exactly one real pointer click; no synthetic trigger click or style override.
+    await mouse('mousePressed', revealed.x, revealed.y);
+    await mouse('mouseReleased', revealed.x, revealed.y);
+    try {
+      await waitFor(visibleMenus + ' === 1', 'one visible dropdown for ' + name);
+      return await fixture('deleteMenuState()');
+    } catch (error) {
+      console.error('Menu pointer diagnostics:', JSON.stringify({
+        name, resting, revealed, current: await fixture('menuTarget(' + JSON.stringify(name) + ')'),
+        visibleMenus: await evaluate(visibleMenus),
+        detailOpened: await evaluate('Boolean(document.querySelector("[data-provider-detail-panel]"))'),
+      }));
+      throw error;
+    }
   };
   const checkSurfaces = async themeMode => {
     const mounted = await evaluate('[...document.querySelectorAll("[data-fixture]")].map(node => node.dataset.fixture).sort()');

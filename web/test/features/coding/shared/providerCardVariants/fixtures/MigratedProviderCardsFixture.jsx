@@ -378,12 +378,26 @@ window.migratedProviderCardsFixture = {
     return { background, expectedBackground, hasBox: rect.width > 0 && rect.height > 0,
       actualSurface: surface.matches(name.endsWith('-list') ? '.ant-card' : '[data-provider-card-clickable]') };
   },
+  scrollMenuTarget(name) {
+    const button = cards(name)[0]?.querySelector('[data-provider-card-actions] button');
+    if (!button) throw new Error('Missing real compact menu trigger: ' + name);
+    button.scrollIntoView({ block: 'center', behavior: 'instant' });
+  },
   menuTarget(name) {
     const button = cards(name)[0]?.querySelector('[data-provider-card-actions] button');
     if (!button) throw new Error('Missing real compact menu trigger: ' + name);
-    button.scrollIntoView({ block: 'center' });
     const rect = button.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {
+      x, y, width: rect.width, height: rect.height,
+      inViewport: x > 0 && x < innerWidth && y > 0 && y < innerHeight,
+      hit: Boolean(hit && button.contains(hit)),
+      opacity: Number(getComputedStyle(button.closest('[data-provider-card-actions]')).opacity),
+      hitTag: hit?.tagName ?? null,
+      hitClass: hit?.getAttribute('class') ?? null,
+    };
   },
   deleteMenuItem() {
     const menus = [...document.querySelectorAll('.ant-dropdown')].filter(node =>
