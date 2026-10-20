@@ -1,0 +1,80 @@
+{
+  "base": "a7fcff09c80bbe322d613e638b628aa4582e5cf0",
+  "tested_commit": "a89dc80ddff2355ab24fa9746dc1f9d520b65485",
+  "reorganized_same_tree_commit": "9a2b7c3a6f6bcf4bc10b853ef8ee52759ffb430a",
+  "tree": "59d29b7da1f7e81601dbfc6bf561a6a67728885d",
+  "full_acceptance": {
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39357014969",
+    "job": 118414015307,
+    "conclusion": "success",
+    "log_sha256": "8202b2f29c89a75e77b614bdb8b823f72933c79a9eea76ab625e9b1e7e64ddbf",
+    "rust": {
+      "command": "cargo test --locked --manifest-path tauri/Cargo.toml -- --test-threads=1",
+      "scope": "Linux default features; lib, bin, coding/deeplink/sqlite_jsonb integration targets and doctests",
+      "passed": 3299,
+      "failed": 0,
+      "ignored": 13,
+      "per_target_passed": [
+        3012,
+        0,
+        241,
+        4,
+        31,
+        11
+      ]
+    },
+    "frontend": {
+      "node_passed": 1081,
+      "node_failed": 0,
+      "typecheck": "passed",
+      "structure_guards": 3,
+      "production_build": "passed",
+      "detail_dom_scenarios": 12,
+      "detail_dom_assertions": 92
+    }
+  },
+  "green_regressions": {
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39354277567",
+    "commit": "373f0f5d02e7d777ff0e9caa08da68cff1d72d92",
+    "lib_passed": 1421,
+    "lib_ignored": 7,
+    "coding_passed": 110,
+    "required_named_tests": 22,
+    "log_sha256": "5d2f5039074feae9f81d0070523dfb33f24e70e5095b290694d4a2083e7f0c69"
+  },
+  "red_evidence": [
+    {
+      "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39349776718",
+      "result": "Four SSE semantic failures and export privacy failure; HTTP privacy case first stopped at a fixture oracle mismatch, not its privacy assertion.",
+      "log_sha256": "023a5841ce0cc14867174925a7d3ef581bdc4ef3f08c8cb2021fd3852702a89d"
+    },
+    {
+      "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39351580712",
+      "result": "After correcting only typed Chat content expectation, exact HTTP privacy test reached and failed the JSONL secret assertion; outbound masking and normal response checks passed.",
+      "log_sha256": "c4c582668e27bc72298f73c450e033fbce2751423b7f590c1f1f3578be6e5d65"
+    }
+  ],
+  "ignored_tests": [
+    "coding::image::commands::tests::image_execute_generation_live_smoke_works_with_openai_compatible_gateway ... ignored, requires real image gateway credentials",
+    "coding::proxy_gateway::session_import::tests::local_opencode_v2_store_imports_per_request_usage ... ignored, Audit against a real OpenCode 2.0 store via AI_TOOLBOX_OPENCODE_V2_DB",
+    "coding::proxy_gateway::session_import::tests::native_tests::cost_tests::cross_cli::local_other_cli_costs_on_a_snapshot ... ignored, Read-only cost audit for other installed CLIs; writes only database snapshots and in-memory fresh imports",
+    "coding::proxy_gateway::session_import::tests::native_tests::cost_tests::local_cost_reconciliation_all_sources_on_a_snapshot ... ignored, Read-only native cost review across Claude Code, Claude Desktop and DSH; writes only a temporary database copy",
+    "coding::proxy_gateway::session_import::tests::native_tests::cost_tests::local_dsh_cost_reconciliation_on_a_snapshot ... ignored, Read-only local DSH cost audit: repairs a database copy and compares with freshly imported transcripts using the same prices",
+    "coding::proxy_gateway::session_import::tests::native_tests::local_database_reconciliation_on_a_snapshot ... ignored, Copies the local application database through a read-only connection; reconciles only the temporary copy",
+    "coding::proxy_gateway::session_import::tests::native_tests::local_dsh_parser_upgrade_on_a_snapshot ... ignored, Verifies the local DSH parser upgrade on a temporary database copy; requires all original DSH transcripts",
+    "coding::proxy_gateway::session_import::tests::native_tests::local_native_sources_read_only_smoke ... ignored, Read-only developer session verification; writes usage to a temporary database only",
+    "coding::session_manager::codex_scratch::tests::codex_scratch_local_smoke ... ignored",
+    "coding::session_manager::codex_scratch::tests::codex_scratch_wsl_smoke ... ignored",
+    "coding::session_manager::dsh::tests::real_artifact_smoke ... ignored",
+    "coding::session_manager::dsh::tests::real_sessions_root_smoke ... ignored",
+    "coding::session_manager::tests::codex_state_db_smoke ... ignored"
+  ],
+  "limits": [
+    "Only synthetic credentials and loopback HTTP/SSE, temporary logs and export files were used; no actual user disclosure is established.",
+    "Frontend covers real GatewayRequestsView and real API wrappers with three allowlisted synthetic read-only IPC commands; not native desktop or full application acceptance.",
+    "The full package.json pnpm test browser collection was not run.",
+    "Thirteen existing tests requiring real credentials, local CLI/session databases or WSL remain ignored.",
+    "No independent binary release, deployment, live provider acceptance, performance benchmark or all-platform validation.",
+    "This is a selective gateway port, not a claim that all upstream commits through e5d415ba are synchronized."
+  ]
+}
