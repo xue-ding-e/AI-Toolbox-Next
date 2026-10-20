@@ -411,7 +411,7 @@ jobs:
           done
   gateway-observations-regression:
     # Synthetic loopback HTTP/SSE and temporary export files only.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-observations-regression'
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/test/gateway-observations-regression' || github.ref == 'refs/heads/test/gateway-observation-privacy-red')
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
@@ -436,6 +436,7 @@ jobs:
           cargo --version
           df -h
       - name: Verify exact HTTP and export regression selection
+        if: github.ref == 'refs/heads/test/gateway-observations-regression'
         shell: bash
         run: |
           set -euo pipefail
@@ -450,6 +451,7 @@ jobs:
           test "$(grep -c ': test$' /tmp/gateway-observations-export.txt)" -eq 1
           grep -Fx 'coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies: test' /tmp/gateway-observations-export.txt
       - name: Run both regression groups serially and retain failures
+        if: github.ref == 'refs/heads/test/gateway-observations-regression'
         shell: bash
         run: |
           set -uo pipefail
@@ -459,3 +461,14 @@ jobs:
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies -- --exact --test-threads=1 || export_status=$?
           printf 'HTTP regression exit: %s; export regression exit: %s\n' "$http_status" "$export_status"
           test "$http_status" -eq 0 && test "$export_status" -eq 0
+      - name: Verify and run only the synthetic JSONL privacy regression
+        if: github.ref == 'refs/heads/test/gateway-observation-privacy-red'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name=proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding "$name" -- --exact --list > /tmp/gateway-privacy-test.txt
+          cat /tmp/gateway-privacy-test.txt
+          test "$(grep -c ': test$' /tmp/gateway-privacy-test.txt)" -eq 1
+          grep -Fx "${name}: test" /tmp/gateway-privacy-test.txt
+          cargo test --locked --manifest-path tauri/Cargo.toml --test coding "$name" -- --exact --test-threads=1
