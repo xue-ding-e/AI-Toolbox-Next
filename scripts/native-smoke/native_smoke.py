@@ -169,6 +169,9 @@ def ssh_cancel_smoke():
     wait(lambda: attr(enabled, 'aria-checked') == 'false')
     wait(lambda: ssh_snapshot('restored-disabled')['enabled'] == 0)
     click(modal + "//button[@aria-label='Close']")
+    # Wait for the actual modal exit; displayed underlying controls can still be masked.
+    wait(lambda: request('POST', f'/session/{session}/execute/sync', {
+        'script': "return !document.querySelector('.ant-modal-mask') && Array.from(document.querySelectorAll('.ant-modal-wrap')).every(e => getComputedStyle(e).display === 'none')", 'args': []}))
     record('ssh-unsaved-name-cancel-reopen', connection_count=0, active_connection='', restored_enabled=False)
 
 def launch():
