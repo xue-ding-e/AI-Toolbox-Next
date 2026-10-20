@@ -203,7 +203,16 @@ def kimi_snapshot(label, expected_id='', names=()):
     paths = kimi_paths_guard()
     result = subprocess.run([os.environ['SMOKE_NODE'],str(pathlib.Path(__file__).with_name('kimi_snapshot.cjs')),
                              str(ROOT/'data'/'ai-toolbox.db'),expected_id,json.dumps(names)],capture_output=True,text=True,timeout=10)
-    if result.returncode: raise NativeSafetyStop('Kimi observer failed; schema/state must not be treated as empty')
+    if result.returncode:
+        # Classify fixed messages only. Never persist stderr (may include assertion values).
+        reasons = ['Unexpected account exists; stop without reading it', 'Unexpected provider count; stop',
+                   'Custom root field exists; stop without reading path', 'Existing provider before creation; stop',
+                   'Invalid name type', 'Unexpected non-synthetic provider; stop', 'Unexpected category',
+                   'Provider applied or malformed; stop', 'Unexpected identifier', 'Record identity changed']
+        categories = [reason for reason in reasons if reason in result.stderr]
+        (EVIDENCE/('kimi-'+label+'-observer-error.json')).write_text(json.dumps({
+            'returncode':result.returncode,'categories':categories or ['unclassified-observer-error']},indent=2))
+        raise NativeSafetyStop('Kimi observer failed; schema/state must not be treated as empty')
     data=json.loads(result.stdout)
     (EVIDENCE/('kimi-'+label+'.json')).write_text(json.dumps({'paths':paths,**data},indent=2))
     return data
@@ -296,7 +305,14 @@ def kimi_crud_smoke():
     menu('Edit');wait(lambda: xpath(edit_name));assert attr(edit_name,'value')==name_a
     screenshot('kimi-created-reopened.png')
     request('POST',f'/session/{session}/element/{xpath(edit_name)}/clear',{})
+    cleared = attr(edit_name,'value')
+    (EVIDENCE/'kimi-name-cleared.json').write_text(json.dumps({'empty':cleared=='','length':len(cleared)}))
+    if cleared != '': raise NativeSafetyStop('Standard element clear did not empty name')
     request('POST',f'/session/{session}/element/{xpath(edit_name)}/value',{'text':name_b})
+    entered = attr(edit_name,'value')
+    (EVIDENCE/'kimi-name-entered.json').write_text(json.dumps({'matchesSyntheticB':entered==name_b,'length':len(entered)}))
+    if entered != name_b: raise NativeSafetyStop('Standard typing did not produce exact synthetic name B')
+    screenshot('kimi-name-before-save.png')
     if kimi_snapshot('before-update',owned_id,[name_a])['count'] != 1:
         raise NativeSafetyStop('Owned provider missing before update')
     click(edit+"//button[span[normalize-space()='OK']]");wait(modal_retired)
