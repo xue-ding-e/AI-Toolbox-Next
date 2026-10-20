@@ -98,12 +98,12 @@ export interface OfficialAccountsSectionProps {
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   /**
-   * The one action currently in flight, if any. Carries the *kind* as well as
-   * the row because two actions on two different rows can be pending at once
-   * (Codex refreshes one account while saving another) and the spinner has to
-   * land on the button that was actually pressed.
+   * Actions currently in flight, addressed by both row and kind. Independent
+   * operations can overlap on the same row or on different rows; none should
+   * hide another action's spinner. A single item remains accepted for existing
+   * hosts that supply only one in-flight action.
    */
-  pending?: OfficialAccountPendingAction | null;
+  pending?: OfficialAccountPendingAction | OfficialAccountPendingAction[] | null;
   /**
    * Withhold every row action. ZCode and Kimi set this while a login is in
    * flight: the login rewrites the same credential file the row actions touch,

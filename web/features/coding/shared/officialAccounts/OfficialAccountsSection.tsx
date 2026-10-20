@@ -116,8 +116,9 @@ const OfficialAccountsSection: React.FC<OfficialAccountsSectionProps> = ({
   const collapsible = Boolean(onToggleCollapsed);
   const isCollapsed = collapsible && Boolean(collapsed);
 
+  const pendingActions = Array.isArray(pending) ? pending : pending ? [pending] : [];
   const isPending = (account: OfficialAccountRowView, action: OfficialAccountAction) =>
-    pending?.accountId === account.id && pending.action === action;
+    pendingActions.some((item) => item.accountId === account.id && item.action === action);
 
   /**
    * The block's heading — `🔗 官方账号 (n)`.
