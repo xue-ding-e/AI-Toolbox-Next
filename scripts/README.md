@@ -118,7 +118,19 @@ node scripts/verify-gemini-account-pending.mjs
 - One scenario / six assertions mounts the real `GeminiCliProviderCard` list layout with both existing pending props: a saved account refreshing while the virtual local account is saving.
 - The real account fold is opened and both target actions must remain loading. Each receives two actual DOM clicks; neither may dispatch another callback. Callbacks only record fixed synthetic provider/account IDs and deliberately contain no pending guard.
 - Before/after loading and callback evidence are collected before assertions, so a failed loading assertion still leaves the repeated-click result in `dual-pending.json`. Shared browser exceptions remain failures; all backend IPC fails closed.
-- This candidate does not modify production pending semantics and has not established a reproduction until executed. It is separate from the migrated-card 11/86 suite, and does not claim Gemini page, real-account, file-save or native GUI acceptance.
+- CI run `39377630756` at `078a0727` established RED for the real mapping: saved-account refresh was loading while local save was not. The original six assertions are retained for the repair. This result is separate from the migrated-card 11/86 suite, and does not claim Gemini page, real-account, file-save or native GUI acceptance.
+
+## verify-official-account-pending.mjs
+
+Check the real shared section's backward-compatible single and concurrent pending inputs:
+
+```bash
+node scripts/verify-official-account-pending.mjs
+```
+
+- Eight named state scenarios / 40 assertions: legacy null/save/apply/delete; arrays with actions on different rows or the same row; removing one pending action; and clearing the last one. Each scenario checks the exact five-button loading matrix, zero repeated callbacks from pending buttons, exact positive-control callbacks from every idle button, zero IPC, and zero browser exceptions.
+- Mounts `OfficialAccountsSection` directly. Test controls only change its pending input; callbacks record fixed synthetic identities and contain no guard. It preserves the existing Chromium/Vite runner and global exception gate.
+- This is a new repair-neighbor suite without independent pre-fix RED. The original real Gemini mapping regression stays separate at one scenario / six assertions. Existing single-item callers remain source-compatible; this does not assert their pages serialize operations or test real account/file effects.
 
 ## transparent-white.js
 

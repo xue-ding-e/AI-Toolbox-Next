@@ -344,14 +344,16 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const findOfficialAccount = (row: OfficialAccountRowView) =>
     officialAccounts.find((account) => account.id === row.id);
 
-  const officialAccountPending = React.useMemo<OfficialAccountPendingAction | null>(() => {
+  const officialAccountPending = React.useMemo<OfficialAccountPendingAction[]>(() => {
+    // The page owns these operations independently; one must not mask the other.
+    const pending: OfficialAccountPendingAction[] = [];
     if (refreshingOfficialAccountId) {
-      return { accountId: refreshingOfficialAccountId, action: 'refresh' };
+      pending.push({ accountId: refreshingOfficialAccountId, action: 'refresh' });
     }
     if (savingOfficialAccountId) {
-      return { accountId: savingOfficialAccountId, action: 'save' };
+      pending.push({ accountId: savingOfficialAccountId, action: 'save' });
     }
-    return null;
+    return pending;
   }, [refreshingOfficialAccountId, savingOfficialAccountId]);
 
   /**
