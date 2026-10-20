@@ -131,7 +131,7 @@ def launch():
     return next(iter(current))
 
 THEME = "//*[normalize-space()='Current Theme:' or normalize-space()='当前主题:']/parent::div//div[contains(concat(' ',normalize-space(@class),' '),' ant-select ')]"
-CLOSE = "//*[normalize-space()='Minimize to Tray on Close' or normalize-space()='关闭时最小化到托盘']/parent::div//button[@role='switch']"
+CLOSE = "//span[normalize-space()='Minimize to Tray on Close' or normalize-space()='关闭时最小化到托盘']/following-sibling::button[@role='switch']"
 
 def close_normally():
     global session
