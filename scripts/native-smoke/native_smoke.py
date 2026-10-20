@@ -1,5 +1,5 @@
 """Draft: real native WebDriver smoke; no invoke mocking or storage writes."""
-import base64, hashlib, json, os, pathlib, sqlite3, time, urllib.request, urllib.error, shutil
+import math, base64, hashlib, json, os, pathlib, sqlite3, time, urllib.request, urllib.error, shutil
 ROOT = pathlib.Path(os.environ['SMOKE_ROOT']).resolve()
 BINARY = pathlib.Path(os.environ['SMOKE_BINARY']).resolve()
 EVIDENCE = pathlib.Path(os.environ['SMOKE_EVIDENCE']).resolve()
@@ -130,6 +130,103 @@ def ssh_snapshot(label):
         raise NativeSafetyStop(f'Unexpected SSH state; no recovery attempted: {value}')
     return value
 
+def observe_escape(field, form):
+    # Passive, bounded observation of only the existing Escape pair; no input values.
+    slot = '__nativeEscapeObservation_1f25c69e'
+    install = """
+      const [input, slot] = arguments;
+      if (Object.hasOwn(window, slot)) throw new Error('observation-slot-exists');
+      if (!input?.isConnected || input.tagName !== 'INPUT' || document.activeElement !== input)
+        throw new Error('observation-target-invalid');
+      const dialog = input.closest('[role="dialog"]');
+      if (!dialog) throw new Error('observation-dialog-missing');
+      const snapshot = () => {
+        const css = getComputedStyle(dialog), rect = dialog.getBoundingClientRect();
+        return {connected:dialog.isConnected, displayed:css.display !== 'none',
+          visible:css.visibility === 'visible', opacity:Number(css.opacity),
+          nonzero:rect.width > 0 && rect.height > 0,
+          inViewport:rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight,
+          appear:dialog.classList.contains('ant-zoom-appear'),
+          appearStart:dialog.classList.contains('ant-zoom-appear-start'),
+          enter:dialog.classList.contains('ant-zoom-enter'),
+          enterStart:dialog.classList.contains('ant-zoom-enter-start'),
+          leave:dialog.classList.contains('ant-zoom-leave')};
+      };
+      const state = {before:snapshot(), startedAt:performance.now(), records:[], error:null};
+      const listener = event => {
+        if (event.keyCode !== 27) return;
+        if (state.records.length >= 4) { state.error = 'overflow'; return; }
+        try {
+          state.records.push({type:event.type, isTrusted:event.isTrusted, keyCode:27,
+            ctrl:event.ctrlKey, alt:event.altKey, shift:event.shiftKey, meta:event.metaKey,
+            expectedTarget:event.target === input, at:performance.now(), dialog:snapshot()});
+        } catch (_) { state.error = 'snapshot-error'; }
+      };
+      window[slot] = {state, listener, snapshot};
+      try {
+        document.addEventListener('keydown', listener, {capture:true, passive:true});
+        document.addEventListener('keyup', listener, {capture:true, passive:true});
+      } catch (_) {
+        document.removeEventListener('keydown', listener, true);
+        document.removeEventListener('keyup', listener, true);
+        delete window[slot];
+        throw new Error('observation-install-failed');
+      }
+      return true;
+    """
+    finish = """
+      const slot = arguments[0], entry = window[slot];
+      if (!entry) throw new Error('observation-slot-missing');
+      // Cleanup precedes the possibly throwing final snapshot.
+      try {
+        document.removeEventListener('keydown', entry.listener, true);
+      } finally {
+        try { document.removeEventListener('keyup', entry.listener, true); }
+        finally { delete window[slot]; }
+      }
+      return {...entry.state, after:entry.snapshot(), endedAt:performance.now()};
+    """
+    def snapshot_ok(value):
+        flags = {'connected','displayed','visible','nonzero','inViewport','appear','appearStart','enter','enterStart','leave'}
+        return isinstance(value,dict) and set(value)==flags|{'opacity'} and all(type(value[k]) is bool for k in flags) and number(value['opacity'])
+    def number(value):
+        return type(value) in (int,float) and math.isfinite(value)
+    def valid(value):
+        if not isinstance(value,dict) or set(value)!={'before','startedAt','records','error','after','endedAt'}: return False
+        if not snapshot_ok(value['before']) or not snapshot_ok(value['after']): return False
+        if not number(value['startedAt']) or not number(value['endedAt']): return False
+        if value['error'] not in (None,'overflow','snapshot-error'): return False
+        if type(value['records']) is not list or len(value['records'])>4: return False
+        flags={'isTrusted','ctrl','alt','shift','meta','expectedTarget'}
+        for event in value['records']:
+            if not isinstance(event,dict) or set(event)!=flags|{'type','keyCode','at','dialog'}: return False
+            if event['type'] not in ('keydown','keyup') or type(event['keyCode']) is not int or event['keyCode']!=27: return False
+            if not all(type(event[k]) is bool for k in flags) or not number(event['at']) or not snapshot_ok(event['dialog']): return False
+        return True
+    installed=request('POST',f'/session/{session}/execute/sync',{'script':install,'args':[{ELEMENT:field},slot]})
+    primary=None
+    try:
+        if installed is not True: raise NativeSafetyStop('Escape observation install failed')
+        request('POST', f'/session/{session}/actions', {'actions': [{
+            'type': 'key', 'id': 'ssh-cancel-keyboard', 'actions': [
+                {'type': 'keyDown', 'value': '\ue00c'}, {'type': 'keyUp', 'value': '\ue00c'}]}]})
+        wait(lambda: not request('POST', f'/session/{session}/elements', {'using':'xpath','value':form}))
+    except BaseException as error:
+        primary=error
+        raise
+    finally:
+        try:
+            observed=request('POST',f'/session/{session}/execute/sync',{'script':finish,'args':[slot]})
+            if not valid(observed): raise NativeSafetyStop('Escape observation schema invalid')
+            (EVIDENCE/'ssh-escape-observation.json').write_text(json.dumps(observed,indent=2))
+            if observed['error'] is not None: raise NativeSafetyStop('Escape observation failed')
+        except Exception:
+            try:
+                (EVIDENCE/'ssh-escape-observation-error.json').write_text(json.dumps({'category':'observation-failed'}))
+            finally:
+                if primary is not None: raise primary
+            raise NativeSafetyStop('Escape observation failed')
+
 def ssh_cancel_smoke():
     modal = "//div[@role='dialog'][.//div[contains(concat(' ',normalize-space(@class),' '),' ant-modal-title ') and normalize-space()='SSH Config Sync Settings']]"
     form = "//div[@role='dialog'][.//div[contains(concat(' ',normalize-space(@class),' '),' ant-modal-title ') and normalize-space()='New Connection']]"
@@ -155,10 +252,7 @@ def ssh_cancel_smoke():
     focused = request('GET', f'/session/{session}/element/active')
     assert focused[ELEMENT] == field, 'Synthetic name input must retain focus'
     (EVIDENCE / 'ssh-escape-focus.json').write_text(json.dumps({'name_input_focused': True}))
-    request('POST', f'/session/{session}/actions', {'actions': [{
-        'type': 'key', 'id': 'ssh-cancel-keyboard', 'actions': [
-            {'type': 'keyDown', 'value': '\ue00c'}, {'type': 'keyUp', 'value': '\ue00c'}]}]})
-    wait(lambda: not request('POST', f'/session/{session}/elements', {'using':'xpath','value':form}))
+    observe_escape(field, form)
     xpath(modal)  # Escape closes only the child; the parent must remain visible.
     ssh_snapshot('after-escape')
     click(new)
