@@ -1389,6 +1389,61 @@ mod tests {
     }
 
     #[test]
+    fn privacy_lossy_observations_are_redacted_on_export_without_bodies() {
+        use super::super::transformer::{check_lossy_conversion, AiProtocol, ConversionRoute};
+        use super::super::types::GatewayRequestRewrite;
+
+        // Model an existing JSONL detail with an unsafe diagnostic, even when
+        // body/header storage was off. Export must protect old records too.
+        const SECRET: &str = "fixture_observation_export_private_63af";
+        let issues = check_lossy_conversion(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            &serde_json::json!({"modalities": ["text", format!("api_key={SECRET}")]}),
+        );
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].message.contains(SECRET));
+        let mut detail = request_detail_fixture();
+        detail.privacy = Some(super::super::privacy::PrivacyDetail {
+            matched_values: 1,
+            ..Default::default()
+        });
+        detail.rewrites = issues
+            .into_iter()
+            .map(|issue| GatewayRequestRewrite {
+                kind: "lossy_conversion".to_string(),
+                detail: Some(format!("{}: {}", issue.path, issue.message)),
+            })
+            .collect();
+        assert!(detail.request_headers.is_none());
+        assert!(detail.response_headers.is_none());
+        assert!(detail.request_body.is_none());
+        assert!(detail.upstream_request_body.is_none());
+        assert!(detail.response_body.is_none());
+        assert!(detail.upstream_response_body.is_none());
+
+        let exported = build_request_log_detail_export(&detail);
+        assert_eq!(
+            exported["observations"]["rewrites"][0]["kind"],
+            "lossy_conversion"
+        );
+        assert_eq!(exported["privacy"]["matched_values"], 1);
+        assert!(exported["request"]["body_before_conversion"].is_null());
+        assert!(exported["response"]["body_after_conversion"].is_null());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("synthetic-observations-export.json");
+        write_export_json(&path, &exported).unwrap();
+        let persisted = std::fs::read_to_string(path).unwrap();
+        assert!(
+            !persisted.contains(SECRET),
+            "export must redact observation details too"
+        );
+        assert!(
+            persisted.contains("lossy_conversion"),
+            "keep useful diagnostic kinds"
+        );
+    }
+
+    #[test]
     fn display_sanitization_redacts_path_and_upstream_url_queries() {
         let sanitized = sanitize_request_log_detail_for_display(request_detail_fixture());
 
