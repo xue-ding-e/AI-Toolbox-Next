@@ -23,7 +23,7 @@ const EMPTY_STATE: ProviderListState = {
 };
 
 let cachedState: ProviderListState = EMPTY_STATE;
-let statePromise: Promise<ProviderListState> | null = null;
+let statePromise: Promise<void> | null = null;
 
 /**
  * Normalize a response: a backend older than a field would omit it, and
@@ -45,15 +45,15 @@ export const loadProviderListState = (): Promise<ProviderListState> => {
       // the default order/layout, which is always a valid view.
       .catch(() => {
         cachedState = EMPTY_STATE;
-      })
-      // Re-reads resolve from the CURRENT cache, not the load-time snapshot:
-      // writers patch `cachedState` in place, and a KeepAlive LRU eviction can
-      // remount a page long after this load settled — handing such a remount
-      // the frozen snapshot would silently revert every write since then
-      // (view mode, sort order) while the backend still holds the new value.
-      .then(() => cachedState);
+      });
   }
-  return statePromise;
+  // Re-reads resolve from the CURRENT cache, not the load-time snapshot:
+  // writers replace `cachedState`, and a KeepAlive LRU eviction can
+  // remount a page long after this load settled — handing such a remount
+  // the frozen snapshot would silently revert every write since then
+  // (view mode, sort order) while the backend still holds the new value.
+  // Attach this continuation per call; a resolved Promise keeps its old value.
+  return statePromise.then(() => cachedState);
 };
 
 /** The last loaded state, without waiting for the (single-flight) read. */
