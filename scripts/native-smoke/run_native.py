@@ -22,7 +22,7 @@ def sentinel():
     return values
 before_host=sentinel()
 root=pathlib.Path(tempfile.mkdtemp(prefix='ai-native-profile-')).resolve()
-for name in ('home','config','share','cache','runtime','tmp','data','codex'):
+for name in ('home','config','share','cache','runtime','tmp','data','codex','xvfb-framebuffers'):
     (root/name).mkdir(mode=0o700)
 env={'PATH':'/usr/bin:/bin','LANG':'en_US.UTF-8','LC_ALL':'en_US.UTF-8',
      'HOME':str(root/'home'),'XDG_CONFIG_HOME':str(root/'config'),'XDG_DATA_HOME':str(root/'share'),
@@ -31,7 +31,7 @@ env={'PATH':'/usr/bin:/bin','LANG':'en_US.UTF-8','LC_ALL':'en_US.UTF-8',
      'SMOKE_ROOT':str(root),'SMOKE_BINARY':str(binary),'SMOKE_EVIDENCE':str(evidence),
      'SMOKE_SCRIPT':str(pathlib.Path(__file__).with_name('native_smoke.py')),'SMOKE_DRIVER':str(tools/'bin/tauri-driver')}
 # The inner shell inherits ONLY this allowlist; xvfb/dbus add their own addresses.
-command=['/usr/bin/xvfb-run','-a','--server-args=-screen 0 1280x900x24 -nolisten tcp',
+command=['/usr/bin/xvfb-run','-a',f'--server-args=-screen 0 1280x900x24 -nolisten tcp -fbdir {root / "xvfb-framebuffers"}',
  '/usr/bin/dbus-run-session','--','/bin/bash','-c', '''set -euo pipefail
 "$SMOKE_DRIVER" --native-host 127.0.0.1 --port 4444 --native-port 4445 > "$SMOKE_EVIDENCE/driver.log" 2>&1 &
 for i in {1..50}; do
@@ -92,6 +92,15 @@ try:
     if result: raise SystemExit(result)
 finally:
     track()
+    # Capture only our exclusive Xvfb framebuffer before owned-process cleanup.
+    framebuffer=root/'xvfb-framebuffers'/'Xvfb_screen0'
+    try:
+        if framebuffer.is_file(): shutil.copyfile(framebuffer,evidence/'native-display-final.xwd')
+        else: (evidence/'framebuffer-error.txt').write_text('Owned Xvfb framebuffer missing')
+    except Exception as error:
+        # Evidence failure must never skip process cleanup.
+        try: (evidence/'framebuffer-error.txt').write_text(str(error))
+        except Exception: pass
     # Signal only identities captured as descendants / members of our owned group.
     # /proc start time protects against PID reuse. No name-based global pkill.
     for sig in (signal.SIGTERM, signal.SIGKILL):
