@@ -320,6 +320,7 @@ side store、lossy 策略、rectifier、xAI restore 仍由 `upstream.rs` 请求�
 - 协议身份、Schema 控制字段和媒体不能按普通业务对象遍历：保留 namespace/tool_name、format/required、工具结果 block 中的图片/inlineData 和 Ollama images；描述/示例、工具结果文本和 Anthropic 纯文本文档仍扫描。HTTP 隐私错误必须按客户端协议提供 error envelope，保持 provider 健康中立。
 - 脱敏日志必须使用独立副本；截断/解析失败以省略说明替代，不能回退原文、不能落盘映射。日志对流式字段的扫描也要跨分片并隔离工具通道。改动至少验证 `cargo test --lib privacy`、现有 WS 生命周期和 SQLite/全量门禁。
 - 日志原值匹配必须一次选定原始文本范围并保护已有 token，不能循环 replace 新生成的字符串；单字符凭据会命中 token 自身。映射 TTL 是闲置期限，活动请求不按起始时间过期，响应到达需刷新缓存保留时间。
+- `lossy_conversion` observation 不能保存原始 warning：其中 modality、未知 content type、MIME 可来自任意请求值。统一走 `request_log::safe_lossy_observation_detail` 的固定结构摘要，路径只做完整白名单匹配且不回显；未知内容用固定说明。源头、旧详情 display/export 都须保护，独立于 body/header 与 privacy 开关；保留 kind，不能为了日志安全更改原协议 warning/header。测试同时含无凭据标签的合成值与动态路径，不能只掩一个 `api_key=` 样例。
 - WS 旧轮次是否受保护要跟随有界 completed ID 记录，不能只看当前总开关；关闭后迟到的重复终态也不能带占位符透传。开启时的未关联正文检查必须覆盖 pending 为空的情况。
 - 上游 relay 把 Responses WebSocket 锁到首个成功轮次的模型（New API 的 `lockedModel`）时，同一连接上换模型会被上游以 400 `invalid_request` 拒绝，而 Codex 把该 code 当终结性错误、不重试——issue #420 的「切模型卡住」即此。该 code 与其它 400 共用，只能按 `error.message` 匹配 `responses websocket connection is locked to model`；命中后必须把 `error.code` 改写为 Codex 会重连的 `websocket_connection_limit_reached`（message 保留上游原文，含两个模型名）、送达该事件后关闭连接让重试握手换到未锁定的新连接，并按 `websocket_model_locked` 记账且不扣模型健康（连接级拒绝不是模型故障）。非锁定语义的 400 原样透传、不关连接。
 
