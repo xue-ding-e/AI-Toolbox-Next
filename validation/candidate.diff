@@ -516,10 +516,11 @@
 +createRoot(document.getElementById('root')).render(<Fixture />);
 --- /dev/null
 +++ b/web/test/features/coding/grok/fetchedModels/fixtures/boundary.mjs
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,108 @@
 +import { mockIPC } from '@tauri-apps/api/mocks';
 +
 +// Installed before importing any application module. All data is synthetic.
++window.__TAURI_OS_PLUGIN_INTERNALS__ = { platform: 'linux' };
 +const allowedScenarios = new Set(['new', 'existing', 'remove-default', 'save-failure']);
 +const params = new URLSearchParams(location.search);
 +const scenario = params.get('scenario') || 'new';
