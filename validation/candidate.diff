@@ -1,0 +1,573 @@
+--- a/tauri/src/coding/skills/AGENTS.md
++++ b/tauri/src/coding/skills/AGENTS.md
+@@ -105,6 +105,7 @@
+ | preferred_tools | array? | 首选工具列表 |
+ | limit_add_more_to_preferred_tools | bool | 是否限制 Skill 卡片“添加更多”菜单仅显示首选工具（默认 false） |
+ | default_view_mode | string | 进入 Skills 页面时的默认 UI 视图：`flat` / `grouped`，非法或缺失时回退 `flat` |
++| group_mode | string | 分组视图的默认分组方式：`auto` / `custom` / `source`，非法或缺失时回退 `auto`；`auto` 表示没有任何自定义分组时按来源分组，否则按自定义分组 |
+ | git_cache_cleanup_days | i32 | Git 缓存清理天数，默认 30 |
+ | git_cache_ttl_secs | i32 | Git 缓存 TTL 秒数，默认 60 |
+ | known_tool_versions | object? | 已知工具版本信息 |
+--- a/tauri/src/coding/skills/adapter.rs
++++ b/tauri/src/coding/skills/adapter.rs
+@@ -328,6 +328,7 @@
+         default_view_mode: normalize_default_view_mode(
+             value.get("default_view_mode").and_then(|v| v.as_str()),
+         ),
++        group_mode: normalize_group_mode(value.get("group_mode").and_then(|v| v.as_str())),
+         git_cache_cleanup_days: value
+             .get("git_cache_cleanup_days")
+             .and_then(|v| v.as_i64())
+@@ -369,11 +370,20 @@
+     }
+ }
+ 
++pub(crate) fn normalize_group_mode(value: Option<&str>) -> String {
++    match value {
++        Some("custom") => "custom".to_string(),
++        Some("source") => "source".to_string(),
++        _ => "auto".to_string(),
++    }
++}
++
+ /// Convert SkillPreferences to database payload
+ pub fn to_skill_preferences_payload(prefs: &SkillPreferences) -> Value {
+     serde_json::json!({
+         "preferred_tools": prefs.preferred_tools,
+         "default_view_mode": normalize_default_view_mode(Some(&prefs.default_view_mode)),
++        "group_mode": normalize_group_mode(Some(&prefs.group_mode)),
+         "git_cache_cleanup_days": prefs.git_cache_cleanup_days,
+         "git_cache_ttl_secs": prefs.git_cache_ttl_secs,
+         "known_tool_versions": prefs.known_tool_versions,
+@@ -461,6 +471,43 @@
+     }
+ 
+     #[test]
++    fn skill_preferences_group_mode_defaults_to_auto() {
++        let missing = from_db_skill_preferences(json!({}));
++        assert_eq!(missing.group_mode, "auto");
++
++        let invalid = from_db_skill_preferences(json!({ "group_mode": "repository" }));
++        assert_eq!(invalid.group_mode, "auto");
++    }
++
++    #[test]
++    fn skill_preferences_group_mode_keeps_explicit_choices() {
++        for mode in ["custom", "source"] {
++            let prefs = from_db_skill_preferences(json!({ "group_mode": mode }));
++            assert_eq!(prefs.group_mode, mode);
++        }
++    }
++
++    #[test]
++    fn skill_preferences_payload_normalizes_group_mode() {
++        let mut prefs = SkillPreferences::default();
++        prefs.group_mode = "source".to_string();
++        assert_eq!(
++            to_skill_preferences_payload(&prefs)
++                .get("group_mode")
++                .and_then(Value::as_str),
++            Some("source")
++        );
++
++        prefs.group_mode = "repository".to_string();
++        assert_eq!(
++            to_skill_preferences_payload(&prefs)
++                .get("group_mode")
++                .and_then(Value::as_str),
++            Some("auto")
++        );
++    }
++
++    #[test]
+     fn skill_preferences_payload_normalizes_default_view_mode() {
+         let mut prefs = SkillPreferences::default();
+         prefs.default_view_mode = "grouped".to_string();
+--- a/tauri/src/coding/skills/commands.rs
++++ b/tauri/src/coding/skills/commands.rs
+@@ -2270,6 +2270,29 @@
+     mode: String,
+ ) -> Result<(), String> {
+     skill_store::set_setting(&state, "default_view_mode", &mode).await
++}
++
++// --- Group Mode ---
++
++#[tauri::command]
++pub async fn skills_get_group_mode(state: State<'_, SqliteDbState>) -> Result<String, String> {
++    let raw = skill_store::get_setting(&state, "group_mode")
++        .await
++        .ok()
++        .flatten();
++    Ok(match raw.as_deref() {
++        Some("custom") => "custom".to_string(),
++        Some("source") => "source".to_string(),
++        _ => "auto".to_string(),
++    })
++}
++
++#[tauri::command]
++pub async fn skills_set_group_mode(
++    state: State<'_, SqliteDbState>,
++    mode: String,
++) -> Result<(), String> {
++    skill_store::set_setting(&state, "group_mode", &mode).await
+ }
+ 
+ // --- Custom Tools ---
+--- a/tauri/src/coding/skills/skill_store.rs
++++ b/tauri/src/coding/skills/skill_store.rs
+@@ -10,7 +10,7 @@
+ 
+ use super::adapter::{
+     from_db_skill, from_db_skill_group, from_db_skill_preferences, from_db_skill_repo,
+-    get_sync_detail, parse_sync_details, remove_sync_detail, set_sync_detail,
++    get_sync_detail, normalize_group_mode, parse_sync_details, remove_sync_detail, set_sync_detail,
+     to_clean_skill_payload, to_skill_group_payload, to_skill_preferences_payload,
+     to_skill_repo_payload,
+ };
+@@ -569,6 +569,7 @@
+             .preferred_tools
+             .map(|v| serde_json::to_string(&v).unwrap_or_default()),
+         "default_view_mode" => Some(prefs.default_view_mode),
++        "group_mode" => Some(prefs.group_mode),
+         "installed_tools_v1" => prefs
+             .installed_tools
+             .map(|v| serde_json::to_string(&v).unwrap_or_default()),
+@@ -600,6 +601,9 @@
+                 "grouped" => "grouped".to_string(),
+                 _ => "flat".to_string(),
+             };
++        }
++        "group_mode" => {
++            prefs.group_mode = normalize_group_mode(Some(value));
+         }
+         "installed_tools_v1" => {
+             prefs.installed_tools = serde_json::from_str(value).ok();
+@@ -849,6 +853,65 @@
+     }
+ 
+     #[tokio::test]
++    async fn group_mode_preserves_other_preferences_after_reopen() {
++        let (temp, state) = create_test_db();
++        set_setting(&state, "default_view_mode", "grouped").await.unwrap();
++        set_setting(&state, "preferred_tools_v1", r#"["codex"]"#).await.unwrap();
++        set_setting(&state, "git_cache_ttl_secs", "123").await.unwrap();
++        set_setting(&state, "limit_add_more_to_preferred_tools", "true").await.unwrap();
++        let mut before = load_raw_preferences(&state);
++        set_setting(&state, "group_mode", "source").await.unwrap();
++        let saved = load_raw_preferences(&state);
++        let mut after = saved.clone();
++        for value in [&mut before, &mut after] {
++            let object = value.as_object_mut().expect("preferences object");
++            object.remove("group_mode");
++            object.remove("updated_at");
++        }
++        assert_eq!(before, after, "setting group mode must preserve all other fields");
++        drop(state);
++        let reopened = SqliteDbState::open(temp.path().join("ai-toolbox.db"))
++            .expect("reopen synthetic preferences DB");
++        assert_eq!(load_raw_preferences(&reopened), saved);
++        assert_eq!(get_setting(&reopened, "group_mode").await.unwrap().as_deref(), Some("source"));
++    }
++
++    #[tokio::test]
++    async fn group_mode_setting_round_trips_and_normalizes() {
++        let (_temp, state) = create_test_db();
++
++        assert_eq!(
++            get_setting(&state, "group_mode")
++                .await
++                .expect("read setting")
++                .as_deref(),
++            Some("auto")
++        );
++
++        set_setting(&state, "group_mode", "source")
++            .await
++            .expect("save source grouping");
++        assert_eq!(
++            get_setting(&state, "group_mode")
++                .await
++                .expect("read setting")
++                .as_deref(),
++            Some("source")
++        );
++
++        set_setting(&state, "group_mode", "repository")
++            .await
++            .expect("save invalid grouping");
++        assert_eq!(
++            get_setting(&state, "group_mode")
++                .await
++                .expect("read setting")
++                .as_deref(),
++            Some("auto")
++        );
++    }
++
++    #[tokio::test]
+     async fn limit_add_more_to_preferred_tools_setting_round_trips() {
+         let (_temp, state) = create_test_db();
+ 
+--- a/tauri/src/coding/skills/types.rs
++++ b/tauri/src/coding/skills/types.rs
+@@ -77,6 +77,9 @@
+     pub id: String,                           // Fixed "default"
+     pub preferred_tools: Option<Vec<String>>, // User selected preferred tools
+     pub default_view_mode: String,
++    /// Grouped-view organization: `auto` (source when no custom groups exist),
++    /// `custom`, or `source`.
++    pub group_mode: String,
+     pub git_cache_cleanup_days: i32,
+     pub git_cache_ttl_secs: i32,
+     pub known_tool_versions: Option<Value>,
+@@ -94,6 +97,7 @@
+             id: "default".to_string(),
+             preferred_tools: None,
+             default_view_mode: "flat".to_string(),
++            group_mode: "auto".to_string(),
+             git_cache_cleanup_days: 30,
+             git_cache_ttl_secs: 60,
+             known_tool_versions: None,
+--- a/tauri/src/lib.rs
++++ b/tauri/src/lib.rs
+@@ -2909,6 +2909,8 @@
+             coding::skills::skills_set_show_in_tray,
+             coding::skills::skills_get_default_view_mode,
+             coding::skills::skills_set_default_view_mode,
++            coding::skills::skills_get_group_mode,
++            coding::skills::skills_set_group_mode,
+             // Skills Hub - Custom Tools
+             coding::skills::skills_get_custom_tools,
+             coding::skills::skills_add_custom_tool,
+--- a/web/features/coding/skills/AGENTS.md
++++ b/web/features/coding/skills/AGENTS.md
+@@ -17,7 +17,7 @@
+ ## 核心设计决策（Why）
+ 
+ - 页面默认站在“中央仓库”视角组织技能，而不是站在某一个工具目录视角，因为真正的 source of truth 是中央仓库。
+-- grouped view 按来源分组，flat view 按单个 skill 操作；两种视图服务不同任务，不能强行合并成一种。flat view 同样支持 selection mode 批量操作（启停/加减工具/设分组/删除/打标），与 grouped view 复用同一套 `useSkillActions` 批量逻辑；但 flat 的组织语义仍是平铺单层，不引入组工具模式（组工具模式是 custom 分组视图专属）。
++- grouped view 支持「来源」和「自定义」两种分组方式（默认 `auto`：没有任何自定义分组时按来源，否则按自定义），flat view 按单个 skill 操作；两种视图服务不同任务，不能强行合并成一种。flat view 同样支持 selection mode 批量操作（启停/加减工具/设分组/删除/打标），与 grouped view 复用同一套 `useSkillActions` 批量逻辑；但 flat 的组织语义仍是平铺单层，不引入组工具模式（组工具模式是 custom 分组视图专属）。
+ - 自定义分组只影响页面组织和搜索，不改变中央仓库目录结构，也不改变同步到各工具的目标路径。
+ - 手动分组是 first-class registry，用稳定 `group_id` 维护归属；应用内重命名 group 只改分组记录，组内 skill 归属保持不变。
+ - Inventory JSON 是完整管理清单覆盖语义，不是局部 patch，也不是 skill 内容备份；导入导出只改管理元数据和工具同步状态，不改写中央仓库内容。
+@@ -48,6 +48,7 @@
+ - 不要把自定义分组和来源分组混为同一个业务概念；来源分组来自 `source_type/source_ref`，手动分组来自 `skill_group` + `group_id`，`user_group` 只用于兼容展示。
+ - grouped view 的展开状态、搜索过滤和选择集都是 UI 派生状态，刷新时只能做裁剪，不能把它们误当成业务配置保存。
+ - `default_view_mode` 保存用户进入 Skills 页时的默认展示偏好；设置保存成功后也应立即应用到当前 Skills 页面视图，但不能保存或推导当前页面搜索、展开、筛选、选择集等运行时状态。
++- `group_mode` 保存分组视图的「分组方式」偏好：`auto` / `custom` / `source`。`auto`（默认）表示没有任何自定义分组时回退到来源分组，有自定义分组时用自定义分组；用户手动切换后写回该偏好。不要把它当成当前页面的展开状态或选择集。
+ - 组工具模式只是自定义分组视图里的前端批量控制模式。开启时可按组内工具并集补齐各 Skill，但不能新增配置组/Profile 事实源，也不能应用到来源分组、未分组或搜索后的局部结果；卡片工具列表仍展示，但卡片内工具添加/移除入口应只读禁用，点击时提示用户到分组标题后操作。
+ - 组工具模式里的“统一并开启”和分组标题 `+` 添加工具，都是用户已确认的分组级写入路径；补齐缺失工具时应显式覆盖工具目录中同名但未被当前 DB `sync_details` 记录的目标，避免裸 `TARGET_EXISTS|...` 中断。普通单项/批量同步仍保留默认非覆盖防护。
+ - `limit_add_more_to_preferred_tools`（设置弹窗“添加更多仅显示常用工具”开关）只限制普通 Skill 卡片 `+` 添加工具菜单的候选工具（与 `preferred_tools` 交集），不自动移除已启用工具，也不收窄批量添加、分组工具模式这类管理入口；该开关与 `preferred_tools` 一起在设置弹窗保存，并即时同步到 Skills 页面的卡片菜单。
+--- a/web/features/coding/skills/pages/SkillsPage.tsx
++++ b/web/features/coding/skills/pages/SkillsPage.tsx
+@@ -73,7 +73,9 @@
+   isSkillGroupToolsAligned,
+   isSkillUngroupedCustomGroup,
+   normalizeSkillMetadataText,
++  resolveSkillGroupingMode,
+   type SkillGroupingMode,
++  type SkillGroupModePreference,
+ } from '../utils/skillGrouping';
+ import { GROUP_TOOL_BATCH_OPTIONS } from '../utils/batchToolOptions';
+ import {
+@@ -294,7 +296,9 @@
+ 
+   const [searchText, setSearchText] = React.useState('');
+   const [viewMode, setViewMode] = React.useState<SkillViewMode>('flat');
+-  const [groupMode, setGroupMode] = React.useState<SkillGroupingMode>('custom');
++  const [groupModePreference, setGroupModePreference] =
++    React.useState<SkillGroupModePreference | null>(null);
++  const groupMode = resolveSkillGroupingMode(groupModePreference, groups.length);
+   const [groupActiveKeys, setGroupActiveKeys] = React.useState<string[]>([]);
+   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+   const [selectionMode, setSelectionMode] = React.useState(false);
+@@ -485,6 +489,33 @@
+   React.useEffect(() => {
+     setTagFilter((prev) => pruneStaleTagFilters(prev, allTags, hasUntaggedSkill));
+   }, [allTags, hasUntaggedSkill]);
++
++  // Load the persisted grouped-view preference once. Until it arrives (and when
++  // it is still "auto"), resolveSkillGroupingMode keeps the historical source
++  // grouping for users who have no custom groups.
++  React.useEffect(() => {
++    let cancelled = false;
++    api
++      .getSkillGroupMode()
++      .then((preference) => {
++        if (!cancelled) {
++          setGroupModePreference((current) => current ?? preference);
++        }
++      })
++      .catch((error) => {
++        console.error('Failed to load skill group mode:', error);
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, []);
++
++  const handleGroupModeChange = React.useCallback((nextMode: SkillGroupingMode) => {
++    setGroupModePreference(nextMode);
++    api.setSkillGroupMode(nextMode).catch((error) => {
++      console.error('Failed to save skill group mode:', error);
++    });
++  }, []);
+ 
+   const isSearchActive = !!searchText.trim();
+   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
+@@ -1194,7 +1225,7 @@
+                         <ManagementSegmented<SkillGroupingMode>
+                           value={groupMode}
+                           ariaLabel={t('skills.groupControls.groupingLabel')}
+-                          onChange={setGroupMode}
++                          onChange={handleGroupModeChange}
+                           options={[
+                             {
+                               value: 'custom',
+--- a/web/features/coding/skills/services/skillsApi.ts
++++ b/web/features/coding/skills/services/skillsApi.ts
+@@ -23,6 +23,7 @@
+   DeleteManagedSkillOptions,
+   SkillDocument,
+ } from '../types';
++import type { SkillGroupingMode, SkillGroupModePreference } from '../utils/skillGrouping';
+ 
+ // Tool Status
+ export const getToolStatus = async (): Promise<ToolStatus> => {
+@@ -326,6 +327,15 @@
+   return invoke('skills_set_default_view_mode', { mode });
+ };
+ 
++// Group Mode
++export const getSkillGroupMode = async (): Promise<SkillGroupModePreference> => {
++  return invoke<SkillGroupModePreference>('skills_get_group_mode');
++};
++
++export const setSkillGroupMode = async (mode: SkillGroupingMode): Promise<void> => {
++  return invoke('skills_set_group_mode', { mode });
++};
++
+ // Skill Repos
+ export const getSkillRepos = async (): Promise<SkillRepo[]> => {
+   return invoke<SkillRepo[]>('skills_get_repos');
+--- a/web/features/coding/skills/types/index.ts
++++ b/web/features/coding/skills/types/index.ts
+@@ -50,9 +50,18 @@
+ 
+ export type SkillViewMode = 'flat' | 'grouped';
+ 
++export type SkillGroupingMode = 'custom' | 'source';
++
++/**
++ * Persisted grouped-view preference. `auto` keeps the historical source
++ * grouping until the user owns at least one custom group.
++ */
++export type SkillGroupModePreference = 'auto' | SkillGroupingMode;
++
+ export interface SkillPreferences {
+   preferred_tools: string[] | null;
+   default_view_mode: SkillViewMode;
++  group_mode: SkillGroupModePreference;
+   git_cache_cleanup_days: number;
+   git_cache_ttl_secs: number;
+   installed_tools: string[] | null;
+--- a/web/features/coding/skills/utils/skillGrouping.ts
++++ b/web/features/coding/skills/utils/skillGrouping.ts
+@@ -1,8 +1,24 @@
+-import type { ManagedSkill, SkillGroup, SkillGroupRecord } from '../types';
+-
+-export type SkillGroupingMode = 'custom' | 'source';
++import type {
++  ManagedSkill,
++  SkillGroup,
++  SkillGroupingMode,
++  SkillGroupModePreference,
++  SkillGroupRecord,
++} from '../types';
++
++export type { SkillGroupingMode, SkillGroupModePreference } from '../types';
+ 
+ export const CUSTOM_UNGROUPED_GROUP_KEY = 'custom:__ungrouped__';
++
++export function resolveSkillGroupingMode(
++  preference: SkillGroupModePreference | null | undefined,
++  customGroupCount: number,
++): SkillGroupingMode {
++  if (preference === 'custom' || preference === 'source') {
++    return preference;
++  }
++  return customGroupCount > 0 ? 'custom' : 'source';
++}
+ 
+ export interface SkillGroupLabels {
+   groupLocal: string;
+--- a/web/test/features/coding/skills/utils/skillGrouping.test.ts
++++ b/web/test/features/coding/skills/utils/skillGrouping.test.ts
+@@ -13,6 +13,7 @@
+   isSkillGroupToolsAligned,
+   isSkillUngroupedCustomGroup,
+   normalizeSkillMetadataText,
++  resolveSkillGroupingMode,
+ } from '../../../../../features/coding/skills/utils/skillGrouping.ts';
+ import { parseGitRepo } from '../../../../../features/coding/skills/utils/gitUrl.ts';
+ import {
+@@ -55,6 +56,18 @@
+   groupUngrouped: 'Ungrouped',
+ };
+ 
++test('resolveSkillGroupingMode keeps source grouping until custom groups exist', () => {
++  assert.equal(resolveSkillGroupingMode('auto', 0), 'source');
++  assert.equal(resolveSkillGroupingMode(null, 0), 'source');
++  assert.equal(resolveSkillGroupingMode(undefined, 0), 'source');
++  assert.equal(resolveSkillGroupingMode('auto', 2), 'custom');
++});
++
++test('resolveSkillGroupingMode honours explicit preferences', () => {
++  assert.equal(resolveSkillGroupingMode('source', 2), 'source');
++  assert.equal(resolveSkillGroupingMode('custom', 0), 'custom');
++});
++
+ test('normalizeSkillMetadataText trims empty values to null', () => {
+   assert.equal(normalizeSkillMetadataText('  Reverse  '), 'Reverse');
+   assert.equal(normalizeSkillMetadataText('   '), null);
+--- a/package.json
++++ b/package.json
+@@ -24,7 +24,7 @@
+     "test:provider-card-layout": "node ./scripts/verify-provider-card-layout.mjs",
+     "test:provider-card-view": "node ./scripts/verify-provider-card-view.mjs",
+     "test:ime-autocomplete": "node ./scripts/verify-ime-safe-autocomplete.mjs",
+-    "test": "pnpm run test:web && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-request-race",
++    "test": "pnpm run test:web && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-request-race && pnpm run test:skills-group-mode",
+     "sync:version": "node scripts/sync-tauri-version.mjs",
+     "tauri": "tauri",
+     "prepare": "husky",
+@@ -45,7 +45,8 @@
+     "test:gemini-account-pending": "node ./scripts/verify-gemini-account-pending.mjs",
+     "test:official-account-pending": "node ./scripts/verify-official-account-pending.mjs",
+     "test:ssh-request-race": "node ./scripts/verify-ssh-request-race.mjs",
+-    "test:deeplink-handshake": "node ./scripts/verify-deeplink-handshake.mjs"
++    "test:deeplink-handshake": "node ./scripts/verify-deeplink-handshake.mjs",
++    "test:skills-group-mode": "node ./scripts/verify-skills-group-mode.mjs"
+   },
+   "dependencies": {
+     "@ant-design/icons": "6.2.5",
+--- /dev/null
++++ b/scripts/verify-skills-group-mode.mjs
+@@ -0,0 +1,4 @@
++import {fileURLToPath} from 'node:url';
++import {runBrowserFixture} from './lib/browser-fixture.mjs';
++import {verifySkillsGroupMode} from '../web/test/features/coding/skills/groupMode/skillsGroupModeBrowserChecks.mjs';
++await runBrowserFixture({fixtureDirectory:fileURLToPath(new URL('../web/test/features/coding/skills/groupMode/fixtures/',import.meta.url)),fixtureFilename:'SkillsGroupModeFixture.jsx',artifactPrefix:'skills-group-mode-',verify:verifySkillsGroupMode});
+--- /dev/null
++++ b/web/test/features/coding/skills/groupMode/fixtures/SkillsGroupModeFixture.jsx
+@@ -0,0 +1,20 @@
++import {boundary} from './boundary.mjs';
++import React from 'react';
++import {createRoot} from 'react-dom/client';
++import {ConfigProvider} from 'antd';
++import i18next from 'i18next';
++import {I18nextProvider} from 'react-i18next';
++// Load real view only after official mockIPC installs the strict IPC boundary.
++const {default:SkillsPage}=await import('@/features/coding/skills/pages/SkillsPage');
++const i18n=i18next.createInstance();await i18n.init({lng:'en',fallbackLng:'en',resources:{en:{translation:{}}},initImmediate:false});
++let barrier;
++function Fixture(){
++ const [key,setKey]=React.useState(0),[present,setPresent]=React.useState(true),[tick,setTick]=React.useState(0);const done=React.useRef();
++ barrier=()=>new Promise(resolve=>{done.current=resolve;setTick(n=>n+1);});
++ React.useLayoutEffect(()=>{done.current?.();done.current=undefined;},[tick]);
++ return <I18nextProvider i18n={i18n}><ConfigProvider><button id="remount" onClick={()=>{setPresent(true);setKey(n=>n+1);}}>Remount</button><button id="unmount" onClick={()=>setPresent(false)}>Unmount</button><output id="barrier">{tick}</output><main id="skills-page">{present&&<SkillsPage key={key}/>}</main></ConfigProvider></I18nextProvider>;
++}
++createRoot(document.getElementById('root')).render(<Fixture/>);
++async function drain(){let last='',stable=0;for(let i=0;i<12;i++){await Promise.resolve();await barrier();await Promise.resolve();const state=window.skillsGroupFixture.snapshot();const value=JSON.stringify({boundary:boundary.snapshot(),mode:state.mode,groupHeaders:state.groupHeaders,mounted:state.mounted,alerts:state.alerts});stable=value===last?stable+1:0;last=value;if(stable===2)return;}throw Error('Fixture effects did not stabilize');}
++const visible=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
++window.skillsGroupFixture={drain,async resolveInitial(){boundary.resolveInitial();await drain();},snapshot(){const selected=[...document.querySelectorAll('[aria-label="skills.groupControls.groupingLabel"] [role="radio"][aria-checked="true"]')].filter(visible);return {...boundary.snapshot(),mode:selected.map(e=>e.textContent),groupHeaders:[...document.querySelectorAll('#skills-page section button[aria-expanded] > span:first-of-type')].filter(visible).map(e=>e.textContent),text:document.querySelector('#skills-page').textContent,alerts:[...document.querySelectorAll('.ant-message-notice,[role="alert"]')].filter(visible).map(e=>e.textContent),mounted:document.querySelector('#skills-page').childElementCount>0,barrier:Number(document.querySelector('#barrier').textContent)};}};
+--- /dev/null
++++ b/web/test/features/coding/skills/groupMode/fixtures/boundary.mjs
+@@ -0,0 +1,46 @@
++import {mockIPC} from '@tauri-apps/api/mocks';
++// Restrict this synthetic fixture before dynamically importing the application page.
++const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'";document.head.append(policy);
++const scenario=new URLSearchParams(location.search).get('scenario')||'auto-empty';
++let stored=scenario==='explicit-custom'?'custom':scenario==='explicit-source'||scenario==='save-failure'?'source':'auto';
++const calls=[],writes=[],listeners=new Map();let forbidden=0,readCount=0,initialResolve;
++const skill={id:'synthetic-skill',name:'Synthetic Skill',source_type:'local',source_ref:'/synthetic/source-fixture',central_path:'/synthetic/skills/item',created_at:1,updated_at:1,last_sync_at:null,status:'active',sort_index:0,user_group:null,group_id:null,user_note:null,management_enabled:true,disabled_previous_tools:[],tags:[],description:'Synthetic fixture only',content_hash:null,source_health:'ok',source_error:null,enabled_tools:[],targets:[]};
++const groups=scenario==='auto-group'||scenario==='explicit-source'?[{id:'synthetic-group',name:'Synthetic Group',note:null,sort_index:0,created_at:1,updated_at:1}]:[];
++if(groups.length)skill.group_id=groups[0].id;
++window.open=()=>deny('window.open');
++document.addEventListener('securitypolicyviolation',()=>{forbidden++;});
++function deny(command){forbidden++;throw Error('Forbidden fixture IPC: '+command);}
++mockIPC(async(command,args)=>{
++ calls.push(command);
++ const exactKeys=keys=>args!==null&&typeof args==='object'&&!Array.isArray(args)&&JSON.stringify(Object.keys(args).sort())===JSON.stringify([...keys].sort());
++ const reads=['skills_get_default_view_mode','skills_get_group_mode','skills_get_tool_status','skills_get_managed_skills','skills_get_groups','skills_get_central_repo_path','skills_get_preferred_tools','skills_get_limit_add_more_to_preferred_tools'];
++ if(reads.includes(command)&&args!==undefined&&!exactKeys([]))return deny(command);
++ if(command==='plugin:event|listen'){
++  if(!exactKeys(['event','target','handler'])||args.event!=='skills-changed'||args.target?.kind!=='Any'||Object.keys(args.target).length!==1||!Number.isInteger(args.handler))return deny(command);
++  listeners.set(args.handler,args.event);return args.handler;
++ }
++ if(command==='plugin:event|unlisten'){
++  if(!exactKeys(['event','eventId'])||args.event!=='skills-changed'||!listeners.has(args.eventId))return deny(command);
++  listeners.delete(args.eventId);return null;
++ }
++ switch(command){
++  case 'skills_get_default_view_mode':return 'grouped';
++  case 'skills_get_group_mode':
++   readCount++;
++   if((scenario==='delayed-read'||scenario==='unmount-read')&&readCount===1)return new Promise(resolve=>{initialResolve=()=>resolve('source');});
++   return stored;
++  case 'skills_set_group_mode':
++   if(!exactKeys(['mode'])||!['custom','source'].includes(args.mode))return deny(command);
++   writes.push(args.mode);
++   if(scenario==='save-failure')throw Error('Synthetic preference save failure');
++   stored=args.mode;return null;
++  case 'skills_get_tool_status':return {tools:[],installed:[],newly_installed:[]};
++  case 'skills_get_managed_skills':return [structuredClone(skill)];
++  case 'skills_get_groups':return structuredClone(groups);
++  case 'skills_get_central_repo_path':return '/synthetic/skills';
++  case 'skills_get_preferred_tools':return [];
++  case 'skills_get_limit_add_more_to_preferred_tools':return false;
++  default:return deny(command);
++ }
++});
++export const boundary={snapshot:()=>({scenario,stored,calls:[...calls],writes:[...writes],forbidden,readCount,listeners:listeners.size,pendingInitial:!!initialResolve}),resolveInitial(){if(!initialResolve)throw Error('No pending initial read');const resolve=initialResolve;initialResolve=undefined;resolve();}};
+--- /dev/null
++++ b/web/test/features/coding/skills/groupMode/skillsGroupModeBrowserChecks.mjs
+@@ -0,0 +1,36 @@
++import assert from 'node:assert/strict';
++import {writeFile} from 'node:fs/promises';
++import path from 'node:path';
++export async function verifySkillsGroupMode({send,evaluate,baseUrl,exceptions,artifactRoot}){
++ const results=[];let phase='setup',observations=[];
++ const snapshot=()=>evaluate('skillsGroupFixture.snapshot()');
++ const observe=async label=>{const state=await snapshot();observations.push({label,state});return state;};
++ const wait=async fn=>{for(let n=0;n<200;n++){if(await fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Fixture UI deadline');};
++ const drain=()=>evaluate('skillsGroupFixture.drain()');
++ async function click(selector,text){phase='interaction';const point=await evaluate(`(()=>{const es=[...document.querySelectorAll(${JSON.stringify(selector)})].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&(${JSON.stringify(text??null)}===null||e.textContent===${JSON.stringify(text??null)});});if(es.length!==1)throw Error('Expected one visible target '+es.length);const e=es[0],r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))throw Error('Target occluded');return{x,y};})()`);await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});await drain();}
++ const modes='[aria-label="skills.groupControls.groupingLabel"] [role="radio"]';
++ async function openOptions(){await click('button[title^="skills.toolbar.options"]');await wait(async()=> (await snapshot()).mode.length===1);}
++ async function choose(mode){await click(modes,'skills.groupBy'+(mode==='source'?'Source':'Custom'));}
++ async function check(fn){const state=await observe('invariant');phase='invariant';fn(state);phase='interaction';}
++ async function remount(){const writes=(await snapshot()).writes.length;await click('#remount');await openOptions();assert.equal((await snapshot()).writes.length,writes,'Remount must not write preferences');}
++ async function run(name,scenario,fn){phase='setup';observations=[];const start=exceptions.length;try{
++  await send('Page.navigate',{url:baseUrl+'/?scenario='+scenario});
++  await wait(()=>evaluate(`!!window.skillsGroupFixture&&skillsGroupFixture.snapshot().scenario===${JSON.stringify(scenario)}&&skillsGroupFixture.snapshot().readCount===1`));await drain();await openOptions();
++  const ready=await observe('ready');assert.equal(ready.forbidden,0);assert.equal(ready.writes.length,0,'Mount must not persist derived mode');
++  await fn();phase='safety';assert.equal((await snapshot()).forbidden,0);assert.equal(exceptions.length,start);
++  results.push({name,passed:true,observations,pageExceptions:[]});
++ }catch(error){let state;try{state=await snapshot();}catch{}const diagnosticErrors=[];
++  try{await writeFile(path.join(artifactRoot,`case-${results.length}-failure.html`),await evaluate('document.documentElement.outerHTML'));const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(path.join(artifactRoot,`case-${results.length}-failure.png`),Buffer.from(shot.data,'base64'));}catch(e){diagnosticErrors.push(String(e));}
++  results.push({name,passed:false,phase,error:String(error),observations,state,pageExceptions:exceptions.slice(start),diagnosticErrors});
++ }}
++ await run('auto with no groups uses source without writing','auto-empty',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
++ await run('auto with owned group uses custom without writing','auto-group',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['Synthetic Group']);});});
++ await run('explicit source overrides existing custom group','explicit-source',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
++ await run('explicit custom survives zero groups','explicit-custom',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);});});
++ await run('successful choice persists across real page remount','auto-empty',async()=>{await choose('custom');await check(s=>{assert.equal(s.stored,'custom');assert.deepEqual(s.writes,['custom']);});await remount();await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);});});
++ await run('late initial read does not overwrite user choice','delayed-read',async()=>{await choose('custom');await evaluate('skillsGroupFixture.resolveInitial()');await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);assert.equal(s.stored,'custom');});});
++ await run('failed save characterization preserves old storage','save-failure',async()=>{await choose('custom');await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);assert.equal(s.stored,'source');assert.deepEqual(s.writes,['custom']);assert.deepEqual(s.alerts,[],'Current upstream shows no visible persistence error; characterization, not desired UX');});await remount();await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
++ await run('successive normal writes retain final intent','auto-empty',async()=>{await choose('custom');await choose('source');await check(s=>{assert.deepEqual(s.writes,['custom','source']);assert.equal(s.stored,'source');});await remount();await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
++ await run('unmount smoke: delayed read does not resurrect view','unmount-read',async()=>{await click('#unmount');await evaluate('skillsGroupFixture.resolveInitial()');await check(s=>{assert.equal(s.mounted,false);assert.equal(s.writes.length,0);});});
++ const report={passed:results.filter(x=>x.passed).length,failed:results.filter(x=>!x.passed).length,results};await writeFile(path.join(artifactRoot,'skills-group-cases.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));assert.equal(report.failed,0,'Inspect phase and observations; setup failures are not product defects');return results;
++}
