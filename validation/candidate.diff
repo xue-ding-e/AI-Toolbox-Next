@@ -1,0 +1,935 @@
+--- a/package.json
++++ b/package.json
+@@ -25,7 +25,7 @@
+     "test:provider-card-layout": "node ./scripts/verify-provider-card-layout.mjs",
+     "test:provider-card-view": "node ./scripts/verify-provider-card-view.mjs",
+     "test:ime-autocomplete": "node ./scripts/verify-ime-safe-autocomplete.mjs",
+-    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-capability && pnpm run test:skills-group-mode",
++    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-capability && pnpm run test:skills-group-mode && pnpm run test:claude-desktop-official-edit",
+     "sync:version": "node scripts/sync-tauri-version.mjs",
+     "tauri": "tauri",
+     "prepare": "husky",
+@@ -48,7 +48,8 @@
+     "test:ssh-request-race": "node ./scripts/verify-ssh-request-race.mjs",
+     "test:ssh-capability": "node ./web/test/features/settings/sshCapability/verify.mjs",
+     "test:deeplink-handshake": "node ./scripts/verify-deeplink-handshake.mjs",
+-    "test:skills-group-mode": "node ./scripts/verify-skills-group-mode.mjs"
++    "test:skills-group-mode": "node ./scripts/verify-skills-group-mode.mjs",
++    "test:claude-desktop-official-edit": "node ./web/test/features/coding/claudedesktop/officialEdit/run.mjs"
+   },
+   "dependencies": {
+     "@ant-design/icons": "6.2.5",
+--- a/web/features/coding/claudedesktop/AGENTS.md
++++ b/web/features/coding/claudedesktop/AGENTS.md
+@@ -35,7 +35,9 @@
+ 
+ ## 核心设计决策（Why）
+ 
+-- **渠道（profile）在创建时固定，编辑时不可改**。`providerEndpointKey` 下拉在 `isEdit` 时 `disabled`；"官方渠道"选项只在**新建**或编辑一个已是 `category === 'official'` 的记录时出现。原因是后端 apply 判定官方回退靠"seed id 或 `category=official` 且 env 无凭据"，把一个带凭据的自定义渠道改成 official 会写出语义矛盾的行。
++- **渠道（profile）在创建时固定，编辑时不可改**。`providerEndpointKey` 下拉在 `isEdit` 时 `disabled`；"官方渠道"选项只在**新建/复制**或编辑一个符合后端 restore predicate 的记录时出现。原因是后端 apply 判定官方回退靠"seed id 或 `category=official` 且 env 无凭据"，把一个带凭据的自定义渠道改成 official 会写出语义矛盾的行。
++- `category` 是来源分类，不是 restore mode；带凭据的 imported official 行按自定义/预设 endpoint 编辑，原样/备注保存保留原分类。form 与 page 共用 `officialRestore.ts` 的 seed-or-empty-credentials 判定，只有新建/复制时用户显式选择渠道才提交分类覆盖。
++- 仅既有 `ccs:claude:*` / `claude:*` 来源的 official 非 restore 行，凭据对与初始化逐值完全相同（不 trim）时可保留原缺项；空缺与空串都按表单初始化的空串比较。未改凭据从 form 到 page builder 都保留原始字符串，不 trim；任一凭据改动、新建/复制、普通 custom 行仍要求 URL 和 key 两项且拒绝纯空白。合法导入行编辑初始化不从预设补齐原空 URL；两个字段互设 dependencies，避免改一项后另一项沿用旧校验。
+ - 官方模式保存的是 `{"env":{}}`（`buildProviderSettingsConfig` 的第一分支），这是**触发后端 restore_official 的信号**，不是"空配置"。`buildProviderMeta` 在 official 分支会清掉 `claudeDesktopModelRoutes` / `apiFormat` / `gatewayProfile` / `customHeaders`(含 snake_case) / `customUserAgent`(含 snake_case) / `modelRewrites`(含 snake_case)——这些键对 1P 无意义，留着会在切回自定义时把旧配置复活。
+ - `meta.claudeDesktopMode` 是**废弃字段**，`buildProviderMeta` 无条件 `delete`。新代码不要读它、也不要写它。
+ - 保存一个**已应用**的 provider 时会走 `saveProviderWithGatewayReengage`：网关接管中先 `restoreProxyGatewayCliDirect('claude_desktop')`，保存，再按原模式重新接管（single → `engageSingle(savedProvider.id)`，failover → 再叠 `engageFailover`）。**顺序不能改**——后端 `update_claude_desktop_provider` 在 `is_applied` 时会自动重新 apply，而 apply 又被 `ensure_claude_desktop_gateway_direct` 拒绝（"已由网关接管"）。所以必须在保存前脱离接管。**本页没有 `engageAggregate`**：聚合是 Codex 专属，`resolveGatewayReengageMode` 对 Claude Desktop 永远不会返回 `aggregate`；不要照抄 codex 页补上这个回调。
+--- a/web/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal.tsx
++++ b/web/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal.tsx
+@@ -46,6 +46,10 @@
+   parseClaudeSettingsConfig,
+   type ClaudeModelRole,
+ } from '../../claudecode/utils/claudeModelConfig';
++import {
++  canPreserveImportedClaudeDesktopCredentials,
++  isClaudeDesktopOfficialRestoreProvider,
++} from '../utils/officialRestore';
+ import styles from './ClaudeDesktopProviderFormModal.module.less';
+ 
+ interface ClaudeDesktopProviderFormModalProps {
+@@ -125,7 +129,9 @@
+   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
+   const [loadingModels, setLoadingModels] = React.useState(false);
+   const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('native');
+-  const [providerCategory, setProviderCategory] = React.useState<'official' | 'custom'>('custom');
++  const [providerMode, setProviderMode] = React.useState<'official' | 'custom'>('custom');
++  // Raw stored category changes only when the user selects a different channel.
++  const [categoryOverride, setCategoryOverride] = React.useState<'official' | 'custom'>();
+   const [customHeaders, setCustomHeaders] = React.useState<CustomHeadersState>(() =>
+     getCustomHeadersFromMeta(provider?.meta),
+   );
+@@ -144,7 +150,21 @@
+   const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
+ 
+   const isEdit = !!provider && !isCopy;
+-  const isOfficialMode = providerCategory === 'official';
++  const isOfficialMode = providerMode === 'official';
++  const credentialRules = React.useMemo(() => [
++    ({ getFieldValue }: Pick<typeof form, 'getFieldValue'>) => {
++      const preserveImportedCredentials = canPreserveImportedClaudeDesktopCredentials(provider, {
++        baseUrl: getFieldValue('baseUrl'), apiKey: getFieldValue('apiKey'),
++      }, isCopy);
++      return {
++        required: !preserveImportedCredentials,
++        whitespace: !preserveImportedCredentials,
++        type: 'string' as const,
++        pattern: preserveImportedCredentials ? undefined : /[^\s\p{White_Space}]/u,
++        message: t('common.error'),
++      };
++    },
++  ], [provider, isCopy, t]);
+ 
+   const apiFormatOptions = React.useMemo(() => [
+     { value: 'anthropic', label: t('claudecode.provider.apiFormatAnthropic') },
+@@ -155,12 +175,9 @@
+ 
+   const providerEndpointOptions = React.useMemo(() => [
+     { value: CUSTOM_PROVIDER_ENDPOINT_KEY, label: t('claudecode.provider.providerProfileCustom') },
+-    // "官方渠道" is only selectable when creating a new provider, or when editing
+-    // an existing official (seed) entry. A non-official provider's channel is
+-    // fixed at creation time and cannot be switched to official afterwards
+-    // (backend apply only treats the seeded claude-desktop-official id, or a
+-    // category=official row with empty credentials, as an official restore).
+-    ...(!isEdit || provider?.category === 'official'
++    // Existing channels remain fixed. Imported rows labeled official but
++    // carrying credentials use their actual custom/preset endpoint, not 1P restore.
++    ...(!isEdit || isClaudeDesktopOfficialRestoreProvider(provider)
+       ? [{ value: OFFICIAL_PROVIDER_ENDPOINT_KEY, label: t('claudecode.provider.providerProfileOfficial') }]
+       : []),
+     ...getGatewayProviderProfilesForTool('claude_desktop').flatMap((profile) => {
+@@ -170,7 +187,7 @@
+         label: `${profile.label} / ${endpoint.label}`,
+       }));
+     }),
+-  ], [gatewayProviderProfilesVersion, isEdit, provider?.category, t]);
++  ], [gatewayProviderProfilesVersion, isEdit, provider, t]);
+ 
+   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
+   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
+@@ -247,6 +264,7 @@
+       return;
+     }
+     setFetchedModels([]);
++    setCategoryOverride(undefined);
+     if (provider) {
+       const settingsConfig = parseClaudeSettingsConfig(provider.settingsConfig);
+       const baseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL || '';
+@@ -273,8 +291,8 @@
+         const route = routes?.[CLAUDE_DESKTOP_ROLE_ROUTE_IDS[role]];
+         return route?.tierAlias || '';
+       };
+-      const nextProviderCategory = provider.category === 'official' ? 'official' : 'custom';
+-      const providerEndpointSelection = nextProviderCategory === 'official'
++      const nextProviderMode = isClaudeDesktopOfficialRestoreProvider(provider) ? 'official' : 'custom';
++      const providerEndpointSelection = nextProviderMode === 'official'
+         ? { providerProfileId: CUSTOM_PROVIDER_PROFILE_ID, providerEndpointId: undefined }
+         : inferGatewayProviderEndpointSelection({
+             tool: 'claude_desktop',
+@@ -289,17 +307,22 @@
+             'claude_desktop',
+             providerEndpointSelection.providerEndpointId,
+           );
+-      const selectedBaseUrl = baseUrl || providerEndpoint?.baseUrl || '';
++      // Editing a legitimate imported record must not invent a missing URL
++      // from its preset; copies/new/custom records keep the existing fallback.
++      const preserveImportedCredentials = canPreserveImportedClaudeDesktopCredentials(
++        provider, { baseUrl, apiKey }, isCopy,
++      );
++      const selectedBaseUrl = preserveImportedCredentials ? baseUrl : baseUrl || providerEndpoint?.baseUrl || '';
+       const selectedApiFormat = providerEndpoint
+         ? normalizeApiFormat(providerEndpoint.apiFormat)
+         : normalizeApiFormat(provider.meta?.apiFormat);
+-      setProviderCategory(nextProviderCategory);
++      setProviderMode(nextProviderMode);
+       setCustomHeaders(getCustomHeadersFromMeta(provider.meta));
+       setModelRewrites(getModelRewritesFromMeta(provider.meta));
+ 
+       form.setFieldsValue({
+         name: provider.name,
+-        providerEndpointKey: nextProviderCategory === 'official'
++        providerEndpointKey: nextProviderMode === 'official'
+           ? OFFICIAL_PROVIDER_ENDPOINT_KEY
+           : toGatewayProviderEndpointKey(
+               providerEndpointSelection.providerProfileId,
+@@ -327,7 +350,7 @@
+       });
+     } else {
+       form.resetFields();
+-      setProviderCategory('custom');
++      setProviderMode('custom');
+       setCustomHeaders(getCustomHeadersFromMeta(undefined));
+       setModelRewrites(getModelRewritesFromMeta(undefined));
+       form.setFieldsValue({
+@@ -337,11 +360,12 @@
+         apiFormat: DEFAULT_API_FORMAT,
+       });
+     }
+-  }, [open, provider, form]);
++  }, [open, provider, form, isCopy]);
+ 
+   const handleProviderEndpointChange = (selectionKey: string) => {
+     if (selectionKey === OFFICIAL_PROVIDER_ENDPOINT_KEY) {
+-      setProviderCategory('official');
++      setProviderMode('official');
++      setCategoryOverride('official');
+       setFetchedModels([]);
+       setCustomHeaders(getCustomHeadersFromMeta(undefined));
+       setModelRewrites(getModelRewritesFromMeta(undefined));
+@@ -369,7 +393,8 @@
+       return;
+     }
+ 
+-    setProviderCategory('custom');
++    setProviderMode('custom');
++    setCategoryOverride('custom');
+     const { providerProfileId, providerEndpointId } = parseGatewayProviderEndpointKey(selectionKey);
+     if (providerProfileId === CUSTOM_PROVIDER_PROFILE_ID) {
+       form.setFieldsValue({
+@@ -527,15 +552,19 @@
+ 
+     setLoading(true);
+     try {
++      const preserveImportedCredentials = canPreserveImportedClaudeDesktopCredentials(provider, {
++        baseUrl: values.baseUrl, apiKey: values.apiKey,
++      }, isCopy);
+       await onSubmit({
+         name: values.name,
+-        category: providerCategory,
++        category: categoryOverride,
++        restoreOfficial: isOfficialMode,
+         providerEndpointKey: values.providerEndpointKey,
+         providerProfileId: values.providerProfileId,
+         providerEndpointId: values.providerEndpointId,
+-        apiFormat: providerCategory === 'official' ? undefined : normalizeApiFormat(values.apiFormat),
+-        baseUrl: values.baseUrl?.trim() || undefined,
+-        apiKey: values.apiKey?.trim() || undefined,
++        apiFormat: providerMode === 'official' ? undefined : normalizeApiFormat(values.apiFormat),
++        baseUrl: preserveImportedCredentials ? values.baseUrl : values.baseUrl?.trim() || undefined,
++        apiKey: preserveImportedCredentials ? values.apiKey : values.apiKey?.trim() || undefined,
+         model: values.model,
+         haikuModel: values.haikuModel,
+         haikuModelName: values.haikuModelName,
+@@ -550,10 +579,10 @@
+         fableTierAlias: values.fableTierAlias,
+         haikuTierAlias: values.haikuTierAlias,
+         notes: values.notes,
+-        customHeaders: providerCategory === 'official'
++        customHeaders: providerMode === 'official'
+           ? { enabled: false, headers: [] }
+           : customHeaders,
+-        modelRewrites: providerCategory === 'official'
++        modelRewrites: providerMode === 'official'
+           ? { enabled: false, rewrites: [] }
+           : modelRewrites,
+       });
+@@ -814,7 +843,8 @@
+             <Form.Item
+               name="baseUrl"
+               label="Base URL"
+-              rules={[{ required: true, message: t('common.error') }]}
++              dependencies={['apiKey']}
++              rules={credentialRules}
+             >
+               <Input placeholder="https://api.anthropic.com" />
+             </Form.Item>
+@@ -822,7 +852,8 @@
+             <Form.Item
+               name="apiKey"
+               label="API Key"
+-              rules={[{ required: true, message: t('common.error') }]}
++              dependencies={['baseUrl']}
++              rules={credentialRules}
+             >
+               <Input
+                 type={showApiKey ? 'text' : 'password'}
+--- a/web/features/coding/claudedesktop/pages/ClaudeDesktopPage.tsx
++++ b/web/features/coding/claudedesktop/pages/ClaudeDesktopPage.tsx
+@@ -88,6 +88,10 @@
+ } from '@/features/coding/shared/gateway/providerProfiles';
+ import ClaudeDesktopProviderCard from '../components/ClaudeDesktopProviderCard';
+ import ClaudeDesktopProviderFormModal from '../components/ClaudeDesktopProviderFormModal';
++import {
++  canPreserveImportedClaudeDesktopCredentials,
++  isClaudeDesktopOfficialRestoreProvider,
++} from '../utils/officialRestore';
+ import ClaudeDesktopCommonConfigModal from '../components/ClaudeDesktopCommonConfigModal';
+ import SectionSidebarLayout, {
+   type SidebarSectionMarker,
+@@ -130,20 +134,28 @@
+   return trimmed.replace(/\/+$/, '') + '/v1';
+ }
+ 
+-function buildProviderSettingsConfig(values: ClaudeDesktopFormValues): string {
++function buildProviderSettingsConfig(
++  values: ClaudeDesktopFormValues,
++  restoreOfficial: boolean,
++  preserveImportedCredentials: boolean,
++): string {
+   // Official mode: an empty env makes apply restore the official 1P profile.
+-  if (values.category === 'official') {
++  if (restoreOfficial) {
+     return '{"env":{}}';
+   }
+   // Claude Desktop 的模型路由以 meta.claudeDesktopModelRoutes 为单一事实源
+   // （见 buildProviderMeta）：它驱动 3P profile 的 inferenceModels 菜单，网关
+   // 运行时也从它构建上游模型映射。env 仅承载网关凭据。
+   const env: Record<string, string> = {};
+-  if (values.baseUrl?.trim()) {
+-    env.ANTHROPIC_BASE_URL = values.baseUrl.trim();
++  // Unchanged imported credentials retain their exact bytes, including strings
++  // where Rust and JavaScript disagree about whitespace (for example BOM).
++  const baseUrl = preserveImportedCredentials ? values.baseUrl : values.baseUrl?.trim();
++  const apiKey = preserveImportedCredentials ? values.apiKey : values.apiKey?.trim();
++  if (baseUrl) {
++    env.ANTHROPIC_BASE_URL = baseUrl;
+   }
+-  if (values.apiKey?.trim()) {
+-    env.ANTHROPIC_AUTH_TOKEN = values.apiKey.trim();
++  if (apiKey) {
++    env.ANTHROPIC_AUTH_TOKEN = apiKey;
+   }
+   return JSON.stringify({ env }, null, 2);
+ }
+@@ -233,14 +245,15 @@
+ 
+ function buildProviderMeta(
+   values: ClaudeDesktopFormValues,
+-  existingMeta?: ClaudeDesktopProvider['meta'],
++  existingMeta: ClaudeDesktopProvider['meta'] | undefined,
++  restoreOfficial: boolean,
+ ): ClaudeDesktopProvider['meta'] {
+   const meta = { ...(existingMeta || {}) };
+   // Drop the legacy per-provider gateway-mode field; model routing now flows
+   // through claudeDesktopModelRoutes built from the form role mapping below.
+   delete meta.claudeDesktopMode;
+ 
+-  if (values.category === 'official') {
++  if (restoreOfficial) {
+     delete meta.claudeDesktopModelRoutes;
+     delete meta.apiFormat;
+     delete meta.gatewayProfile;
+@@ -743,13 +756,24 @@
+         // never report it and the re-engage helper would reject the replay.
+         onGatewayStatusChange: setGatewayCliStatus,
+         saveProvider: async () => {
+-          const category = values.category || editingProvider?.category || 'custom';
++          // Editing cannot change the channel. Keep its raw imported category and
++          // derive restore behavior from the same predicate the form uses.
++          const isEdit = Boolean(editingProvider && !isCopyMode);
++          const category = isEdit
++            ? editingProvider!.category
++            : values.category || editingProvider?.category || 'custom';
++          const restoreOfficial = isEdit
++            ? isClaudeDesktopOfficialRestoreProvider(editingProvider)
++            : values.restoreOfficial;
++          const preserveImportedCredentials = isEdit && canPreserveImportedClaudeDesktopCredentials(
++            editingProvider, { baseUrl: values.baseUrl, apiKey: values.apiKey }, false,
++          );
+           if (isCopyMode || !editingProvider) {
+             const providerInput: ClaudeDesktopProviderInput = {
+               name: values.name,
+               category,
+-              settingsConfig: buildProviderSettingsConfig(values),
+-              meta: buildProviderMeta(values, editingProvider?.meta),
++              settingsConfig: buildProviderSettingsConfig(values, restoreOfficial, preserveImportedCredentials),
++              meta: buildProviderMeta(values, editingProvider?.meta, restoreOfficial),
+               notes: values.notes || undefined,
+             };
+             savedProvider = await createClaudeDesktopProvider(providerInput);
+@@ -758,8 +782,8 @@
+               ...editingProvider,
+               name: values.name,
+               category,
+-              settingsConfig: buildProviderSettingsConfig(values),
+-              meta: buildProviderMeta(values, editingProvider.meta),
++              settingsConfig: buildProviderSettingsConfig(values, restoreOfficial, preserveImportedCredentials),
++              meta: buildProviderMeta(values, editingProvider.meta, restoreOfficial),
+               notes: values.notes,
+             };
+             savedProvider = await updateClaudeDesktopProvider(payload);
+--- /dev/null
++++ b/web/features/coding/claudedesktop/utils/officialRestore.ts
+@@ -0,0 +1,62 @@
++import type { ClaudeDesktopProvider } from '@/types/claudedesktop';
++
++type RestoreProvider = Pick<ClaudeDesktopProvider, 'id' | 'category' | 'settingsConfig'>;
++
++/** Mirror the backend's seed-id override and official_restore_settings predicate.
++ * Raw category alone is not a channel mode: imported official rows may have
++ * upstream credentials. The legacy API_KEY is deliberately not a restore key.
++ */
++export function isClaudeDesktopOfficialRestoreProvider(provider?: RestoreProvider | null): boolean {
++  if (!provider) return false;
++  if (provider.id === 'claude-desktop-official') return true;
++  if (provider.category !== 'official') return false;
++
++  let settings: unknown;
++  try {
++    settings = JSON.parse(provider.settingsConfig);
++  } catch {
++    return false;
++  }
++  const env = settings !== null && typeof settings === 'object'
++    ? (settings as Record<string, unknown>).env
++    : undefined;
++  if (env === null || typeof env !== 'object' || Array.isArray(env)) return true;
++  const credentials = env as Record<string, unknown>;
++  // Rust str::trim uses Unicode White_Space, not JavaScript's extra BOM removal.
++  const hasCredential = (value: unknown) =>
++    typeof value === 'string' && /[^\p{White_Space}]/u.test(value);
++  return !hasCredential(credentials.ANTHROPIC_BASE_URL)
++    && !hasCredential(credentials.ANTHROPIC_AUTH_TOKEN);
++}
++
++/** Only unchanged credential pairs on existing, identifiable imported official
++ * rows may retain an original missing field. New/copy/custom rows and every
++ * credential edit keep the usual two required fields. Compare the exact form
++ * representation: absent and empty strings both initialize to ''; no trimming.
++ */
++export function canPreserveImportedClaudeDesktopCredentials(
++  provider: (RestoreProvider & Pick<ClaudeDesktopProvider, 'sourceProviderId'>) | null | undefined,
++  values: { baseUrl: unknown; apiKey: unknown },
++  isCopy: boolean,
++): boolean {
++  if (!provider || isCopy || provider.category !== 'official'
++    || isClaudeDesktopOfficialRestoreProvider(provider)) return false;
++  if (!/^(?:ccs:claude:|claude:).+$/.test(provider.sourceProviderId ?? '')) return false;
++  let settings: unknown;
++  try {
++    settings = JSON.parse(provider.settingsConfig);
++  } catch {
++    return false;
++  }
++  const env = settings !== null && typeof settings === 'object'
++    ? (settings as Record<string, unknown>).env
++    : undefined;
++  if (!env || typeof env !== 'object' || Array.isArray(env)) return false;
++  const credentials = env as Record<string, unknown>;
++  const baseUrl = credentials.ANTHROPIC_BASE_URL;
++  const authToken = credentials.ANTHROPIC_AUTH_TOKEN;
++  const legacyKey = credentials.ANTHROPIC_API_KEY;
++  if ([baseUrl, authToken, legacyKey].some(value => value !== undefined && typeof value !== 'string')) return false;
++  return values.baseUrl === (baseUrl || '')
++    && values.apiKey === (authToken || legacyKey || '');
++}
+--- /dev/null
++++ b/web/test/features/coding/claudedesktop/officialEdit/Fixture.jsx
+@@ -0,0 +1,42 @@
++import { scenario,calls,denied,runtimeErrors } from './transport.mjs';
++import React from 'react';
++import {createRoot} from 'react-dom/client';
++import {App,ConfigProvider} from 'antd';
++import i18next from 'i18next';
++import {I18nextProvider} from 'react-i18next';
++import enUS from '@/i18n/locales/en-US.json';
++import zhCN from '@/i18n/locales/zh-CN.json';
++import gatewayProfiles from '@/../tauri/resources/gateway_provider_profiles.json';
++import {updateGatewayProviderProfiles} from '@/features/coding/shared/gateway/providerProfiles';
++import {createPageBoundary,sourceIdentity} from './page-boundary.generated.mjs';
++updateGatewayProviderProfiles(gatewayProfiles);
++const {default:FormModal}=await import('@/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal');
++const {default:ImportModal}=await import('@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal');
++const i18n=i18next.createInstance();
++await i18n.init({lng:'en-US',fallbackLng:'en-US',resources:{'en-US':{translation:enUS},'zh-CN':{translation:zhCN}},initImmediate:false,interpolation:{escapeValue:false}});
++const page=createPageBoundary(scenario.provider?[scenario.provider]:[],Boolean(scenario.copy));
++const submitted=[];let committed=false,closed=false;
++function Fixture(){
++ const [importOpen,setImportOpen]=React.useState(Boolean(scenario.candidate));
++ const [provider,setProvider]=React.useState(scenario.provider?page.edit(scenario.provider.id):null);
++ const [formOpen,setFormOpen]=React.useState(Boolean(provider)||Boolean(scenario.create));
++ React.useLayoutEffect(()=>{committed=true;return()=>{committed=false;};},[]);
++ return <I18nextProvider i18n={i18n}><ConfigProvider><App>
++  <ImportModal open={importOpen} appType="claude" existingProviderIds={[]} onClose={()=>setImportOpen(false)} onImport={async candidates=>{
++   await page.importCandidates(candidates);const p=page.snapshot().providers[0];if(!p)throw new Error('No synthetic import selected');
++   setImportOpen(false);setProvider(page.edit(p.id));setFormOpen(true);
++  }}/>
++  <FormModal open={formOpen} provider={provider} isCopy={Boolean(scenario.copy)} onCancel={()=>{closed=true;setFormOpen(false);}} onSubmit={async values=>{submitted.push(structuredClone(values));await page.submit(values);}}/>
++ </App></ConfigProvider></I18nextProvider>;
++}
++const visible=e=>Boolean(e&&e.getBoundingClientRect().width&&e.getBoundingClientRect().height&&getComputedStyle(e).visibility!=='hidden');
++window.officialEditFixture={
++ snapshot:()=>({case:scenario.id,sourceIdentity,committed,closed,page:page.snapshot(),submitted:structuredClone(submitted),calls:structuredClone(calls),denied:[...denied],runtimeErrors:[...runtimeErrors],
++  fields:Object.fromEntries(['name','baseUrl','apiKey'].map(k=>{const e=document.getElementById(k);return[k,e?{value:e.value,disabled:e.disabled,visible:visible(e)}:null];})),
++  dialogs:[...document.querySelectorAll('[role="dialog"]')].filter(visible).map(e=>e.textContent),
++  validationFields:[...document.querySelectorAll('.ant-form-item-explain-error')].filter(visible).map(e=>e.closest('.ant-form-item')?.querySelector('input')?.id||'unknown'),
++  validationErrors:[...document.querySelectorAll('.ant-form-item-explain-error')].filter(visible).map(e=>e.textContent),
++  endpointDisabled:Boolean(document.getElementById('providerEndpointKey')?.closest('.ant-select')?.classList.contains('ant-select-disabled')),
++ }),translate:(key,params)=>i18n.t(key,params),
++};
++createRoot(document.getElementById('root')).render(<Fixture/>);
+--- /dev/null
++++ b/web/test/features/coding/claudedesktop/officialEdit/extract-page.mjs
+@@ -0,0 +1,54 @@
++import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {createRequire}from'node:module';
++export function extractPage({root,fixtureDirectory,variant,dependenciesRoot,baselineCommit}){
++ const req=createRequire(path.join(dependenciesRoot,'_fixture.cjs')),ts=req('typescript');
++ const files={page:'web/features/coding/claudedesktop/pages/ClaudeDesktopPage.tsx',form:'web/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal.tsx'};
++ const source=Object.fromEntries(Object.entries(files).map(([k,f])=>[k,ts.createSourceFile(f,fs.readFileSync(path.join(root,f),'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX)]));
++ const spans=[];
++ function find(k,p){let match;function visit(n){if(p(n)){if(match)throw new Error('Nonunique extraction');match=n;}ts.forEachChild(n,visit);}visit(source[k]);if(!match)throw new Error('Missing extraction');return match;}
++ const variable=(k,name)=>find(k,n=>ts.isVariableDeclaration(n)&&(n.name.getText(source[k])===name||(ts.isArrayBindingPattern(n.name)&&n.name.elements.some(e=>e.name?.getText(source[k])===name))));
++ const text=(k,n,label)=>{const s=source[k],v=n.getText(s);spans.push({file:files[k],label,startLine:s.getLineAndCharacterOfPosition(n.getStart(s)).line+1,endLine:s.getLineAndCharacterOfPosition(n.end).line+1,sha256:crypto.createHash('sha256').update(v).digest('hex')});return v;};
++ const builders=['buildProviderSettingsConfig','normalizeTierAlias','buildClaudeDesktopModelRoutes','buildProviderMeta'].map(name=>text('page',find('page',n=>ts.isFunctionDeclaration(n)&&n.name?.text===name),name));
++ const constants=['CLAUDE_DESKTOP_ROLE_ROUTE_IDS','CLAUDE_DESKTOP_ROLE_ROUTE_ORDER','TIER_ALIAS_VALUES'].map(name=>'const '+text('page',variable('page',name),name)+';');
++ const submit=text('page',variable('page','handleProviderSubmit').initializer,'handleProviderSubmit');
++ const importer=text('page',variable('page','handleImportFromCcSwitch').initializer.arguments[0],'handleImportFromCcSwitch');
++ text('form',variable('form','handleSubmit').initializer,'real form submit (manifest only; not projected)');
++ const effect=find('form',n=>ts.isCallExpression(n)&&n.expression.getText(source.form)==='React.useEffect'&&n.arguments[0]?.getText(source.form).includes('const nextProvider'));
++ text('form',effect.arguments[0],'real form initializer (manifest only; not projected)');
++ if(variant==='green'){
++  for(const name of ['providerMode','categoryOverride','credentialRules'])text('form',variable('form',name),name);
++  if(!source.form.text.includes('restoreOfficial: isOfficialMode')||source.form.text.includes('category: providerCategory'))throw new Error('GREEN form is stale');
++ }
++ const modulePaths=[...Object.values(files),'web/types/claudedesktop.ts','web/features/coding/claudecode/utils/claudeModelConfig.ts','web/features/coding/shared/providerHeaders/customHeadersUtils.ts','web/features/coding/shared/providerModelRewrites/modelRewritesUtils.ts','web/features/coding/shared/gateway/providerProfiles.ts','web/features/coding/shared/gateway/gatewayAggregateConfig.ts','web/features/coding/shared/ccSwitch/ImportFromCcSwitchModal.tsx','web/services/ccSwitchApi.ts','web/features/coding/shared/providerConfig/ProviderNotesCollapse.tsx','web/features/coding/shared/providerConfig/ProviderConfigCollapse.tsx','web/features/coding/shared/gateway/useGatewaySupportedCliKeys.ts','tauri/resources/gateway_provider_profiles.json','scripts/lib/browser-fixture.mjs','package.json','pnpm-lock.yaml'];
++ if(variant==='green')modulePaths.push('web/features/coding/claudedesktop/utils/officialRestore.ts');
++ const identity={variant,baselineCommit,scope:'Real React form/import modal, exact page callbacks and payload builders; not full Page/Rust/SQLite',spans,modules:modulePaths.map(file=>({file,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex')}))};
++ const generated=`
++import {stripClaudeOneMMarker,hasClaudeOneMMarker}from'@/features/coding/claudecode/utils/claudeModelConfig';
++import {CUSTOM_PROVIDER_PROFILE_ID,toGatewayProviderProfileReference}from'@/features/coding/shared/gateway/providerProfiles';
++import {mergeCustomHeadersIntoMeta}from'@/features/coding/shared/providerHeaders/customHeadersUtils';
++import {mergeModelRewritesIntoMeta}from'@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
++import {resolveGatewayReengageMode,toGatewayAggregateReengageConfig}from'@/features/coding/shared/gateway/gatewayAggregateConfig';
++${variant==='green'?"import {isClaudeDesktopOfficialRestoreProvider,canPreserveImportedClaudeDesktopCredentials}from'@/features/coding/claudedesktop/utils/officialRestore';":''}
++export const sourceIdentity=${JSON.stringify(identity)};
++${constants.join('\n')}
++${builders.join('\n')}
++const clone=x=>structuredClone(x),noop=()=>{};
++export function createPageBoundary(initialProviders=[],isCopyMode=false){
++ let providers=clone(initialProviders),editingProvider=null;const gatewayCliStatus=null,creates=[],writes=[],errors=[],favorites=[];
++ const message={success:noop,warning:noop,info:noop,error:x=>errors.push(String(x))},t=x=>x;
++ const createClaudeDesktopProvider=async input=>{creates.push(clone(input));const p={...clone(input),id:'synthetic-import-'+creates.length,isApplied:false,isDisabled:false,createdAt:'2026-01-01T00:00:00Z',updatedAt:'2026-01-01T00:00:00Z'};providers.push(p);return clone(p);};
++ const updateClaudeDesktopProvider=async p=>{if(p.isApplied||p.id==='claude-desktop-official')throw new Error('Applied/seed forbidden');writes.push(clone(p));providers=providers.map(x=>x.id===p.id?clone(p):x);return clone(p);};
++ const deny=()=>{throw new Error('Gateway/runtime operation forbidden');};
++ const restoreProxyGatewayCliDirect=deny,engageProxyGatewaySingle=deny,engageProxyGatewayFailover=deny,setGatewayCliStatus=deny;
++ const saveProviderWithGatewayReengage=async o=>{if(o.gatewayMode!==null||o.aggregateConfig!==null)throw new Error('Non-direct fixture state');return o.saveProvider();};
++ const setProviderModalOpen=noop,setIsCopyMode=noop,setCcSwitchImportModalOpen=noop,setEditingProvider=x=>{editingProvider=x;};
++ const upsertDesktopFavoriteProvider=async p=>favorites.push(clone(p)),loadConfig=async()=>{},refreshTrayMenu=async()=>{};
++ const handleProviderSubmit=${submit};
++ const handleImportFromCcSwitch=${importer};
++ return{importCandidates:handleImportFromCcSwitch,submit:handleProviderSubmit,edit:id=>{editingProvider=clone(providers.find(x=>x.id===id));if(!editingProvider)throw new Error('Unknown fixture record');return clone(editingProvider);},snapshot:()=>clone({providers,creates,writes,errors,favorites})};
++}`;
++ const result=ts.transpileModule(generated,{fileName:'page-boundary.generated.ts',reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}});
++ if(result.diagnostics.some(x=>x.category===ts.DiagnosticCategory.Error))throw new Error('Generated page boundary has syntax errors');
++ fs.writeFileSync(path.join(fixtureDirectory,'page-boundary.generated.mjs'),result.outputText);
++ fs.writeFileSync(path.join(fixtureDirectory,'source-identity.json'),JSON.stringify(identity,null,2)+'\n');
++ return identity;
++}
+--- /dev/null
++++ b/web/test/features/coding/claudedesktop/officialEdit/run.mjs
+@@ -0,0 +1,107 @@
++import fs from 'node:fs';
++import path from 'node:path';
++import os from 'node:os';
++import crypto from 'node:crypto';
++import {execFileSync}from'node:child_process';
++import {createRequire}from'node:module';
++import {parseArgs}from'node:util';
++import {fileURLToPath,pathToFileURL}from'node:url';
++import {extractPage}from'./extract-page.mjs';
++import {makeVerifier}from'./verify.mjs';
++import {counts}from'./scenarios.mjs';
++const BASELINE='f3a84498b5e192f1e78cb2a5312be012095de76c';
++const {values}=parseArgs({options:{'prepare-only':{type:'boolean'},'red-green':{type:'boolean'},browser:{type:'string'},output:{type:'string'}}});
++const own=path.dirname(fileURLToPath(import.meta.url));
++const sourceRoot=process.env.AI_OFFICIAL_EDIT_SOURCE_ROOT||path.resolve(own,'../../../../../..');
++const overlayRoot=process.env.AI_OFFICIAL_EDIT_OVERLAY_ROOT;
++const deps=process.env.AI_OFFICIAL_EDIT_DEPENDENCIES_ROOT||path.join(sourceRoot,'node_modules');
++const variants=values['red-green']?['red','green']:['green'];
++fs.mkdirSync(values.output||os.tmpdir(),{recursive:true});
++const output=fs.mkdtempSync(path.join(values.output||os.tmpdir(),'official-edit-review-'));
++const sha=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
++const harnessFiles=['run.mjs','extract-page.mjs','verify.mjs','scenarios.mjs','transport.mjs','Fixture.jsx'].map(file=>({file,sha256:sha(path.join(own,file))}));
++const packageJson=JSON.parse(fs.readFileSync(path.join(sourceRoot,'package.json'),'utf8'));
++const needed=[...Object.keys(packageJson.dependencies),'typescript','vite','less'];
++const missing=needed.filter(name=>!fs.existsSync(path.join(deps,name,'package.json')));
++const versions=Object.fromEntries(needed.filter(name=>!missing.includes(name)).map(name=>[name,JSON.parse(fs.readFileSync(path.join(deps,name,'package.json'),'utf8')).version]));
++// Resolve transitive packages from their actual parents, including pnpm layouts.
++// Do not require indirect dependencies to be hoisted to root node_modules.
++const validationChain=[];
++let validationChainError=null;
++try{
++ let parent=path.join(deps,'_fixture.cjs');
++ for(const[name,expected]of [['antd','6.4.3'],['@rc-component/form','1.8.6'],['@rc-component/async-validator','6.0.0']]){
++  const req=createRequire(parent);
++  const packagePath=req.resolve(name+'/package.json');
++  const actual=JSON.parse(fs.readFileSync(packagePath,'utf8')).version;
++  validationChain.push({name,expected,actual,packagePath});
++  if(actual!==expected)throw new Error(name+' validation dependency drift: expected '+expected+', got '+actual);
++  parent=packagePath;
++ }
++}catch(error){validationChainError=String(error);}
++const preflight={status:missing.length||validationChainError?'environment-incomplete':'dependencies-present',missing,versions,validationChain,validationChainError,counts,variants,baseline:values['red-green']?BASELINE:null,sourceRoot,overlayRoot:overlayRoot||null,dependenciesRoot:deps,prepareOnly:Boolean(values['prepare-only']),noNetwork:true};
++fs.writeFileSync(path.join(output,'preflight.json'),JSON.stringify(preflight,null,2)+'\n');
++console.log('Review artifacts: '+output);
++if(missing.includes('typescript'))throw new Error('Environment not executed: TypeScript unavailable for exact source extraction.');
++if(missing.length&&!values['prepare-only'])throw new Error('Environment not executed: missing dependencies '+missing.join(', '));
++if(validationChainError&&!values['prepare-only'])throw new Error('Environment not executed: '+validationChainError);
++const expectedFiles=[
++ 'web/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal.tsx',
++ 'web/features/coding/claudedesktop/pages/ClaudeDesktopPage.tsx',
++ 'web/features/coding/claudedesktop/utils/officialRestore.ts',
++ 'web/types/claudedesktop.ts',
++ 'web/test/features/coding/claudedesktop/utils/officialRestore.test.ts',
++ 'web/features/coding/claudedesktop/AGENTS.md',
++ 'package.json',
++ ...harnessFiles.map(({file})=>'web/test/features/coding/claudedesktop/officialEdit/'+file),
++];
++const staged=[];
++// Only explicitly requested isolated comparison reads the historical object.
++// Ordinary regression has no dependency on Git or the old baseline commit.
++if(values['red-green'])execFileSync('git',['-C',sourceRoot,'cat-file','-e',BASELINE+'^{commit}']);
++for(const variant of variants){
++ const root=path.join(output,variant);fs.mkdirSync(root);
++ if(variant==='red'){
++  const archive=execFileSync('git',['-C',sourceRoot,'archive','--format=tar',BASELINE,'web','tauri/resources','scripts/lib/browser-fixture.mjs','package.json','pnpm-lock.yaml'],{maxBuffer:64*1024*1024});
++  execFileSync('tar',['-xf','-','-C',root],{input:archive});
++ }else{
++  for(const name of ['web','tauri/resources','scripts/lib/browser-fixture.mjs','package.json','pnpm-lock.yaml']){
++   fs.mkdirSync(path.dirname(path.join(root,name)),{recursive:true});fs.cpSync(path.join(sourceRoot,name),path.join(root,name),{recursive:true});
++  }
++ }
++ if(variant==='green'&&overlayRoot){for(const file of expectedFiles){const from=path.join(overlayRoot,file);if(!fs.existsSync(from))throw new Error('Incomplete candidate overlay: '+file);fs.mkdirSync(path.dirname(path.join(root,file)),{recursive:true});fs.copyFileSync(from,path.join(root,file));}}
++ fs.symlinkSync(deps,path.join(root,'node_modules'),'dir');
++ const fixtureDirectory=path.join(root,'official-edit-fixture');fs.mkdirSync(fixtureDirectory);
++ for(const file of ['scenarios.mjs','transport.mjs','Fixture.jsx'])fs.copyFileSync(path.join(own,file),path.join(fixtureDirectory,file));
++ const identity=extractPage({root,fixtureDirectory,variant,dependenciesRoot:deps,baselineCommit:variant==='red'?BASELINE:null});
++ const module=pathToFileURL(path.join(root,'scripts/lib/browser-fixture.mjs')).href;
++ const files=expectedFiles.filter(file=>fs.existsSync(path.join(root,file))).map(file=>({file,sha256:sha(path.join(root,file))}));
++ staged.push({variant,root,fixtureDirectory,identity,module,files,generatedBoundarySha256:sha(path.join(fixtureDirectory,'page-boundary.generated.mjs'))});
++}
++if(values['red-green'])assertDistinct();
++function assertDistinct(){
++ const [red,green]=staged;
++ for(const label of ['handleProviderSubmit','buildProviderSettingsConfig','buildProviderMeta','real form submit (manifest only; not projected)','real form initializer (manifest only; not projected)']){
++  if(red.identity.spans.find(x=>x.label===label)?.sha256===green.identity.spans.find(x=>x.label===label)?.sha256)throw new Error('RED/GREEN source not distinct: '+label);
++ }
++}
++fs.writeFileSync(path.join(output,'prepared-manifest.json'),JSON.stringify({counts,variants,harnessFiles,stages:staged,limits:{scenarioMs:30000,verifyPerVariantMs:480000,bundles:variants.length,browsers:variants.length},scope:'Real form and import modal; page callbacks/builders are freshly extracted per variant; no full Page, Rust, DB or real runtime configuration.'},null,2)+'\n');
++if(values['prepare-only']){
++ console.log(JSON.stringify({status:'prepared-not-executed',counts,missingDependencies:missing,manifest:path.join(output,'prepared-manifest.json')}));
++}else{
++ // The shared runner has its own small argument parser. Preserve only its flags.
++ process.argv=[process.argv[0],process.argv[1],...(values.browser?['--browser',values.browser]:[]),'--output',output];
++ const results=[];
++ for(const stage of staged){
++  const {runBrowserFixture}=await import(stage.module);
++  await runBrowserFixture({fixtureDirectory:stage.fixtureDirectory,fixtureFilename:'Fixture.jsx',artifactPrefix:'official-edit-'+stage.variant+'-',fixtureAliases:[],verify:async context=>{
++   const checks=await makeVerifier(stage.variant,stage.identity)(context);
++   const bundles=[];function walk(directory){for(const entry of fs.readdirSync(directory,{withFileTypes:true})){const full=path.join(directory,entry.name);if(entry.isDirectory())walk(full);else bundles.push({file:path.relative(context.artifactRoot,full),sha256:sha(full)});}}walk(path.join(context.artifactRoot,'dist'));
++   results.push({variant:stage.variant,count:checks.length,checks,bundles,artifactRoot:context.artifactRoot,sourceIdentity:stage.identity});return checks;
++  }});
++ }
++ if(results.length!==variants.length||results.some(x=>x.count!==counts[x.variant]))throw new Error('Incomplete strict matrix');
++ const status=values['red-green']?'strict-red-green-pass':'green-regression-pass';
++ fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({status,counts,variants,results},null,2)+'\n');
++ console.log(JSON.stringify({status,counts,variants,results:path.join(output,'results.json')}));
++}
+--- /dev/null
++++ b/web/test/features/coding/claudedesktop/officialEdit/scenarios.mjs
+@@ -0,0 +1,37 @@
++const baseUrl = 'https://desktop-fixture.example.invalid';
++const token = 'synthetic-not-a-real-credential';
++const envBoth = { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: token, ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-5', ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: 'Synthetic Sonnet' };
++const candidate = env => ({
++ providerId: 'ccs:claude:synthetic-origin', rawId: 'synthetic-origin', sourceProviderId: 'ccs:claude:synthetic-origin',
++ name: 'Synthetic imported official', appType: 'claude', category: 'official', normalizedCategory: 'official',
++ settingsConfig: JSON.stringify({env}), extraSettingsConfig: '{}', notes: 'Synthetic source note',
++ websiteUrl: 'https://vendor.example.invalid', icon: 'Anthropic', iconColor: '#123456',
++ hasApiKey: Boolean(env.ANTHROPIC_AUTH_TOKEN), isLocalEndpoint: false,
++});
++const record = { id: 'synthetic-existing', name: 'Synthetic existing', category: 'official', settingsConfig: JSON.stringify({env:envBoth}), notes: 'Synthetic source note', isApplied: false, isDisabled: false, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
++export const scenarios = [
++ { id:'official-both-unchanged', candidate:candidate(envBoth), action:'unchanged', red:true },
++ { id:'official-both-notes', candidate:candidate(envBoth), action:'notes', red:true },
++ { id:'official-url-notes', candidate:candidate({ANTHROPIC_BASE_URL:baseUrl}), action:'notes', red:true },
++ { id:'official-token-notes', candidate:candidate({ANTHROPIC_AUTH_TOKEN:token}), action:'notes', red:true },
++ { id:'pure-restore-notes', provider:{...record, settingsConfig:'{"env":{}}', meta:{opaqueFixtureSentinel:{retained:true}}}, action:'notes' },
++ { id:'ordinary-both-notes', candidate:{...candidate(envBoth), normalizedCategory:'custom', category:'custom'}, action:'notes' },
++ { id:'official-cancel', candidate:candidate(envBoth), action:'cancel' },
++ { id:'claude-meta-notes', provider:{...record, sourceProviderId:'claude:synthetic-origin', meta:{
++  opaqueFixtureSentinel:{retained:true}, providerType:'anthropic', apiFormat:'anthropic',
++  claudeDesktopModelRoutes:{'claude-sonnet-5':{model:'claude-sonnet-5',labelOverride:'Synthetic Sonnet',supports1m:true,tierAlias:'sonnet'}},
++  customHeaders:[{op:'set',name:'X-Synthetic-Fixture',value:'true',from:'',to:''}], modelRewrites:[{from:'old-synthetic',to:'new-synthetic'}],
++ }}, action:'notes', red:true },
++ { id:'claude-preset-token-notes', provider:{...record, settingsConfig:JSON.stringify({env:{ANTHROPIC_AUTH_TOKEN:token}}), sourceProviderId:'claude:synthetic-preset',meta:{gatewayProfile:{tool:'claude',profileId:'deepseek',endpointId:'anthropic'},apiFormat:'anthropic',opaqueFixtureSentinel:{retained:true}}}, action:'notes',red:true,preset:true },
++ { id:'official-bom-notes', candidate:candidate({ANTHROPIC_AUTH_TOKEN:'\uFEFF'}), action:'notes', red:true },
++ { id:'changed-url-missing-key', candidate:candidate({ANTHROPIC_BASE_URL:baseUrl}), action:'invalid', changes:{baseUrl:baseUrl+'/changed'}, greenOnly:true },
++ { id:'changed-token-missing-url', candidate:candidate({ANTHROPIC_AUTH_TOKEN:token}), action:'invalid', changes:{apiKey:token+'-changed'}, greenOnly:true },
++ { id:'custom-url-missing-key', candidate:{...candidate({ANTHROPIC_BASE_URL:baseUrl}),normalizedCategory:'custom',category:'custom'}, action:'invalid', greenOnly:true },
++ { id:'new-custom-bom-key', create:true, action:'invalid', changes:{name:'Synthetic new',baseUrl,apiKey:'\uFEFF'}, greenOnly:true },
++ { id:'copy-token-missing-url', candidate:candidate({ANTHROPIC_AUTH_TOKEN:token}), copy:true, action:'invalid', greenOnly:true },
++ { id:'same-dialog-change-revert', candidate:candidate({ANTHROPIC_BASE_URL:baseUrl}), action:'revert', changes:{apiKey:' '}, revert:{apiKey:''}, greenOnly:true },
++ { id:'changed-both-nel', candidate:candidate(envBoth), action:'invalid', changes:{baseUrl:'\u0085',apiKey:'\u0085'}, greenOnly:true },
++ { id:'url-only-added-space-key', candidate:candidate({ANTHROPIC_BASE_URL:baseUrl}), action:'invalid', changes:{apiKey:' '}, greenOnly:true },
++];
++export const editedNote='Synthetic edited note';
++export const counts={red:scenarios.filter(x=>!x.greenOnly).length,green:scenarios.length};
+--- /dev/null
++++ b/web/test/features/coding/claudedesktop/officialEdit/transport.mjs
+@@ -0,0 +1,20 @@
++import { mockIPC } from '@tauri-apps/api/mocks';
++import { scenarios } from './scenarios.mjs';
++export const scenario=scenarios.find(x=>x.id===new URLSearchParams(location.search).get('case'));
++if(!scenario)throw new Error('Unknown scenario');
++export const calls=[],denied=[],runtimeErrors=[];
++const reject=label=>{denied.push(label);throw new Error('Forbidden fixture operation: '+label);};
++window.__TAURI_OS_PLUGIN_INTERNALS__={platform:'linux'};
++const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';
++policy.content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'";
++document.head.append(policy);
++document.addEventListener('securitypolicyviolation',e=>denied.push('csp:'+e.violatedDirective));
++window.addEventListener('error',e=>runtimeErrors.push(e.message));
++window.addEventListener('unhandledrejection',e=>runtimeErrors.push(String(e.reason)));
++window.open=()=>reject('window.open');
++mockIPC(async(command,args)=>{
++ calls.push({command,args});
++ if(command==='proxy_gateway_supported_cli_keys'&&(!args||Object.keys(args).length===0))return['claude_desktop'];
++ if(command==='list_cc_switch_providers'&&scenario.candidate&&args?.appType==='claude'&&args?.dbPath===null&&Object.keys(args).length===2)return{found:true,dbPath:'/synthetic/not-real.db',providers:[structuredClone(scenario.candidate)]};
++ return reject(command);
++});
+--- /dev/null
++++ b/web/test/features/coding/claudedesktop/officialEdit/verify.mjs
+@@ -0,0 +1,137 @@
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import crypto from 'node:crypto';
++import {scenarios,editedNote}from'./scenarios.mjs';
++const clone=x=>structuredClone(x);
++const sleep=ms=>new Promise(r=>setTimeout(r,ms));
++export function makeVerifier(variant,expectedIdentity){
++ return async({send,evaluate,baseUrl,artifactRoot,exceptions})=>{
++  const results=[],screenshots=[],diagnosticErrors=[],runDeadline=Date.now()+480000;
++  const matrix=scenarios.filter(x=>variant==='green'||!x.greenOnly);
++  let caseDeadline=0;
++  const bounded=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Fixture operation deadline exceeded')),Math.max(1,Math.min(caseDeadline,runDeadline)-Date.now()));})]);}finally{clearTimeout(timer);}};
++  const ev=expression=>bounded(evaluate(expression));
++  const cmd=(method,args)=>bounded(send(method,args));
++  const snap=()=>ev('window.officialEditFixture?.snapshot()');
++  const healthy=s=>{assert(s,'Fixture not initialized');assert.deepEqual(s.denied,[],'Forbidden IPC/network action');assert.deepEqual(s.runtimeErrors,[],'Browser runtime/setup failure');assert.deepEqual(s.page.errors,[],'Page callback/setup failure');assert.equal(exceptions.length,0,'Browser exception is not product RED');};
++  const wait=async(label,predicate)=>{while(Date.now()<Math.min(caseDeadline,runDeadline)){const value=await predicate();if(value)return value;await sleep(50);}throw new Error('Fixture wait timed out: '+label);};
++  const dialog=`document.getElementById('name')?.closest('[role="dialog"]')`;
++  // Capture only an open, real form. Closed-modal blank pages are not visual evidence.
++  // Diagnostics may fail the evidence gate, but must never replace a product failure.
++  const capture=async(item,moment,anchor)=>{
++   try{
++    await ev(`(()=>{const d=${dialog};const e=document.getElementById(${JSON.stringify(anchor)});if(!d||!e||!d.getBoundingClientRect().width)throw new Error('Screenshot form is not open');e.scrollIntoView({block:'center'});})()`);
++    const {data}=await cmd('Page.captureScreenshot',{format:'png'});
++    const bytes=Buffer.from(data,'base64');
++    assert(bytes.length>0,'Empty screenshot');
++    const file=path.join('screenshots',variant+'-'+item.id+'-'+moment+'.png');
++    fs.mkdirSync(path.join(artifactRoot,'screenshots'),{recursive:true});
++    fs.writeFileSync(path.join(artifactRoot,file),bytes);
++    screenshots.push({case:item.id,moment,file,bytes:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')});
++   }catch(error){diagnosticErrors.push({case:item.id,moment,error:String(error)});}
++  };
++  const click=async expression=>{
++   const box=await ev(`(()=>{const e=${expression};if(!e||e.disabled)throw new Error('Missing/disabled interaction target');e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();if(!r.width||!r.height||getComputedStyle(e).visibility==='hidden')throw new Error('Hidden interaction target');return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
++   await cmd('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...box});
++   await cmd('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...box});
++  };
++  const fill=async(id,value)=>{
++   await click(`document.getElementById(${JSON.stringify(id)})`);
++   await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:2});
++   await cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:2});
++   await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'Backspace',code:'Backspace',windowsVirtualKeyCode:8});
++   await cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'Backspace',code:'Backspace',windowsVirtualKeyCode:8});
++   if(value!=='')await cmd('Input.insertText',{text:value});
++   assert.equal(await ev(`document.getElementById(${JSON.stringify(id)}).value`),value,'Native input did not receive exact fixture text');
++  };
++  const button=key=>`[...(${dialog})?.querySelectorAll('button')||[]].find(e=>e.textContent.trim()===window.officialEditFixture.translate(${JSON.stringify(key)}))`;
++  const save=()=>click(button('common.save'));
++  const notes=async()=>{await click(`[...(${dialog})?.querySelectorAll('[role="button"]')||[]].find(e=>e.textContent.trim()==='备注')`);await fill('notes',editedNote);};
++  const initialCount=s=>({creates:s.page.creates.length,writes:s.page.writes.length,submitted:s.submitted.length});
++  const expectNoSave=(s,before)=>{assert.deepEqual(initialCount(s),initialCount(before),'Unexpected save/create before validation/cancel');};
++  const expectInvalid=async(item,before)=>{
++   await save();const s=await wait('actual form validation error',async()=>{const x=await snap();healthy(x);return x.validationErrors.length?x:false;});
++   expectNoSave(s,before);assert.equal(s.closed,false);
++   let fields=item.id.includes('token-missing-url')||item.copy?['baseUrl']:['apiKey'];
++   if(item.id==='changed-both-nel')fields=['baseUrl','apiKey'];
++   for(const field of fields)assert(s.validationFields.includes(field),'Wrong field validation: '+JSON.stringify(s.validationFields));
++   await sleep(150);const stable=await snap();healthy(stable);expectNoSave(stable,before);return stable;
++  };
++  try{
++   for(const item of matrix){
++    caseDeadline=Date.now()+30000;
++    await cmd('Page.navigate',{url:baseUrl+'/?case='+encodeURIComponent(item.id)});
++    await wait('fixture mounted',async()=>{const s=await snap();return s?.committed?s:false;});
++    if(item.candidate){
++     await wait('real import candidate',async()=>{const s=await snap();healthy(s);return s.dialogs.some(x=>x.includes(item.candidate.name))&&s.calls.some(x=>x.command==='list_cc_switch_providers');});
++     const importDialog=`[...document.querySelectorAll('[role="dialog"]')].find(e=>e.textContent.includes(${JSON.stringify(item.candidate.name)})&&e.getBoundingClientRect().width)`;
++     await click(`(${importDialog})?.querySelector('input[type="checkbox"]')`);
++     await wait('real import selection',()=>ev(`(()=>{const d=${importDialog};return [...d?.querySelectorAll('button')||[]].some(e=>e.textContent.trim().startsWith(window.officialEditFixture.translate('common.ccSwitch.importSelected'))&&!e.disabled);})()`));
++     await click(`[...(${importDialog})?.querySelectorAll('button')||[]].find(e=>e.textContent.trim().startsWith(window.officialEditFixture.translate('common.ccSwitch.importSelected'))&&!e.disabled)`);
++    }
++    const expectedName=item.candidate?.name||item.provider?.name||'';
++    const before=await wait('real form initialized',async()=>{const s=await snap();healthy(s);return s.fields.name?.visible&&s.fields.name.value===expectedName?s:false;});
++    assert.deepEqual(before.sourceIdentity,expectedIdentity,'Stale or wrong source callback/form build');
++    const original=clone(before.page.providers[0]);
++    assert.equal(before.submitted.length,0);assert.equal(before.page.writes.length,0);
++    assert.equal(before.endpointDisabled,!item.create&&!item.copy,'Edit selector behavior changed');
++    const isRestore=item.id==='pure-restore-notes';
++    const baselineOfficial=variant==='red'&&(original?.category==='official');
++    if(baselineOfficial||isRestore){assert.equal(before.fields.name.disabled,true);assert.equal(before.fields.baseUrl,null);assert.equal(before.fields.apiKey,null);}
++    else if(!item.create){
++     const env=JSON.parse(original.settingsConfig).env||{};
++     assert.equal(before.fields.baseUrl?.value,env.ANTHROPIC_BASE_URL||'','Initializer changed the raw URL');
++     assert.equal(before.fields.apiKey?.value,env.ANTHROPIC_AUTH_TOKEN||env.ANTHROPIC_API_KEY||'','Initializer changed the raw token');
++     assert.equal(before.fields.name.disabled,false);
++    }
++    if(item.id==='official-both-notes')await capture(item,'initialized','name');
++    if(item.action==='cancel'){
++     await click(button('common.cancel'));await wait('form cancellation',async()=>{const s=await snap();return s.closed?s:false;});
++     await sleep(150);const after=await snap();healthy(after);expectNoSave(after,before);
++     results.push({case:item.id,verdict:'control-pass',before,after});continue;
++    }
++    for(const[id,value]of Object.entries(item.changes||{}))await fill(id,value);
++    if(item.action==='invalid'||item.action==='revert'){
++     const invalid=await expectInvalid(item,before);
++     if(item.id==='url-only-added-space-key')await capture(item,'validation-error','apiKey');
++     if(item.action==='invalid'){results.push({case:item.id,verdict:'validation-control-pass',before,after:invalid});continue;}
++     for(const[id,value]of Object.entries(item.revert))await fill(id,value);
++     await wait('cross-field validation clears after exact revert',async()=>{const s=await snap();healthy(s);return s.validationErrors.length===0;});
++    }
++    if(item.action!=='unchanged')await notes();
++    if(variant==='green'&&item.id==='pure-restore-notes')await capture(item,'before-save','notes');
++    await save();
++    const after=await wait('one completed page update',async()=>{const s=await snap();healthy(s);return s.page.writes.length===1&&s.closed?s:false;});
++    assert.equal(after.submitted.length,1,'Duplicate or missing form submit');assert.equal(after.page.creates.length,before.page.creates.length);
++    assert.deepEqual(after.validationErrors,[],'Validation error cannot be product RED');
++    const saved=after.page.writes[0],oldEnv=JSON.parse(original.settingsConfig).env||{},env=JSON.parse(saved.settingsConfig).env||{};
++    assert.equal(saved.category,original.category,'Notes edit silently changed raw category');
++    assert.equal(saved.name,original.name);assert.equal(saved.notes,item.action==='unchanged'?original.notes:editedNote);
++    for(const key of ['sourceProviderId','websiteUrl','icon','iconColor','sortIndex'])assert.deepEqual(saved[key],original[key]);
++    if(original.meta?.opaqueFixtureSentinel)assert.deepEqual(saved.meta?.opaqueFixtureSentinel,original.meta.opaqueFixtureSentinel);
++    if(variant==='red'&&item.red){
++     assert(Object.keys(oldEnv).some(k=>['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN'].includes(k)&&oldEnv[k]!==env[k]),'Expected data loss did not reproduce');
++     assert.deepEqual(env,{},'Unexpected failure shape cannot count as expected RED');
++     results.push({case:item.id,verdict:'expected-product-red',before,after});
++    }else{
++     for(const key of ['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN'])assert.equal(env[key],oldEnv[key],'Exact raw credential preservation failed');
++     if(original.meta?.claudeDesktopModelRoutes)assert.deepEqual(saved.meta.claudeDesktopModelRoutes,original.meta.claudeDesktopModelRoutes);
++     for(const key of ['customHeaders','modelRewrites'])if(original.meta?.[key])assert.deepEqual(saved.meta[key],original.meta[key]);
++     if(isRestore)assert.deepEqual(env,{});
++     results.push({case:item.id,verdict:'control-pass',before,after});
++    }
++   }
++   assert.equal(results.length,matrix.length,'Missing scenario result');
++   assert.equal(results.filter(x=>x.verdict==='expected-product-red').length,variant==='red'?matrix.filter(x=>x.red).length:0,'RED count mismatch');
++   fs.writeFileSync(path.join(artifactRoot,'strict-results.json'),JSON.stringify({variant,count:results.length,sourceIdentity:expectedIdentity,results,screenshots,diagnosticErrors},null,2)+'\n');
++   assert.deepEqual(diagnosticErrors,[],'Screenshot evidence is incomplete; no visual pass');
++   assert.equal(screenshots.length,variant==='green'?3:1,'Required screenshot evidence is missing');
++   return results.map(x=>({name:x.case,passed:true,verdict:x.verdict,screenshots:screenshots.filter(s=>s.case===x.case)}));
++  }catch(error){
++   try{fs.writeFileSync(path.join(artifactRoot,'strict-failure.json'),JSON.stringify({variant,status:'fixture-or-unexpected-product-failure',error:String(error),completed:results,screenshots,diagnosticErrors},null,2)+'\n');}
++   catch(diagnosticsError){console.error('Could not save failure diagnostics; original error retained:',String(diagnosticsError));}
++   throw error;
++  }
++ };
++}
+--- /dev/null
++++ b/web/test/features/coding/claudedesktop/utils/officialRestore.test.ts
+@@ -0,0 +1,92 @@
++/// <reference types="node" />
++
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {
++  canPreserveImportedClaudeDesktopCredentials,
++  isClaudeDesktopOfficialRestoreProvider,
++} from '../../../../../features/coding/claudedesktop/utils/officialRestore.ts';
++
++const baseUrl = 'https://fixture.example.invalid';
++const token = 'synthetic-not-a-real-credential';
++const makeProvider = (env: Record<string, unknown>) => ({
++  id: 'synthetic-import',
++  category: 'official',
++  sourceProviderId: 'ccs:claude:synthetic-origin',
++  settingsConfig: JSON.stringify({ env }),
++});
++
++test('restore mode distinguishes imported credentials from the raw official category', () => {
++  assert.equal(isClaudeDesktopOfficialRestoreProvider(makeProvider({})), true);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider(makeProvider({ ANTHROPIC_BASE_URL: baseUrl })), false);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider(makeProvider({ ANTHROPIC_AUTH_TOKEN: token })), false);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider(makeProvider({ ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: token })), false);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider({ ...makeProvider({}), category: 'custom' }), false);
++});
++
++test('restore predicate preserves the backend seed override, parsing and legacy-key semantics', () => {
++  assert.equal(isClaudeDesktopOfficialRestoreProvider({ ...makeProvider({}), id: 'claude-desktop-official', category: 'custom', settingsConfig: 'not json' }), true);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider({ ...makeProvider({}), settingsConfig: 'not json' }), false);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider({ ...makeProvider({}), settingsConfig: '{}' }), true);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider(makeProvider({ ANTHROPIC_API_KEY: token })), true);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider(makeProvider({ ANTHROPIC_AUTH_TOKEN: '\u0085' })), true);
++  assert.equal(isClaudeDesktopOfficialRestoreProvider(makeProvider({ ANTHROPIC_AUTH_TOKEN: '\uFEFF' })), false);
++});
++
++test('existing imported official URL-only and token-only pairs can remain unchanged', () => {
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(makeProvider({ ANTHROPIC_BASE_URL: baseUrl }), { baseUrl, apiKey: '' }, false), true);
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(makeProvider({ ANTHROPIC_AUTH_TOKEN: token }), { baseUrl: '', apiKey: token }, false), true);
++  const fromClaude = { ...makeProvider({ ANTHROPIC_AUTH_TOKEN: token }), sourceProviderId: 'claude:synthetic-origin' };
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(fromClaude, { baseUrl: '', apiKey: token }, false), true);
++});
++
++test('any credential difference, including whitespace, retains both required rules', () => {
++  const urlOnly = makeProvider({ ANTHROPIC_BASE_URL: baseUrl });
++  for (const values of [
++    { baseUrl: baseUrl + ' ', apiKey: '' },
++    { baseUrl: ' ' + baseUrl, apiKey: '' },
++    { baseUrl: baseUrl + '/changed', apiKey: '' },
++    { baseUrl: '', apiKey: '' },
++    { baseUrl, apiKey: ' ' },
++    { baseUrl, apiKey: token },
++  ]) assert.equal(canPreserveImportedClaudeDesktopCredentials(urlOnly, values, false), false);
++  const tokenOnly = makeProvider({ ANTHROPIC_AUTH_TOKEN: token });
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(tokenOnly, { baseUrl: '', apiKey: token + ' ' }, false), false);
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(tokenOnly, { baseUrl: '', apiKey: '' }, false), false);
++});
++
++test('absence and empty strings match actual form initialization without trimming or treating undefined as empty', () => {
++  for (const env of [
++    { ANTHROPIC_BASE_URL: baseUrl },
++    { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: '' },
++  ]) {
++    const provider = makeProvider(env);
++    assert.equal(canPreserveImportedClaudeDesktopCredentials(provider, { baseUrl, apiKey: '' }, false), true);
++    assert.equal(canPreserveImportedClaudeDesktopCredentials(provider, { baseUrl, apiKey: undefined }, false), false);
++    assert.equal(canPreserveImportedClaudeDesktopCredentials(provider, { baseUrl, apiKey: null }, false), false);
++  }
++  const spaced = makeProvider({ ANTHROPIC_BASE_URL: ' ' + baseUrl, ANTHROPIC_AUTH_TOKEN: '' });
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(spaced, { baseUrl: ' ' + baseUrl, apiKey: '' }, false), true);
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(spaced, { baseUrl, apiKey: '' }, false), false);
++});
++
++test('new, copied, custom, restore, and unidentifiable rows receive no validation exemption', () => {
++  const provider = makeProvider({ ANTHROPIC_BASE_URL: baseUrl });
++  const values = { baseUrl, apiKey: '' };
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(undefined, values, false), false);
++  assert.equal(canPreserveImportedClaudeDesktopCredentials(provider, values, true), false);
++  assert.equal(canPreserveImportedClaudeDesktopCredentials({ ...provider, category: 'custom' }, values, false), false);
++  assert.equal(canPreserveImportedClaudeDesktopCredentials({ ...provider, id: 'claude-desktop-official' }, values, false), false);
++  for (const sourceProviderId of [undefined, '', 'ccs:claude:', 'claude:', 'ccs:codex:synthetic', 'unverified-origin']) {
++    assert.equal(canPreserveImportedClaudeDesktopCredentials({ ...provider, sourceProviderId }, values, false), false);
++  }
++});
++
++test('invalid or non-string stored credentials receive no validation exemption', () => {
++  for (const env of [
++    { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: null },
++    { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: 5 },
++    { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_API_KEY: false },
++  ]) assert.equal(canPreserveImportedClaudeDesktopCredentials(makeProvider(env), { baseUrl, apiKey: '' }, false), false);
++  assert.equal(canPreserveImportedClaudeDesktopCredentials({ ...makeProvider({}), settingsConfig: 'bad json' }, { baseUrl: '', apiKey: '' }, false), false);
++});
+--- a/web/types/claudedesktop.ts
++++ b/web/types/claudedesktop.ts
+@@ -139,7 +139,10 @@
+ /** Form values for creating / editing a Claude Desktop provider. */
+ export interface ClaudeDesktopFormValues {
+   name: string;
++  /** Explicit channel choice for new/copy flows; editing preserves the stored category. */
+   category?: 'official' | 'custom';
++  /** 1P restore intent is independent of the raw provider category. */
++  restoreOfficial: boolean;
+   providerEndpointKey?: string;
+   providerProfileId?: string;
+   providerEndpointId?: string;

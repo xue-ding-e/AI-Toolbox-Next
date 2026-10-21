@@ -1,0 +1,315 @@
+{
+  "base": "f3a84498b5e192f1e78cb2a5312be012095de76c",
+  "repository": "xue-ding-e/AI-Toolbox-Next",
+  "ref": "refs/heads/validation/claude-desktop-official-edit",
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/manifest.json",
+    "validation/validate.py"
+  ],
+  "patchSha256": "3d3273a86c0f9fd68eb15694916a0a919da9dc5170b5f2648fca5c2ba53174a4",
+  "validatorSha256": "df2cc1aa113d3c17e4d72847717ab4774ddf55d0fac0095a4914d6d9b68df630",
+  "identities": {
+    "package.json": {
+      "sha256": "968b8d855a989cde1c43e7586ff20656db449dbddb9172e0117a80bf60b4fcf4",
+      "bytes": 5508,
+      "baseBlob": "54462d4ba54baaa7bc0aa4f75659dcda1ea6064b",
+      "baseSha256": "ff5125244bbbc2f3375e08f62a08e066a8e1452e9e941d0b50929e0c9d28208f"
+    },
+    "web/features/coding/claudedesktop/AGENTS.md": {
+      "sha256": "60196aca7a0ac3bd3f1fa4652bc931b6bd746c49850ef2a24825bd9b57e802e6",
+      "bytes": 17429,
+      "baseBlob": "684038c756a879e3b5bcfc12ef5e5fd71083fc03",
+      "baseSha256": "ba0f12a681b58be72d09de4036a97534184ca8869f3a357ec64592d85780aeac"
+    },
+    "web/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal.tsx": {
+      "sha256": "4360bee657fef2e4b0b04d9787306e7331f6745efe52efd2848cf8f0df7d031a",
+      "bytes": 36085,
+      "baseBlob": "29bc355e7ada25e3e529ebaa84f6edae830e392b",
+      "baseSha256": "2119441ea695846e8e393fc7e2f9e86ee05aeaed4290859c7db691dfafd7b9a5"
+    },
+    "web/features/coding/claudedesktop/pages/ClaudeDesktopPage.tsx": {
+      "sha256": "9b20ce4d7ba0f6278c7bc06fbc737184cdf65fc8c92b9ce508fe1848cd88a22c",
+      "bytes": 47140,
+      "baseBlob": "281edefdbb0e005f61068a39675c0249263c1504",
+      "baseSha256": "7ef083dd011998b7d04a928f85698c7e2a6b147d81f483146a4b1a56a79625ba"
+    },
+    "web/features/coding/claudedesktop/utils/officialRestore.ts": {
+      "sha256": "e6d1dbff7544439299eaa42268755d2567ffe5742b7b70aa55e8a97b7c9b0b70",
+      "bytes": 2882,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/test/features/coding/claudedesktop/officialEdit/Fixture.jsx": {
+      "sha256": "c7910ef762102dcfc73f658f40b96e9e313b2e41ecf30486eef9dd63767c075e",
+      "bytes": 3498,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/test/features/coding/claudedesktop/officialEdit/extract-page.mjs": {
+      "sha256": "e0532b40b4d414dddb3dce02a10b62d49042be8a20757c202153c2a65d1bb65d",
+      "bytes": 7178,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/test/features/coding/claudedesktop/officialEdit/run.mjs": {
+      "sha256": "04c0ed470eee25b418c04a12064277dbcd78b1b0e296de3d07c247b9e0f5309d",
+      "bytes": 8538,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/test/features/coding/claudedesktop/officialEdit/scenarios.mjs": {
+      "sha256": "3f9190294a2a9e40570979f58fce7a8ba41c5d42033855da8d3e4f1fc833774a",
+      "bytes": 4167,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/test/features/coding/claudedesktop/officialEdit/transport.mjs": {
+      "sha256": "d8d2442ab190f436353cc72a0413907f5acec799e728dad438aa9a4f228176ba",
+      "bytes": 1523,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/test/features/coding/claudedesktop/officialEdit/verify.mjs": {
+      "sha256": "ff0225081e83ec0720e8126df798296f11ecdf28b112e765b56362bc06f7c12d",
+      "bytes": 12099,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/test/features/coding/claudedesktop/utils/officialRestore.test.ts": {
+      "sha256": "3f4158286f86c228f171c364ab5201a13c11b221d69d0f86d782775ef05661f4",
+      "bytes": 5979,
+      "baseBlob": null,
+      "baseSha256": null
+    },
+    "web/types/claudedesktop.ts": {
+      "sha256": "335e3498af67627d84e7b9002a5918970a6f30a29f7bebc6c41248d12336f5cb",
+      "bytes": 5625,
+      "baseBlob": "d139707629e4a78e97a4bb172b9281ba01ab277b",
+      "baseSha256": "9ae588bc9c503fd5f36c6278f65b8f2a871c8d41f53a83bca402463ad4c3a25e"
+    }
+  },
+  "lockfiles": {
+    "pnpm-lock.yaml": "a71feeda32c8cfee44d686dc21d5707239b8a2bb4e368c19d5c3d23c22bf6730",
+    "tauri/Cargo.lock": "06081bc7b2baedc6d9f0886c43075f2d8c8c77f661a854994ac92ec06a6d58f7"
+  },
+  "sourceModules": {
+    "red": {
+      "web/features/coding/claudedesktop/pages/ClaudeDesktopPage.tsx": "7ef083dd011998b7d04a928f85698c7e2a6b147d81f483146a4b1a56a79625ba",
+      "web/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal.tsx": "2119441ea695846e8e393fc7e2f9e86ee05aeaed4290859c7db691dfafd7b9a5",
+      "web/types/claudedesktop.ts": "9ae588bc9c503fd5f36c6278f65b8f2a871c8d41f53a83bca402463ad4c3a25e",
+      "web/features/coding/claudecode/utils/claudeModelConfig.ts": "b664a826917e97f1e9a1a55c5cadce1803e612470443070c39087015cf1acd4f",
+      "web/features/coding/shared/providerHeaders/customHeadersUtils.ts": "a9389a6ec7e7b0824d9fddca9534df77cca846d0a710006370eeeae791984a66",
+      "web/features/coding/shared/providerModelRewrites/modelRewritesUtils.ts": "5f44da6ee590623c123ca9befaa9d6300a71ccb94793b29e4776913133cd3fe0",
+      "web/features/coding/shared/gateway/providerProfiles.ts": "451bd4f67024dadd03b07a9a008582c8d8e34a13e539d530a222895a71346945",
+      "web/features/coding/shared/gateway/gatewayAggregateConfig.ts": "4fcb2b0c1094a63bfd3039e051105581ffd6974e2b900bb36a50be70e0c2c5fb",
+      "web/features/coding/shared/ccSwitch/ImportFromCcSwitchModal.tsx": "a07b6e5813aa6ec3981740267c858cc39590af4e522a4af1245496d2118f474d",
+      "web/services/ccSwitchApi.ts": "10bce6f20af44d43e6f7e6dd2e5ee19c1be3c5e9bf00150d037b4f9dc116fe98",
+      "web/features/coding/shared/providerConfig/ProviderNotesCollapse.tsx": "b1c32bb27bc03b86018fec27c44c449ffc78ba132ebab6382edea10465ddb0f6",
+      "web/features/coding/shared/providerConfig/ProviderConfigCollapse.tsx": "b259b3fb3ebf0b85142ed64b2b2d5c2adf5606f8e8a6407e521f9038df757b54",
+      "web/features/coding/shared/gateway/useGatewaySupportedCliKeys.ts": "5a61da50e24eaee6c73db2f9490d62eb52ae422bbf7eec4d2857d0e22e468ca9",
+      "tauri/resources/gateway_provider_profiles.json": "755b4ab4345c222844db84f80762d17a27c5bd112cd636e61d279be6ec62d660",
+      "scripts/lib/browser-fixture.mjs": "7180a16659156472490040e76182a941e0b39ff35876762d1ece3be97e20107c",
+      "package.json": "ff5125244bbbc2f3375e08f62a08e066a8e1452e9e941d0b50929e0c9d28208f",
+      "pnpm-lock.yaml": "a71feeda32c8cfee44d686dc21d5707239b8a2bb4e368c19d5c3d23c22bf6730"
+    },
+    "green": {
+      "web/features/coding/claudedesktop/pages/ClaudeDesktopPage.tsx": "9b20ce4d7ba0f6278c7bc06fbc737184cdf65fc8c92b9ce508fe1848cd88a22c",
+      "web/features/coding/claudedesktop/components/ClaudeDesktopProviderFormModal.tsx": "4360bee657fef2e4b0b04d9787306e7331f6745efe52efd2848cf8f0df7d031a",
+      "web/types/claudedesktop.ts": "335e3498af67627d84e7b9002a5918970a6f30a29f7bebc6c41248d12336f5cb",
+      "web/features/coding/claudecode/utils/claudeModelConfig.ts": "b664a826917e97f1e9a1a55c5cadce1803e612470443070c39087015cf1acd4f",
+      "web/features/coding/shared/providerHeaders/customHeadersUtils.ts": "a9389a6ec7e7b0824d9fddca9534df77cca846d0a710006370eeeae791984a66",
+      "web/features/coding/shared/providerModelRewrites/modelRewritesUtils.ts": "5f44da6ee590623c123ca9befaa9d6300a71ccb94793b29e4776913133cd3fe0",
+      "web/features/coding/shared/gateway/providerProfiles.ts": "451bd4f67024dadd03b07a9a008582c8d8e34a13e539d530a222895a71346945",
+      "web/features/coding/shared/gateway/gatewayAggregateConfig.ts": "4fcb2b0c1094a63bfd3039e051105581ffd6974e2b900bb36a50be70e0c2c5fb",
+      "web/features/coding/shared/ccSwitch/ImportFromCcSwitchModal.tsx": "a07b6e5813aa6ec3981740267c858cc39590af4e522a4af1245496d2118f474d",
+      "web/services/ccSwitchApi.ts": "10bce6f20af44d43e6f7e6dd2e5ee19c1be3c5e9bf00150d037b4f9dc116fe98",
+      "web/features/coding/shared/providerConfig/ProviderNotesCollapse.tsx": "b1c32bb27bc03b86018fec27c44c449ffc78ba132ebab6382edea10465ddb0f6",
+      "web/features/coding/shared/providerConfig/ProviderConfigCollapse.tsx": "b259b3fb3ebf0b85142ed64b2b2d5c2adf5606f8e8a6407e521f9038df757b54",
+      "web/features/coding/shared/gateway/useGatewaySupportedCliKeys.ts": "5a61da50e24eaee6c73db2f9490d62eb52ae422bbf7eec4d2857d0e22e468ca9",
+      "tauri/resources/gateway_provider_profiles.json": "755b4ab4345c222844db84f80762d17a27c5bd112cd636e61d279be6ec62d660",
+      "scripts/lib/browser-fixture.mjs": "7180a16659156472490040e76182a941e0b39ff35876762d1ece3be97e20107c",
+      "package.json": "968b8d855a989cde1c43e7586ff20656db449dbddb9172e0117a80bf60b4fcf4",
+      "pnpm-lock.yaml": "a71feeda32c8cfee44d686dc21d5707239b8a2bb4e368c19d5c3d23c22bf6730",
+      "web/features/coding/claudedesktop/utils/officialRestore.ts": "e6d1dbff7544439299eaa42268755d2567ffe5742b7b70aa55e8a97b7c9b0b70"
+    }
+  },
+  "cases": {
+    "red": [
+      {
+        "id": "official-both-unchanged",
+        "verdict": "expected-product-red"
+      },
+      {
+        "id": "official-both-notes",
+        "verdict": "expected-product-red"
+      },
+      {
+        "id": "official-url-notes",
+        "verdict": "expected-product-red"
+      },
+      {
+        "id": "official-token-notes",
+        "verdict": "expected-product-red"
+      },
+      {
+        "id": "pure-restore-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "ordinary-both-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "official-cancel",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "claude-meta-notes",
+        "verdict": "expected-product-red"
+      },
+      {
+        "id": "claude-preset-token-notes",
+        "verdict": "expected-product-red"
+      },
+      {
+        "id": "official-bom-notes",
+        "verdict": "expected-product-red"
+      }
+    ],
+    "green": [
+      {
+        "id": "official-both-unchanged",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "official-both-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "official-url-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "official-token-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "pure-restore-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "ordinary-both-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "official-cancel",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "claude-meta-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "claude-preset-token-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "official-bom-notes",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "changed-url-missing-key",
+        "verdict": "validation-control-pass"
+      },
+      {
+        "id": "changed-token-missing-url",
+        "verdict": "validation-control-pass"
+      },
+      {
+        "id": "custom-url-missing-key",
+        "verdict": "validation-control-pass"
+      },
+      {
+        "id": "new-custom-bom-key",
+        "verdict": "validation-control-pass"
+      },
+      {
+        "id": "copy-token-missing-url",
+        "verdict": "validation-control-pass"
+      },
+      {
+        "id": "same-dialog-change-revert",
+        "verdict": "control-pass"
+      },
+      {
+        "id": "changed-both-nel",
+        "verdict": "validation-control-pass"
+      },
+      {
+        "id": "url-only-added-space-key",
+        "verdict": "validation-control-pass"
+      }
+    ]
+  },
+  "helperTests": [
+    "restore mode distinguishes imported credentials from the raw official category",
+    "restore predicate preserves the backend seed override, parsing and legacy-key semantics",
+    "existing imported official URL-only and token-only pairs can remain unchanged",
+    "any credential difference, including whitespace, retains both required rules",
+    "absence and empty strings match actual form initialization without trimming or treating undefined as empty",
+    "new, copied, custom, restore, and unidentifiable rows receive no validation exemption",
+    "invalid or non-string stored credentials receive no validation exemption"
+  ],
+  "successScreenshots": {
+    "red": [
+      {
+        "case": "official-both-notes",
+        "moment": "initialized",
+        "file": "screenshots/red-official-both-notes-initialized.png"
+      }
+    ],
+    "green": [
+      {
+        "case": "official-both-notes",
+        "moment": "initialized",
+        "file": "screenshots/green-official-both-notes-initialized.png"
+      },
+      {
+        "case": "pure-restore-notes",
+        "moment": "before-save",
+        "file": "screenshots/green-pure-restore-notes-before-save.png"
+      },
+      {
+        "case": "url-only-added-space-key",
+        "moment": "validation-error",
+        "file": "screenshots/green-url-only-added-space-key-validation-error.png"
+      }
+    ]
+  },
+  "distinctSpans": [
+    "handleProviderSubmit",
+    "buildProviderSettingsConfig",
+    "buildProviderMeta",
+    "real form submit (manifest only; not projected)",
+    "real form initializer (manifest only; not projected)"
+  ],
+  "resourceCeilings": {
+    "jobs": 1,
+    "jobMinutes": 30,
+    "validatorMainSeconds": 1500,
+    "perCommandCleanupSeconds": 10,
+    "installSeconds": 180,
+    "helperListSeconds": 15,
+    "helperTestsSeconds": 60,
+    "fullTscSeconds": 240,
+    "redGreenBrowserSeconds": 1080,
+    "perVariantBrowserVerifySeconds": 480,
+    "perScenarioSeconds": 30,
+    "browsersSerial": 2,
+    "logSoftLimitBytes": 33554432,
+    "artifactLimitBytes": 268435456
+  },
+  "scope": "Real form and import modal; freshly extracted Page callbacks/builders, not full Page or app/Rust/DB/SSH/real credentials."
+}
