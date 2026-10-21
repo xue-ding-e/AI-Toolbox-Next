@@ -1,0 +1,42 @@
+{
+  "base": "1e147f9c32f33bef8652f08a049f001d5f920eca",
+  "patchSha256": "bcd780cb125ff6347aa0677cd5253f85c07297ff4cc1b5b6d80f83d22193461f",
+  "originalCardSha256": "1be5c4451c501231b0315fd9c7b43624ad5dfa7a05ccd9e29ce539d34b5488cf",
+  "productFiles": [
+    "tauri/src/coding/claude_desktop/commands.rs",
+    "tauri/src/coding/claude_desktop/tray_support.rs",
+    "tauri/src/coding/proxy_gateway/provider_switch.rs",
+    "web/features/coding/claudedesktop/components/ClaudeDesktopProviderCard.tsx",
+    "web/features/coding/shared/gateway/index.ts",
+    "web/features/coding/shared/gateway/providerProtocol.ts",
+    "web/test/features/coding/shared/gateway/providerProtocol.test.ts",
+    "web/test/features/coding/shared/providerCardVariants/fixtures/MigratedProviderCardsFixture.jsx",
+    "web/test/features/coding/shared/providerCardVariants/migratedProviderCardsBrowserChecks.mjs"
+  ],
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/manifest.json",
+    "validation/validate.py"
+  ],
+  "rustTests": [
+    "coding::claude_desktop::commands::tests::profile_apply_purpose::direct_remap_rejected_before_path_resolution_or_file_changes",
+    "coding::claude_desktop::commands::tests::profile_apply_purpose::direct_non_native_protocol_rejected_without_model_remap",
+    "coding::claude_desktop::commands::tests::profile_apply_purpose::credentialed_official_mapping_is_not_a_restore_bypass",
+    "coding::claude_desktop::commands::tests::profile_apply_purpose::direct_identity_keeps_normal_profile_write",
+    "coding::claude_desktop::commands::tests::profile_apply_purpose::preparation_allows_mapping_and_preserves_model_menu",
+    "coding::claude_desktop::commands::tests::profile_apply_purpose::official_restore_remains_available_in_direct_purpose",
+    "coding::claude_desktop::commands::tests::profile_apply_purpose::saved_mapping_survives_skipped_reapply_then_gateway_writer_reads_it",
+    "coding::claude_desktop::commands::tests::official_restore_settings_for_empty_env",
+    "coding::claude_desktop::commands::tests::official_restore_settings_rejects_providers_with_credentials",
+    "coding::claude_desktop::commands::tests::official_restore_settings_handles_invalid_json",
+    "coding::claude_desktop::config_writer::tests::apply_writes_3p_profile_and_meta",
+    "coding::claude_desktop::config_writer::tests::restore_switches_to_1p_and_removes_profile",
+    "coding::claude_desktop::config_writer::tests::apply_gateway_proxy_profile_points_desktop_at_gateway",
+    "coding::claude_desktop::config_writer::tests::direct_mode_rejects_model_mapping",
+    "coding::proxy_gateway::provider_switch::tests::direct_apply_from_tray_keeps_tray_refresh",
+    "coding::proxy_gateway::provider_switch::tests::gateway_takeover_switch_suppresses_intermediate_apply_events",
+    "coding::proxy_gateway::provider_switch::tests::gateway_takeover_switch_emits_single_final_tray_refresh",
+    "coding::proxy_gateway::provider_switch::tests::gateway_takeover_switch_uses_window_payload_outside_tray"
+  ]
+}
