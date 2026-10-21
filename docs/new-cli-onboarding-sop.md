@@ -558,7 +558,7 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 
 `CardShell` 的两个约束：`useSortable` 每次渲染都必须执行（无 id 时传占位符并 `disabled`，不要条件调用 hook）；`setNodeRef` **无条件**挂载（dnd-kit 需要测量节点，未注册的节点在父级重新启用拖拽时无法拖动）。
 
-**守卫（必跑）**：`pnpm run test:provider-card-layout`。它扫 `web/features/coding/<cli>/components/*ProviderCard.tsx` **与 `*OfficialAccountCard.tsx`**（作用域是**后缀集合**，不是单个后缀——见 13.1 模式七十七：ZCode 的官方账号卡片同为列表成员，却因为名字不匹配从未被扫到），禁止映射层自己 `useSortable` / 自己渲染 `<Card>` / 自己写 `ManagementCheckbox`。`PENDING_MIGRATION` **已于 2026-10-20 清空**（最后三家 claudedesktop / geminicli / grok 迁完），此后新出现的未迁移卡片直接报错，不再有登记缓冲。脚本的 `EXEMPT_FILES` 只留一个「名字像但不是列表卡片」的例外（`AntigravityProviderCard`，理由写在条目里）；**读不到的豁免是假豁免**——`ZcodeOfficialAccountCard` 曾有一条（理由也早已过期），因为后缀不匹配从来没被读过。
+**守卫（必跑）**：`pnpm run test:provider-card-layout`。它扫 `web/features/coding/<cli>/components/*ProviderCard.tsx` **与 `*OfficialAccountCard.tsx`**（作用域是**后缀集合**，不是单个后缀——见 13.1 模式七十七：ZCode 的官方账号卡片同为列表成员，却因为名字不匹配从未被扫到），禁止映射层自己 `useSortable` / 自己渲染 `<Card>` / 自己写 `ManagementCheckbox`。`PENDING_MIGRATION` **已于 2026-10-20 清空**（最后三家 claudedesktop / geminicli / grok 迁完），此后新出现的未迁移卡片直接报错，不再有登记缓冲。**2026-10-21 补上第四条规则**：受管映射层不得从 `@/components/common/ProviderCard` 导入组件——前三条规则查的是「自建 chrome」，而旧共享卡既不是 chrome 也不触发任何一条，`OpenClawProviderCard` 因此包着它数月未被发现。类型仍可从 `@/components/common/ProviderCard/types` 导入。脚本的 `EXEMPT_FILES` 只留一个「名字像但不是列表卡片」的例外（`AntigravityProviderCard`，理由写在条目里）；**读不到的豁免是假豁免**——`ZcodeOfficialAccountCard` 曾有一条（理由也早已过期），因为后缀不匹配从来没被读过。
 
 **样式能力不够时怎么办**：先确认**至少两个**调用方需要这个能力，再给 `ProviderCardVariantProps` 加 prop。实例：网关接管按钮（`actions.gatewayActions`）的处理器在 claudecode / codex / grok / kimi / claudedesktop **五张卡片里逐字重复**（实测 diff 只有 `'claude'` vs `'codex'` 一行不同），补这个插槽是本轮唯一改共享组件的地方。反之，只有一个调用方需要的能力留在调用方自己的映射层里，不要塞进共享 props。
 
@@ -571,7 +571,7 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 | 组件 | 路径 | 职责 |
 |------|------|------|
 | `ProviderListSection` | `shared/ProviderListSection.tsx` | 区域外壳：标题 + 工具栏 + 提示 + 空态 + 底部导入 |
-| `ProviderCard` | `components/common/ProviderCard/` | 最基础的共享卡片（无 CLI 专属插槽，见 §4.2.2） |
+| `ProviderCard` | `components/common/ProviderCard/` | **旧卡片，仅供尚未迁移的 CLI**（现剩余 pi / oh_my_pi / dsh；已迁移的映射层禁止 import，见 §4.2.1 的守卫） |
 | `ModelListSection` | `shared/ModelListSection.tsx` | 模型列表区，两种形态按 `appearance` 选（列表卡片折叠 / 明细侧栏常开，见 §4.2.3；仅"支持自定义模型"形态用） |
 
 #### 4.2.1 区域外壳 `ProviderListSection`
@@ -653,7 +653,7 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 
 #### 4.2.2 卡片 `ProviderCard`
 
-`web/components/common/ProviderCard/` 是**最基础的**共享卡片（拖拽手柄 / 多选复选框、名称、SDK 标签、baseUrl、编辑/复制/分享/删除按钮 + `extraActions`）。目前只有 `dsh` 直接用默认导出。
+`web/components/common/ProviderCard/` 是**旧卡片**（拖拽手柄 / 多选复选框、名称、SDK 标签、baseUrl、编辑/复制/分享/删除按钮 + `extraActions`）。2026-10-21 起它只剩 `pi` / `oh_my_pi` / `dsh` 三家在用；**已迁移的 CLI 不得再 import 它**（`verify-provider-card-layout.mjs` 机械拦截），新 CLI 一律用 `providerCardVariants` 的三种样式之一。
 
 **Claude / Codex 不直接用它**——两者各自有模块内的 `ClaudeProviderCard` / `CodexProviderCard`，字段区差异太大（Claude 是 Haiku/Sonnet/Opus 映射行，Codex 是自动审批行 + 完整模型目录），强行参数化只会得到一个塞满条件分支的组件。
 
@@ -694,7 +694,7 @@ pnpm run test:provider-card-view      # Claude 宿主（53 项，真 Chromium �
 pnpm run test:codex-card-view         # Codex 宿主（81 项，真 Chromium 挂真实 CodexPage）
 pnpm run test:kimi-card-view          # Kimi 宿主（37 项）
 pnpm run test:zcode-card-view         # ZCode 宿主（49 项，含格子的启用开关与官方账号格子）
-pnpm run test:migrated-provider-cards # 2026-10-20 四家（claudedesktop / geminicli / grok / omo_native，24 项，组件级夹具）
+pnpm run test:migrated-provider-cards # 2026-10-21 六家（claudedesktop / geminicli / grok / omo_native / openclaw / hermes，53 项，组件级夹具）
 pnpm run test:provider-card-layout    # 映射层守卫：卡片分支不得自建 chrome
 pnpm run test:provider-list-drag      # 列表布局的拖拽未被改动
 pnpm run test:provider-list-locate    # data-provider-id 契约在两种布局下都成立
@@ -1091,7 +1091,7 @@ pnpm run test:provider-card-layout        # 官方卡片作为列表成员时，
 | `pnpm run test:codex-official-accounts`（7 项） | embedded（Codex） | 账号行右边缘 == 卡片内容右边缘 == 头部动作右边缘；第二行讲的是切换，不是它已经没有的 endpoint |
 | `pnpm run test:official-account-card`（26 项） | embedded（Kimi） | 标题 + 🔗 + 计数、列表标题 + 折叠、登录按钮几何（在标题行右端、与标题垂直居中）、**真点一下**折叠 |
 | `pnpm run test:zcode-official-account`（12 项） | standalone（ZCode） | 卡片在列表中的位置与把手、账号行左边缘与列表标题对齐、**`getComputedStyle` 断言说明句的颜色与字号**、真点折叠 |
-| `pnpm run test:migrated-provider-cards`（24 项，组件级夹具） | embedded（Gemini / Grok，列表 + 卡片布局） | `🔗 官方账号 (n)` 标题、账号行跨满卡片内容宽（footer 不再落在头部左栏）、virtual 行只给「保存当前登录」、已应用行给「默认」、格子第二行「当前登录」、Grok 的第六个动作经 `renderExtraActions` 出现在「刷新」与「详情」之间且自定义渠道没有账号块 |
+| `pnpm run test:migrated-provider-cards`（53 项，组件级夹具） | 六家映射层（claudedesktop / geminicli / grok / omo_native / openclaw / hermes，列表 + 卡片布局） | Claude Desktop 角色 `Role: model` + `tierAlias` 真 Tag + 备注 footer 位置 + 无绑定时的备注 + dragDisabled 无把手 + **官方行标题 `🔗 官方账号` 且菜单无删除** + **映射渠道只有「应用并代理」**；Gemini `🔗 官方账号 (n)` 标题、第二行切换说明、账号行跨满卡片内容宽、virtual 行只给「保存当前登录」、已应用行给「默认」；Grok 官方卡片标题与备注、第六个动作经 `renderExtraActions` 出现在「刷新」与「详情」之间、自定义渠道没有账号块且「模型测试」全卡只出现一次、模型工具栏顺序；OmO 格子的 npm 包与默认渠道、菜单删除保护；OpenClaw 的 id / npm 包 / 端点、无「应用」、模型工具栏四项齐全、默认渠道删除置灰且保留 hover 宿主；Hermes 的端点与 API 模式、无「应用」、名称行不重复默认徽章、模型目录行的 `当前主模型` 与 `设为主模型`、模型行无假把手、只读渠道只画「只读」且没有编辑/复制/删除、格子说包名 + 默认模型；暗色主题 |
 | `pnpm run test:zcode-card-view` / `test:codex-card-view` / `test:kimi-card-view`（49 / 81 / 37 项） | 卡片布局（三端） | 格子的第二行是「当前登录: <账号>」（Codex / Kimi 的官方格子、ZCode 的官方账号格），**且三态都有输出**（`accounts=virtual` → 磁盘上那份登录（Codex 那份还并存一份没在用的保存账号，须报在用的、不报闲置的）；`accounts=idle` → 有账号但没在用 → 「当前登录: 未登录」），**管理器不在格子里而在该格子自己的侧栏**（ZCode 那份还断言抽屉里那份**常开无 caret**、且**拖它不会打开侧栏**）；三端各自的 `data-provider-id`、拖拽回写、切回列表那侧逐字未变 |
 
 > 三种断言形状值得照抄：① **位置类**用 `getBoundingClientRect`，不读代码（#116 / 模式六十三）；② **样式类**用 `getComputedStyle`——颜色 / 字号漂移类型检查与源码守卫都看不见（#130）；③ **折叠 / 切换**要发真事件再验（13.1 模式六十）。
