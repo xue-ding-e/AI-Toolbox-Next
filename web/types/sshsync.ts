@@ -71,9 +71,17 @@ export interface SSHSyncConfig {
  * SSH connection test result
  */
 export interface SSHConnectionResult {
+  /** Whether authentication succeeded for this test, not a live session status. */
   connected: boolean;
   error?: string;
   serverInfo?: string;
+  /** A narrow POSIX shell/HOME probe; does not verify tools or write permissions. */
+  syncCapability?: 'supported' | 'missingHome' | 'unknown';
+  probeReason?: 'channelOpenFailed' | 'execFailed' | 'channelFailure'
+    | 'channelClosedEarly' | 'outputLimitExceeded' | 'probeTimeout'
+    | 'exitSignal' | 'conflictingExitStatus' | 'missingExitStatus'
+    | 'nonzeroExitStatus' | 'unexpectedOutput';
+  cleanupWarning?: 'disconnectFailed' | 'disconnectTimeout';
 }
 
 /**

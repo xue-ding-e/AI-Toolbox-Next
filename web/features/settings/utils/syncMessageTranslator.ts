@@ -350,6 +350,7 @@ export const translateSyncMessage = (
 	}
 
 	const patterns: Array<[RegExp, (...args: string[]) => string]> = [
+		[/^SSH 认证超时$/, () => t("settings.ssh.authenticationTimeout")],
 		[/^SSH 同步未启用$/, () => t("settings.syncMessages.sshSyncDisabled")],
 		[
 			/^另一个同步操作正在进行中$/,
