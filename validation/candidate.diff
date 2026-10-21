@@ -462,7 +462,7 @@
 +await runBrowserFixture({fixtureDirectory:fileURLToPath(new URL('../web/test/features/coding/skills/groupMode/fixtures/',import.meta.url)),fixtureFilename:'SkillsGroupModeFixture.jsx',artifactPrefix:'skills-group-mode-',verify:verifySkillsGroupMode});
 --- /dev/null
 +++ b/web/test/features/coding/skills/groupMode/fixtures/SkillsGroupModeFixture.jsx
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,21 @@
 +import {boundary} from './boundary.mjs';
 +import React from 'react';
 +import {createRoot} from 'react-dom/client';
@@ -472,8 +472,9 @@
 +// Load real view only after official mockIPC installs the strict IPC boundary.
 +const {default:SkillsPage}=await import('@/features/coding/skills/pages/SkillsPage');
 +const i18n=i18next.createInstance();await i18n.init({lng:'en',fallbackLng:'en',resources:{en:{translation:{}}},initImmediate:false});
-+let barrier;
++let barrier,ready=false;
 +function Fixture(){
++ React.useLayoutEffect(()=>{ready=true;return()=>{ready=false;};},[]);
 + const [key,setKey]=React.useState(0),[present,setPresent]=React.useState(true),[tick,setTick]=React.useState(0);const done=React.useRef();
 + barrier=()=>new Promise(resolve=>{done.current=resolve;setTick(n=>n+1);});
 + React.useLayoutEffect(()=>{done.current?.();done.current=undefined;},[tick]);
@@ -482,7 +483,7 @@
 +createRoot(document.getElementById('root')).render(<Fixture/>);
 +async function drain(){let last='',stable=0;for(let i=0;i<12;i++){await Promise.resolve();await barrier();await Promise.resolve();const state=window.skillsGroupFixture.snapshot();const value=JSON.stringify({boundary:boundary.snapshot(),mode:state.mode,groupHeaders:state.groupHeaders,mounted:state.mounted,alerts:state.alerts});stable=value===last?stable+1:0;last=value;if(stable===2)return;}throw Error('Fixture effects did not stabilize');}
 +const visible=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
-+window.skillsGroupFixture={drain,async resolveInitial(){boundary.resolveInitial();await drain();},snapshot(){const selected=[...document.querySelectorAll('[aria-label="skills.groupControls.groupingLabel"] [role="radio"][aria-checked="true"]')].filter(visible);return {...boundary.snapshot(),mode:selected.map(e=>e.textContent),groupHeaders:[...document.querySelectorAll('#skills-page section button[aria-expanded] > span:first-of-type')].filter(visible).map(e=>e.textContent),text:document.querySelector('#skills-page').textContent,alerts:[...document.querySelectorAll('.ant-message-notice,[role="alert"]')].filter(visible).map(e=>e.textContent),mounted:document.querySelector('#skills-page').childElementCount>0,barrier:Number(document.querySelector('#barrier').textContent)};}};
++window.skillsGroupFixture={isReady:()=>ready,drain,async resolveInitial(){boundary.resolveInitial();await drain();},snapshot(){if(!ready)throw Error('Fixture first commit not ready');const selected=[...document.querySelectorAll('[aria-label="skills.groupControls.groupingLabel"] [role="radio"][aria-checked="true"]')].filter(visible);return {...boundary.snapshot(),mode:selected.map(e=>e.textContent),groupHeaders:[...document.querySelectorAll('#skills-page section button[aria-expanded] > span:first-of-type')].filter(visible).map(e=>e.textContent),text:document.querySelector('#skills-page').textContent,alerts:[...document.querySelectorAll('.ant-message-notice,[role="alert"]')].filter(visible).map(e=>e.textContent),mounted:document.querySelector('#skills-page').childElementCount>0,barrier:Number(document.querySelector('#barrier').textContent)};}};
 --- /dev/null
 +++ b/web/test/features/coding/skills/groupMode/fixtures/boundary.mjs
 @@ -0,0 +1,46 @@
@@ -552,7 +553,7 @@
 + async function remount(){const writes=(await snapshot()).writes.length;await click('#remount');await openOptions();assert.equal((await snapshot()).writes.length,writes,'Remount must not write preferences');}
 + async function run(name,scenario,fn){phase='setup';observations=[];const start=exceptions.length;try{
 +  await send('Page.navigate',{url:baseUrl+'/?scenario='+scenario});
-+  await wait(()=>evaluate(`!!window.skillsGroupFixture&&skillsGroupFixture.snapshot().scenario===${JSON.stringify(scenario)}&&skillsGroupFixture.snapshot().readCount===1`));await drain();await openOptions();
++  await wait(()=>evaluate(`!!window.skillsGroupFixture&&skillsGroupFixture.isReady()&&skillsGroupFixture.snapshot().scenario===${JSON.stringify(scenario)}&&skillsGroupFixture.snapshot().readCount===1`));await drain();await openOptions();
 +  const ready=await observe('ready');assert.equal(ready.forbidden,0);assert.equal(ready.writes.length,0,'Mount must not persist derived mode');
 +  await fn();phase='safety';assert.equal((await snapshot()).forbidden,0);assert.equal(exceptions.length,start);
 +  results.push({name,passed:true,observations,pageExceptions:[]});
