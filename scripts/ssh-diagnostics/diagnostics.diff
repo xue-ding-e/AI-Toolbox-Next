@@ -1,0 +1,128 @@
+--- a/tauri/src/coding/ssh/session.rs
++++ b/tauri/src/coding/ssh/session.rs
+@@ -36,6 +36,31 @@
+             .map_err(|e| format!("加载私钥文件失败: {}", e))
+     } else {
+         Err("未提供私钥路径或私钥内容".to_string())
++    }
++}
++
++/// Display-only diagnostic fallback adapted from coulsontl/ai-toolbox
++/// 88a8b51806fc83e47f712dfd9b9094efee157dc8 (AGPL-3.0-or-later).
++/// UTF-8 wins, then explicit UTF-16 BOMs, then GB18030. This is a
++/// compatibility policy, not charset detection; never use it for file data,
++/// command stdout, shell capability tokens, or success/failure decisions.
++/// Malformed input retains the previous UTF-8-lossy display instead of
++/// accepting an error-replaced legacy decode as valid diagnostic text.
++fn decode_remote_diagnostic(bytes: &[u8]) -> String {
++    if let Ok(text) = std::str::from_utf8(bytes) {
++        return text.to_string();
++    }
++    let (decoded, had_errors) = if let Some(payload) = bytes.strip_prefix(&[0xFF, 0xFE]) {
++        encoding_rs::UTF_16LE.decode_without_bom_handling(payload)
++    } else if let Some(payload) = bytes.strip_prefix(&[0xFE, 0xFF]) {
++        encoding_rs::UTF_16BE.decode_without_bom_handling(payload)
++    } else {
++        encoding_rs::GB18030.decode_without_bom_handling(bytes)
++    };
++    if had_errors {
++        String::from_utf8_lossy(bytes).into_owned()
++    } else {
++        decoded.into_owned()
+     }
+ }
+ 
+@@ -287,7 +312,7 @@
+         match exit_code {
+             Some(0) | None => Ok(stdout),
+             Some(code) => {
+-                let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
++                let stderr = decode_remote_diagnostic(&stderr_buf);
+                 let detail = if !stderr.trim().is_empty() {
+                     stderr.trim().to_string()
+                 } else {
+@@ -348,7 +373,7 @@
+         match exit_code {
+             Some(0) | None => Ok(()),
+             Some(code) => {
+-                let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
++                let stderr = decode_remote_diagnostic(&stderr_buf);
+                 let detail = if !stderr.trim().is_empty() {
+                     format!(": {}", stderr.trim())
+                 } else {
+@@ -727,9 +752,53 @@
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::{is_excluded_dir_name, relative_upload_path};
++    use super::{decode_remote_diagnostic, is_excluded_dir_name, relative_upload_path};
+     use std::collections::HashSet;
+     use std::path::Path;
++
++    #[test]
++    fn remote_diagnostic_keeps_utf8_and_empty() {
++        // Without a BOM, UTF-16 is not guessed: these valid UTF-8 bytes retain NUL.
++        assert_eq!(decode_remote_diagnostic(&[0x41, 0x00]), "A\0");
++        for text in ["", "ASCII error", "命令语法不正确。", "\u{feff}UTF-8 BOM"] {
++            assert_eq!(decode_remote_diagnostic(text.as_bytes()), text);
++        }
++    }
++
++    #[test]
++    fn remote_diagnostic_decodes_gbk_message() {
++        let gbk = [195, 252, 193, 238, 211, 239, 183, 168, 178, 187, 213, 253, 200, 183, 161, 163];
++        assert_eq!(decode_remote_diagnostic(&gbk), "命令语法不正确。");
++        // U+20000 uses a four-byte GB18030 sequence, not GBK.
++        assert_eq!(decode_remote_diagnostic(&[149, 50, 130, 54]), "𠀀");
++    }
++
++    #[test]
++    fn remote_diagnostic_decodes_explicit_utf16_boms() {
++        for big_endian in [false, true] {
++            let mut bytes = if big_endian { vec![0xFE, 0xFF] } else { vec![0xFF, 0xFE] };
++            assert_eq!(decode_remote_diagnostic(&bytes), ""); // BOM only
++            for unit in "Windows 错误 😀".encode_utf16() {
++                bytes.extend_from_slice(&if big_endian { unit.to_be_bytes() } else { unit.to_le_bytes() });
++            }
++            assert_eq!(decode_remote_diagnostic(&bytes), "Windows 错误 😀");
++        }
++    }
++
++    #[test]
++    fn remote_diagnostic_malformed_input_preserves_previous_lossy_display() {
++        for bytes in [
++            &[0x81][..], // incomplete GB18030 sequence
++            &[0xD6, 0xD0, 0x81][..], // valid GBK prefix, malformed tail: whole input fallback
++            &[0xFF, 0xFE, 0x00][..], // odd UTF-16LE payload
++            &[0xFE, 0xFF, 0x00][..], // odd UTF-16BE payload
++            &[0xFF, 0xFE, 0x00, 0xD8][..], // unpaired UTF-16LE surrogate
++            &[0xFF, 0xFE, 0x41, 0x00, 0x00][..], // valid prefix, malformed tail
++            &[0xFE, 0xFF, 0xD8, 0x00][..], // unpaired UTF-16BE surrogate
++        ] {
++            assert_eq!(decode_remote_diagnostic(bytes), String::from_utf8_lossy(bytes));
++        }
++    }
+ 
+     #[test]
+     fn matches_excluded_directory_by_name_segment_only() {
+--- a/tauri/Cargo.toml
++++ b/tauri/Cargo.toml
+@@ -80,6 +80,8 @@
+ hex = "0.4"
+ anyhow = "1.0"
+ glob = "0.3"
++# Display-only Windows SSH diagnostics; reuse the version already in Cargo.lock.
++encoding_rs = "=0.8.35"
+ russh = { version = "0.57", default-features = false, features = ["ring", "flate2", "rsa"] }
+ russh-sftp = "2.1"
+ rusqlite = { version = "0.39.0", features = ["bundled", "backup", "hooks"] }
+--- a/tauri/Cargo.lock
++++ b/tauri/Cargo.lock
+@@ -101,6 +101,7 @@
+  "chrono",
+  "croner",
+  "dirs 5.0.1",
++ "encoding_rs",
+  "flate2",
+  "futures-util",
+  "glob",

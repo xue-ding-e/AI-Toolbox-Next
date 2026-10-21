@@ -1,4 +1,4 @@
-name: Compaction regression
+name: Isolated SSH diagnostic decoding validation
 on:
   workflow_dispatch:
 permissions:
@@ -7,39 +7,123 @@ concurrency:
   group: ai-toolbox-maintenance-validation
   cancel-in-progress: false
 jobs:
-  websocket-regression:
-    if: github.ref == 'refs/heads/maintenance/compaction-refusal-memory'
+  diagnostics:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/ssh-diagnostics'
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 40
     env:
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
+      CARGO_TARGET_DIR: ${{ github.workspace }}/source/tauri/target
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.sha }}
+          path: validation
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record toolchain and disk
-        run: |
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify all five regressions are selected
-        shell: bash
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ad2b8af29cbefd9089df43125febf1f43f835f3b
+          path: source
+          persist-credentials: false
+      - name: Verify exact validation input scope
+        working-directory: validation
+        env:
+          VALIDATION_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib websocket_compaction_refusal_memory -- --list > /tmp/compaction-tests.txt
-          cat /tmp/compaction-tests.txt
-          for name in ignores_failed_event ignores_incomplete_event ignores_failed_snapshot ignores_incomplete_snapshot keeps_ordinary_refusal; do
-            grep -Fx "coding::proxy_gateway::runtime::websocket::tests::websocket_compaction_refusal_memory_${name}: test" /tmp/compaction-tests.txt
+          test "$(git rev-parse HEAD)" = "$VALIDATION_SHA"
+          git fetch --no-tags origin ad2b8af29cbefd9089df43125febf1f43f835f3b
+          printf '%s\n' '.github/workflows/compaction-regression.yml' 'scripts/ssh-diagnostics/bounded_process.py' 'scripts/ssh-diagnostics/format_candidate.py' 'scripts/ssh-diagnostics/diagnostics.diff' | sort > /tmp/expected-validation-files
+          git diff --name-only ad2b8af29cbefd9089df43125febf1f43f835f3b HEAD | sort > /tmp/actual-validation-files
+          diff /tmp/expected-validation-files /tmp/actual-validation-files
+          echo '83175b4a10a989b65cfd61e123574f14e78bb364267c7cc37e09a7338328123f  scripts/ssh-diagnostics/diagnostics.diff' | sha256sum -c -
+          echo '9fea88d10176ae8b08c9d0abfdbf121503a4d886603c994d3ae080bcc7ea842b  scripts/ssh-diagnostics/bounded_process.py' | sha256sum -c -
+          echo '572799e569452f8c3933f55e015bce39d5f6ccea33ab0f685f26eeaeb1ec0011  scripts/ssh-diagnostics/format_candidate.py' | sha256sum -c -
+          mkdir -p /tmp/ai-ssh-diagnostic-evidence
+          git rev-parse HEAD > /tmp/ai-ssh-diagnostic-evidence/validation-sha.txt
+          git ls-tree -r HEAD > /tmp/ai-ssh-diagnostic-evidence/validation-tree.txt
+      - name: Official prerequisites and fixed Rust
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt
+      - name: Apply only reviewed diagnostic patch
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ai-ssh-diagnostic-evidence
+          test "$(git rev-parse HEAD)" = ad2b8af29cbefd9089df43125febf1f43f835f3b
+          git rev-parse HEAD > /tmp/ai-ssh-diagnostic-evidence/base.txt
+          git apply --check ../validation/scripts/ssh-diagnostics/diagnostics.diff
+          git apply ../validation/scripts/ssh-diagnostics/diagnostics.diff
+          printf "%s\n" tauri/Cargo.lock tauri/Cargo.toml tauri/src/coding/ssh/session.rs > /tmp/expected-product-files
+          git diff --name-only | sort | diff /tmp/expected-product-files -
+          python3 ../validation/scripts/ssh-diagnostics/format_candidate.py
+          sha256sum tauri/Cargo.lock > /tmp/ai-ssh-diagnostic-evidence/lock-before.txt
+          git diff --check
+          git diff > /tmp/ai-ssh-diagnostic-evidence/tested.diff
+          cp tauri/src/coding/ssh/session.rs /tmp/ai-ssh-diagnostic-evidence/session.rs
+          sha256sum tauri/src/coding/ssh/session.rs > /tmp/ai-ssh-diagnostic-evidence/source.sha256
+      - name: Compile real library test binary (15 minute watchdog)
+        timeout-minutes: 17
+        working-directory: source
+        run: |
+          set -euo pipefail
+          python3 ../validation/scripts/ssh-diagnostics/bounded_process.py 900 /tmp/ai-ssh-diagnostic-evidence/compile.jsonl cargo +1.99.1 test --locked --manifest-path tauri/Cargo.toml --lib --no-run --message-format=json
+          python3 - <<'PY'
+          import json,pathlib
+          binaries=[]
+          for line in pathlib.Path('/tmp/ai-ssh-diagnostic-evidence/compile.jsonl').read_text().splitlines():
+              try: entry=json.loads(line)
+              except json.JSONDecodeError: continue
+              if entry.get('reason')=='compiler-artifact' and entry.get('profile',{}).get('test') and entry.get('target',{}).get('name')=='ai_toolbox_lib' and entry.get('executable'):
+                  binaries.append(entry['executable'])
+          assert len(binaries)==1,binaries
+          binary=pathlib.Path(binaries[0]).resolve(strict=True)
+          target=pathlib.Path('tauri/target').resolve(strict=True)
+          assert binary.is_relative_to(target) and binary.is_file(),binary
+          pathlib.Path('/tmp/ai-ssh-diagnostic-evidence/test-binary.txt').write_text(str(binary))
+          PY
+      - name: Exact ten-test inventory and serial decoder, gate and session controls
+        timeout-minutes: 18
+        working-directory: source
+        run: |
+          set -euo pipefail
+          binary=$(cat /tmp/ai-ssh-diagnostic-evidence/test-binary.txt)
+          runner=../validation/scripts/ssh-diagnostics/bounded_process.py
+          tests=(
+            coding::ssh::session::tests::remote_diagnostic_keeps_utf8_and_empty
+            coding::ssh::session::tests::remote_diagnostic_decodes_gbk_message
+            coding::ssh::session::tests::remote_diagnostic_decodes_explicit_utf16_boms
+            coding::ssh::session::tests::remote_diagnostic_malformed_input_preserves_previous_lossy_display
+            coding::ssh::session::tests::matches_excluded_directory_by_name_segment_only
+            coding::ssh::session::tests::reports_directory_upload_paths_relative_to_mapping_root
+            coding::ssh::capabilities::tests::accepts_only_the_expected_probe_response
+            coding::ssh::capabilities::gate_tests::rejected_probe_never_invokes_write_closure
+            coding::ssh::capabilities::gate_tests::timeout_never_invokes_write_closure
+            coding::ssh::capabilities::gate_tests::accepted_probe_invokes_write_once_and_preserves_result
+          )
+          for full in "${tests[@]}"; do
+            name=${full//::/_}
+            python3 "$runner" 15 "/tmp/ai-ssh-diagnostic-evidence/$name.list" "$binary" --exact "$full" --list
+            grep -Fx "$full: test" "/tmp/ai-ssh-diagnostic-evidence/$name.list"
+            grep -Fx '1 test, 0 benchmarks' "/tmp/ai-ssh-diagnostic-evidence/$name.list"
           done
-          test "$(grep -c '^coding::proxy_gateway::runtime::websocket::tests::websocket_compaction_refusal_memory_.*: test$' /tmp/compaction-tests.txt)" -eq 5
-      - name: Real WebSocket refusal-memory regression
-        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib websocket_compaction_refusal_memory -- --nocapture
+          for full in "${tests[@]}"; do
+            name=${full//::/_}
+            python3 "$runner" 90 "/tmp/ai-ssh-diagnostic-evidence/$name.log" "$binary" --exact "$full" --test-threads=1 --nocapture
+            grep -F 'test result: ok. 1 passed;' "/tmp/ai-ssh-diagnostic-evidence/$name.log"
+          done
+          sha256sum tauri/Cargo.lock > /tmp/ai-ssh-diagnostic-evidence/lock-after.txt
+          diff /tmp/ai-ssh-diagnostic-evidence/lock-{before,after}.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ssh-diagnostic-evidence
+          path: /tmp/ai-ssh-diagnostic-evidence/
+          retention-days: 7
