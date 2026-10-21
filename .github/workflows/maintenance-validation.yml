@@ -16,7 +16,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
-          fetch-depth: 2
+          fetch-depth: 4
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
