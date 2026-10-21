@@ -1,0 +1,28 @@
+{
+  "base": "4bbbc8c477f0cfc1fe61080f1161f1b9b8882a83",
+  "patchSha256": "aa896b0e053d5897138315e77171da82ef303e51ed0f6a2ad17ebcb7741cb791",
+  "productFiles": [
+    "package.json",
+    "scripts/verify-grok-fetched-models.mjs",
+    "web/features/coding/grok/pages/GrokPage.tsx",
+    "web/features/coding/grok/utils/grokFetchedModels.ts",
+    "web/test/features/coding/grok/fetchedModels/fixtures/GrokFetchModelsFixture.jsx",
+    "web/test/features/coding/grok/fetchedModels/fixtures/boundary.mjs",
+    "web/test/features/coding/grok/fetchedModels/grokFetchedModelsBrowserChecks.mjs",
+    "web/test/features/coding/grok/utils/grokFetchedModels.test.ts"
+  ],
+  "newFiles": [
+    "scripts/verify-grok-fetched-models.mjs",
+    "web/features/coding/grok/utils/grokFetchedModels.ts",
+    "web/test/features/coding/grok/fetchedModels/fixtures/GrokFetchModelsFixture.jsx",
+    "web/test/features/coding/grok/fetchedModels/fixtures/boundary.mjs",
+    "web/test/features/coding/grok/fetchedModels/grokFetchedModelsBrowserChecks.mjs",
+    "web/test/features/coding/grok/utils/grokFetchedModels.test.ts"
+  ],
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/manifest.json",
+    "validation/validate.py"
+  ]
+}
