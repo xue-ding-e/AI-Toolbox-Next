@@ -1,4 +1,4 @@
-name: Isolated Claude Desktop routing validation
+name: Isolated Claude Desktop routing Rust verification
 on:
   workflow_dispatch:
 permissions:
@@ -10,7 +10,7 @@ jobs:
   desktop:
     if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/claude-desktop-routing'
     runs-on: ubuntu-22.04
-    timeout-minutes: 55
+    timeout-minutes: 40
     env:
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
@@ -22,39 +22,30 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: 1e147f9c32f33bef8652f08a049f001d5f920eca
           path: source
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-        with:
-          version: 9.15.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.23.3
       - name: Verify reviewed harness hashes
         working-directory: harness
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = '${{ github.sha }}'
-          echo 'bcd780cb125ff6347aa0677cd5253f85c07297ff4cc1b5b6d80f83d22193461f  validation/candidate.diff' | sha256sum -c -
-          echo 'a9c764bd1b25fe785eaf44eb38df6ead43792be7267f82ef449179eadb20ed6e  validation/manifest.json' | sha256sum -c -
-          echo '17e594efd1696f5e96c468864606192e917a62c2029e2cccb67c42b916c0224a  validation/validate.py' | sha256sum -c -
+          echo 'c5fa8e269b30cb52b84800e2030148e9ce62f972c2dbd93d924b7def65d32943  validation/candidate.diff' | sha256sum -c -
+          echo 'd976fdd81fc20ab0caaad16fe61f9290d2cc307f158bc6b9b67df2ea4e5bd271  validation/manifest.json' | sha256sum -c -
+          echo '24fdecfd65c7af2bf047fbd9c58770749632d70e55721e1cc6fffedf622695e4  validation/validate.py' | sha256sum -c -
       - name: Official prerequisites and fixed Rust
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          node --version
-          pnpm --version
-          google-chrome --version
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
           rustup toolchain install 1.99.1 --profile minimal
-      - name: Real card RED GREEN, full TypeScript and serial exact Rust library tests
-        timeout-minutes: 42
+      - name: Exact production compilation and 19 serial Rust tests
+        timeout-minutes: 28
         run: python3 harness/validation/validate.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

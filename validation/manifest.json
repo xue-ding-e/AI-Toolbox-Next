@@ -1,6 +1,6 @@
 {
   "base": "1e147f9c32f33bef8652f08a049f001d5f920eca",
-  "patchSha256": "bcd780cb125ff6347aa0677cd5253f85c07297ff4cc1b5b6d80f83d22193461f",
+  "patchSha256": "c5fa8e269b30cb52b84800e2030148e9ce62f972c2dbd93d924b7def65d32943",
   "originalCardSha256": "1be5c4451c501231b0315fd9c7b43624ad5dfa7a05ccd9e29ce539d34b5488cf",
   "productFiles": [
     "tauri/src/coding/claude_desktop/commands.rs",
@@ -37,6 +37,20 @@
     "coding::proxy_gateway::provider_switch::tests::direct_apply_from_tray_keeps_tray_refresh",
     "coding::proxy_gateway::provider_switch::tests::gateway_takeover_switch_suppresses_intermediate_apply_events",
     "coding::proxy_gateway::provider_switch::tests::gateway_takeover_switch_emits_single_final_tray_refresh",
-    "coding::proxy_gateway::provider_switch::tests::gateway_takeover_switch_uses_window_payload_outside_tray"
-  ]
+    "coding::proxy_gateway::provider_switch::tests::gateway_takeover_switch_uses_window_payload_outside_tray",
+    "coding::reapply_applied_runtime::tests::failed_provider_step_does_not_prevent_prompt_step"
+  ],
+  "frontendEvidenceRun": 39561532802,
+  "frontendFileSha256": {
+    "web/features/coding/claudedesktop/components/ClaudeDesktopProviderCard.tsx": "45747d72e05cbabe1476a7b9b4627435d7c793ab49098c6011c30f76aab02391",
+    "web/features/coding/shared/gateway/index.ts": "7c2510df0f0fb8b2025f01ef24e1dfd95577148d7c21c34e67cb8cd3e528db7b",
+    "web/features/coding/shared/gateway/providerProtocol.ts": "d1f8d69a79da11c4a86c12007e99a5ba7ddb02ea71db715bfc9e33ce63d6b276",
+    "web/test/features/coding/shared/gateway/providerProtocol.test.ts": "fc779385cacfab8794a7acc71db1078d98201988a47e308273678ff0fb3c2919",
+    "web/test/features/coding/shared/providerCardVariants/fixtures/MigratedProviderCardsFixture.jsx": "6f6f944122ce50a495621db261e944fa34ea0b65f095d32505aa06786aa26f11",
+    "web/test/features/coding/shared/providerCardVariants/migratedProviderCardsBrowserChecks.mjs": "6588cdad6ed5a0711a1699d7eee17458276497e4efdabdf7d9727cfcf274dfaf"
+  },
+  "previousLocks": {
+    "pnpm-lock.yaml": "a71feeda32c8cfee44d686dc21d5707239b8a2bb4e368c19d5c3d23c22bf6730",
+    "tauri/Cargo.lock": "06081bc7b2baedc6d9f0886c43075f2d8c8c77f661a854994ac92ec06a6d58f7"
+  }
 }

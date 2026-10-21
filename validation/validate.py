@@ -66,29 +66,14 @@ def run(name,args,seconds):
   assert reason is None,(name,reason)
   return code
 
-card='web/features/coding/claudedesktop/components/ClaudeDesktopProviderCard.tsx'
-original=subprocess.check_output(['git','show',BASE+':'+card],cwd=source)
-assert hashlib.sha256(original).hexdigest()==manifest['originalCardSha256']
-green=(source/card).read_bytes()
-entry=source/'scripts/.validation-desktop-routing.mjs'
-assert not entry.exists()
-entry.write_text("import { runBrowserFixture } from './lib/browser-fixture.mjs';\nimport { verifyClaudeDesktopRouting } from '../web/test/features/coding/shared/providerCardVariants/migratedProviderCardsBrowserChecks.mjs';\nimport { fileURLToPath } from 'node:url';\nawait runBrowserFixture({fixtureDirectory:fileURLToPath(new URL('../web/test/features/coding/shared/providerCardVariants/fixtures',import.meta.url)),fixtureFilename:'MigratedProviderCardsFixture.jsx',artifactPrefix:'desktop-routing-',verify:verifyClaudeDesktopRouting,fixtureAliases:[]});\n")
-red=evidence/'red';red.mkdir();green_dir=evidence/'green';green_dir.mkdir();controls=evidence/'controls';controls.mkdir()
+
+# Frontend reuse is explicit and byte-checked against the earlier run, not
+# represented as a browser execution in this Rust-only run.
+assert manifest['frontendEvidenceRun']==39561532802
+assert all(sha(source/p)==digest for p,digest in manifest['frontendFileSha256'].items())
+assert locks==manifest['previousLocks']
+(evidence/'frontend-reuse.json').write_text(json.dumps({'run':manifest['frontendEvidenceRun'],'files':manifest['frontendFileSha256'],'sameBytes':True,'browserExecutedHere':False},indent=2))
 try:
- assert run('install',['pnpm','install','--frozen-lockfile'],420)==0
- (source/card).write_bytes(original)
- assert run('browser-red',['node',str(entry),'--output',str(red)],300)==1
- reports=list(red.glob('desktop-routing-*/desktop-routing-cases.json'));assert len(reports)==1
- report=json.loads(reports[0].read_text());assert report['validRed'] is True,report
- (source/card).write_bytes(green)
- assert run('browser-green',['pnpm','run','test:migrated-provider-cards','--output',str(green_dir)],300)==0
- reports=list(green_dir.glob('migrated-provider-cards-*/desktop-routing-cases.json'));assert len(reports)==1
- report=json.loads(reports[0].read_text());assert report['summary']['attempted']==8 and report['summary']['passed']==8 and report['summary']['failed']==0 and report['fixtureErrors']==[] and report['browserExceptions']==[] and len(report['checks'])==28,report
- reports=list(green_dir.glob('migrated-provider-cards-*/scenarios.json'));assert len(reports)==1
- old_controls=json.loads(reports[0].read_text());assert len(old_controls['checks'])==86 and len(old_controls['completed'])==11 and old_controls['browserExceptions']==[]
- assert run('tsc',['pnpm','exec','tsc','--noEmit'],240)==0
- assert run('protocol-unit',['node','--import','./scripts/register-node-ts-extension-loader.mjs','--test','web/test/features/coding/shared/gateway/providerProtocol.test.ts'],90)==0
- log=(evidence/'protocol-unit.log').read_text();assert '# tests 6' in log and '# pass 6' in log and '# fail 0' in log
  assert run('compile',['cargo','+1.99.1','test','--locked','--manifest-path','tauri/Cargo.toml','--lib','--no-run','--message-format=json'],900)==0
  binaries=[];finished=False
  for line in (evidence/'compile.log').read_text().splitlines():
@@ -98,7 +83,7 @@ try:
   if result.get('reason')=='compiler-artifact' and result.get('profile',{}).get('test') and result.get('target',{}).get('name')=='ai_toolbox_lib' and result.get('executable'):binaries.append(result['executable'])
  assert finished and len(binaries)==1
  binary=Path(binaries[0]).resolve(strict=True);assert binary.is_relative_to((source/'tauri/target').resolve(strict=True)) and binary.is_file()
- tests=manifest['rustTests'];assert len(tests)==18 and len(set(tests))==18
+ tests=manifest['rustTests'];assert len(tests)==19 and len(set(tests))==19
  for full in tests:
   name=full.replace('::','_')
   assert run(name+'-list',[str(binary),'--exact',full,'--list'],15)==0
@@ -107,22 +92,12 @@ try:
   name=full.replace('::','_')
   assert run(name,[str(binary),'--exact',full,'--test-threads=1','--nocapture'],90)==0
   assert 'test result: ok. 1 passed;' in (evidence/(name+'.log')).read_text()
- entry.unlink()
+
  assert {p:sha(source/p) for p in locks}==locks
  assert {p:sha(source/p) for p in manifest['productFiles']}==identities['files']
  untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard'],cwd=source,text=True).splitlines()
  (evidence/'untracked.json').write_text(json.dumps(untracked));assert untracked==[]
  (evidence/'tested.diff').write_bytes(subprocess.check_output(['git','diff','--binary'],cwd=source))
- (evidence/'result.json').write_text(json.dumps({'browserRedValid':True,'browserGreen':8,'protocolUnit':6,'rustExact':18,'fullTsc':True,'locksUnchanged':True,'candidateFilesUnchanged':True,'untracked':untracked}))
+ (evidence/'result.json').write_text(json.dumps({'rustExact':19,'frontendEvidenceRun':39561532802,'frontendHashesUnchanged':True,'browserExecutedHere':False,'locksUnchanged':True,'candidateFilesUnchanged':True,'untracked':untracked}))
 finally:
- (source/card).write_bytes(green)
- if entry.exists():entry.unlink()
  (evidence/'untracked-finally.json').write_text(json.dumps(subprocess.check_output(['git','ls-files','--others','--exclude-standard'],cwd=source,text=True).splitlines()))
- for parent in [red,green_dir,controls]:
-  for folder in parent.iterdir():
-   if not folder.is_dir():continue
-   for item in folder.iterdir():
-    allowed=item.name in {'desktop-routing-cases.json','scenarios.json','results.json','failure.html','failure.png'} or (item.name.startswith('case-') and item.suffix in {'.html','.png'}) or (item.name.startswith('desktop-routing-') and item.suffix=='.png')
-    if not allowed:
-     if item.is_dir():shutil.rmtree(item)
-     else:item.unlink()

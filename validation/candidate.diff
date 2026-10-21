@@ -84,7 +84,7 @@
          // inferenceModels.
          let origin = gateway_origin_from_settings(db)?;
          let gateway_endpoint = format!("{origin}/claude-desktop");
-@@ -573,16 +605,21 @@
+@@ -573,16 +605,33 @@
      from_tray: bool,
      _emit_sync_request: bool,
  ) -> Result<(), String> {
@@ -92,27 +92,38 @@
 -        .await
 -}
 -
--pub async fn apply_config_internal_without_events<R: Runtime>(
 +    apply_config_internal_with_events(
 +        db, app, provider_id, from_tray, true, _emit_sync_request, ProfileApplyPurpose::Direct,
 +    ).await
 +}
 +
-+/// Only the gateway provider-switch orchestrator may use this pre-engage path.
-+/// Its existing restore/preparation/engage ordering and failure handling remain unchanged.
-+pub(crate) async fn prepare_gateway_provider_without_events<R: Runtime>(
++/// Event-free runtime recovery is still a direct projection, not permission
++/// to prepare a gateway profile. Its caller records failures as restore warnings.
+ pub async fn apply_config_internal_without_events<R: Runtime>(
      db: &SqliteDbState,
      app: &tauri::AppHandle<R>,
      provider_id: &str,
  ) -> Result<(), String> {
 -    apply_config_internal_with_events(db, app, provider_id, false, false, false).await
 +    apply_config_internal_with_events(
++        db, app, provider_id, false, false, false, ProfileApplyPurpose::Direct,
++    ).await
++}
++
++/// Only the gateway provider-switch orchestrator may use this pre-engage path.
++/// Its existing restore/preparation/engage ordering and failure handling remain unchanged.
++pub(crate) async fn prepare_gateway_provider_without_events<R: Runtime>(
++    db: &SqliteDbState,
++    app: &tauri::AppHandle<R>,
++    provider_id: &str,
++) -> Result<(), String> {
++    apply_config_internal_with_events(
 +        db, app, provider_id, false, false, false, ProfileApplyPurpose::GatewayPreparation,
 +    ).await
  }
  
  async fn apply_config_internal_with_events<R: Runtime>(
-@@ -592,9 +629,12 @@
+@@ -592,9 +641,12 @@
      from_tray: bool,
      emit_config_changed: bool,
      _emit_sync_request: bool,
@@ -126,7 +137,7 @@
  
      // Update provider is_applied status.
      let now = Local::now().to_rfc3339();
-@@ -916,4 +956,140 @@
+@@ -916,4 +968,140 @@
      fn official_restore_settings_handles_invalid_json() {
          assert!(!official_restore_settings("not json"));
      }
