@@ -88,6 +88,10 @@ import {
 } from '@/features/coding/shared/gateway/providerProfiles';
 import ClaudeDesktopProviderCard from '../components/ClaudeDesktopProviderCard';
 import ClaudeDesktopProviderFormModal from '../components/ClaudeDesktopProviderFormModal';
+import {
+  canPreserveImportedClaudeDesktopCredentials,
+  isClaudeDesktopOfficialRestoreProvider,
+} from '../utils/officialRestore';
 import ClaudeDesktopCommonConfigModal from '../components/ClaudeDesktopCommonConfigModal';
 import SectionSidebarLayout, {
   type SidebarSectionMarker,
@@ -130,20 +134,28 @@ function normalizeBaseUrl(baseUrl?: string): string {
   return trimmed.replace(/\/+$/, '') + '/v1';
 }
 
-function buildProviderSettingsConfig(values: ClaudeDesktopFormValues): string {
+function buildProviderSettingsConfig(
+  values: ClaudeDesktopFormValues,
+  restoreOfficial: boolean,
+  preserveImportedCredentials: boolean,
+): string {
   // Official mode: an empty env makes apply restore the official 1P profile.
-  if (values.category === 'official') {
+  if (restoreOfficial) {
     return '{"env":{}}';
   }
   // Claude Desktop 的模型路由以 meta.claudeDesktopModelRoutes 为单一事实源
   // （见 buildProviderMeta）：它驱动 3P profile 的 inferenceModels 菜单，网关
   // 运行时也从它构建上游模型映射。env 仅承载网关凭据。
   const env: Record<string, string> = {};
-  if (values.baseUrl?.trim()) {
-    env.ANTHROPIC_BASE_URL = values.baseUrl.trim();
+  // Unchanged imported credentials retain their exact bytes, including strings
+  // where Rust and JavaScript disagree about whitespace (for example BOM).
+  const baseUrl = preserveImportedCredentials ? values.baseUrl : values.baseUrl?.trim();
+  const apiKey = preserveImportedCredentials ? values.apiKey : values.apiKey?.trim();
+  if (baseUrl) {
+    env.ANTHROPIC_BASE_URL = baseUrl;
   }
-  if (values.apiKey?.trim()) {
-    env.ANTHROPIC_AUTH_TOKEN = values.apiKey.trim();
+  if (apiKey) {
+    env.ANTHROPIC_AUTH_TOKEN = apiKey;
   }
   return JSON.stringify({ env }, null, 2);
 }
@@ -233,14 +245,15 @@ function buildClaudeDesktopModelRoutes(
 
 function buildProviderMeta(
   values: ClaudeDesktopFormValues,
-  existingMeta?: ClaudeDesktopProvider['meta'],
+  existingMeta: ClaudeDesktopProvider['meta'] | undefined,
+  restoreOfficial: boolean,
 ): ClaudeDesktopProvider['meta'] {
   const meta = { ...(existingMeta || {}) };
   // Drop the legacy per-provider gateway-mode field; model routing now flows
   // through claudeDesktopModelRoutes built from the form role mapping below.
   delete meta.claudeDesktopMode;
 
-  if (values.category === 'official') {
+  if (restoreOfficial) {
     delete meta.claudeDesktopModelRoutes;
     delete meta.apiFormat;
     delete meta.gatewayProfile;
@@ -743,13 +756,24 @@ const ClaudeDesktopPage: React.FC = () => {
         // never report it and the re-engage helper would reject the replay.
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
-          const category = values.category || editingProvider?.category || 'custom';
+          // Editing cannot change the channel. Keep its raw imported category and
+          // derive restore behavior from the same predicate the form uses.
+          const isEdit = Boolean(editingProvider && !isCopyMode);
+          const category = isEdit
+            ? editingProvider!.category
+            : values.category || editingProvider?.category || 'custom';
+          const restoreOfficial = isEdit
+            ? isClaudeDesktopOfficialRestoreProvider(editingProvider)
+            : values.restoreOfficial;
+          const preserveImportedCredentials = isEdit && canPreserveImportedClaudeDesktopCredentials(
+            editingProvider, { baseUrl: values.baseUrl, apiKey: values.apiKey }, false,
+          );
           if (isCopyMode || !editingProvider) {
             const providerInput: ClaudeDesktopProviderInput = {
               name: values.name,
               category,
-              settingsConfig: buildProviderSettingsConfig(values),
-              meta: buildProviderMeta(values, editingProvider?.meta),
+              settingsConfig: buildProviderSettingsConfig(values, restoreOfficial, preserveImportedCredentials),
+              meta: buildProviderMeta(values, editingProvider?.meta, restoreOfficial),
               notes: values.notes || undefined,
             };
             savedProvider = await createClaudeDesktopProvider(providerInput);
@@ -758,8 +782,8 @@ const ClaudeDesktopPage: React.FC = () => {
               ...editingProvider,
               name: values.name,
               category,
-              settingsConfig: buildProviderSettingsConfig(values),
-              meta: buildProviderMeta(values, editingProvider.meta),
+              settingsConfig: buildProviderSettingsConfig(values, restoreOfficial, preserveImportedCredentials),
+              meta: buildProviderMeta(values, editingProvider.meta, restoreOfficial),
               notes: values.notes,
             };
             savedProvider = await updateClaudeDesktopProvider(payload);

@@ -139,7 +139,10 @@ export interface ClaudeDesktopStatus {
 /** Form values for creating / editing a Claude Desktop provider. */
 export interface ClaudeDesktopFormValues {
   name: string;
+  /** Explicit channel choice for new/copy flows; editing preserves the stored category. */
   category?: 'official' | 'custom';
+  /** 1P restore intent is independent of the raw provider category. */
+  restoreOfficial: boolean;
   providerEndpointKey?: string;
   providerProfileId?: string;
   providerEndpointId?: string;

@@ -46,6 +46,10 @@ import {
   parseClaudeSettingsConfig,
   type ClaudeModelRole,
 } from '../../claudecode/utils/claudeModelConfig';
+import {
+  canPreserveImportedClaudeDesktopCredentials,
+  isClaudeDesktopOfficialRestoreProvider,
+} from '../utils/officialRestore';
 import styles from './ClaudeDesktopProviderFormModal.module.less';
 
 interface ClaudeDesktopProviderFormModalProps {
@@ -125,7 +129,9 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('native');
-  const [providerCategory, setProviderCategory] = React.useState<'official' | 'custom'>('custom');
+  const [providerMode, setProviderMode] = React.useState<'official' | 'custom'>('custom');
+  // Raw stored category changes only when the user selects a different channel.
+  const [categoryOverride, setCategoryOverride] = React.useState<'official' | 'custom'>();
   const [customHeaders, setCustomHeaders] = React.useState<CustomHeadersState>(() =>
     getCustomHeadersFromMeta(provider?.meta),
   );
@@ -144,7 +150,21 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
   const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
 
   const isEdit = !!provider && !isCopy;
-  const isOfficialMode = providerCategory === 'official';
+  const isOfficialMode = providerMode === 'official';
+  const credentialRules = React.useMemo(() => [
+    ({ getFieldValue }: Pick<typeof form, 'getFieldValue'>) => {
+      const preserveImportedCredentials = canPreserveImportedClaudeDesktopCredentials(provider, {
+        baseUrl: getFieldValue('baseUrl'), apiKey: getFieldValue('apiKey'),
+      }, isCopy);
+      return {
+        required: !preserveImportedCredentials,
+        whitespace: !preserveImportedCredentials,
+        type: 'string' as const,
+        pattern: preserveImportedCredentials ? undefined : /[^\s\p{White_Space}]/u,
+        message: t('common.error'),
+      };
+    },
+  ], [provider, isCopy, t]);
 
   const apiFormatOptions = React.useMemo(() => [
     { value: 'anthropic', label: t('claudecode.provider.apiFormatAnthropic') },
@@ -155,12 +175,9 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
 
   const providerEndpointOptions = React.useMemo(() => [
     { value: CUSTOM_PROVIDER_ENDPOINT_KEY, label: t('claudecode.provider.providerProfileCustom') },
-    // "官方渠道" is only selectable when creating a new provider, or when editing
-    // an existing official (seed) entry. A non-official provider's channel is
-    // fixed at creation time and cannot be switched to official afterwards
-    // (backend apply only treats the seeded claude-desktop-official id, or a
-    // category=official row with empty credentials, as an official restore).
-    ...(!isEdit || provider?.category === 'official'
+    // Existing channels remain fixed. Imported rows labeled official but
+    // carrying credentials use their actual custom/preset endpoint, not 1P restore.
+    ...(!isEdit || isClaudeDesktopOfficialRestoreProvider(provider)
       ? [{ value: OFFICIAL_PROVIDER_ENDPOINT_KEY, label: t('claudecode.provider.providerProfileOfficial') }]
       : []),
     ...getGatewayProviderProfilesForTool('claude_desktop').flatMap((profile) => {
@@ -170,7 +187,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         label: `${profile.label} / ${endpoint.label}`,
       }));
     }),
-  ], [gatewayProviderProfilesVersion, isEdit, provider?.category, t]);
+  ], [gatewayProviderProfilesVersion, isEdit, provider, t]);
 
   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
@@ -247,6 +264,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       return;
     }
     setFetchedModels([]);
+    setCategoryOverride(undefined);
     if (provider) {
       const settingsConfig = parseClaudeSettingsConfig(provider.settingsConfig);
       const baseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL || '';
@@ -273,8 +291,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         const route = routes?.[CLAUDE_DESKTOP_ROLE_ROUTE_IDS[role]];
         return route?.tierAlias || '';
       };
-      const nextProviderCategory = provider.category === 'official' ? 'official' : 'custom';
-      const providerEndpointSelection = nextProviderCategory === 'official'
+      const nextProviderMode = isClaudeDesktopOfficialRestoreProvider(provider) ? 'official' : 'custom';
+      const providerEndpointSelection = nextProviderMode === 'official'
         ? { providerProfileId: CUSTOM_PROVIDER_PROFILE_ID, providerEndpointId: undefined }
         : inferGatewayProviderEndpointSelection({
             tool: 'claude_desktop',
@@ -289,17 +307,22 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
             'claude_desktop',
             providerEndpointSelection.providerEndpointId,
           );
-      const selectedBaseUrl = baseUrl || providerEndpoint?.baseUrl || '';
+      // Editing a legitimate imported record must not invent a missing URL
+      // from its preset; copies/new/custom records keep the existing fallback.
+      const preserveImportedCredentials = canPreserveImportedClaudeDesktopCredentials(
+        provider, { baseUrl, apiKey }, isCopy,
+      );
+      const selectedBaseUrl = preserveImportedCredentials ? baseUrl : baseUrl || providerEndpoint?.baseUrl || '';
       const selectedApiFormat = providerEndpoint
         ? normalizeApiFormat(providerEndpoint.apiFormat)
         : normalizeApiFormat(provider.meta?.apiFormat);
-      setProviderCategory(nextProviderCategory);
+      setProviderMode(nextProviderMode);
       setCustomHeaders(getCustomHeadersFromMeta(provider.meta));
       setModelRewrites(getModelRewritesFromMeta(provider.meta));
 
       form.setFieldsValue({
         name: provider.name,
-        providerEndpointKey: nextProviderCategory === 'official'
+        providerEndpointKey: nextProviderMode === 'official'
           ? OFFICIAL_PROVIDER_ENDPOINT_KEY
           : toGatewayProviderEndpointKey(
               providerEndpointSelection.providerProfileId,
@@ -327,7 +350,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       });
     } else {
       form.resetFields();
-      setProviderCategory('custom');
+      setProviderMode('custom');
       setCustomHeaders(getCustomHeadersFromMeta(undefined));
       setModelRewrites(getModelRewritesFromMeta(undefined));
       form.setFieldsValue({
@@ -337,11 +360,12 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         apiFormat: DEFAULT_API_FORMAT,
       });
     }
-  }, [open, provider, form]);
+  }, [open, provider, form, isCopy]);
 
   const handleProviderEndpointChange = (selectionKey: string) => {
     if (selectionKey === OFFICIAL_PROVIDER_ENDPOINT_KEY) {
-      setProviderCategory('official');
+      setProviderMode('official');
+      setCategoryOverride('official');
       setFetchedModels([]);
       setCustomHeaders(getCustomHeadersFromMeta(undefined));
       setModelRewrites(getModelRewritesFromMeta(undefined));
@@ -369,7 +393,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       return;
     }
 
-    setProviderCategory('custom');
+    setProviderMode('custom');
+    setCategoryOverride('custom');
     const { providerProfileId, providerEndpointId } = parseGatewayProviderEndpointKey(selectionKey);
     if (providerProfileId === CUSTOM_PROVIDER_PROFILE_ID) {
       form.setFieldsValue({
@@ -527,15 +552,19 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
 
     setLoading(true);
     try {
+      const preserveImportedCredentials = canPreserveImportedClaudeDesktopCredentials(provider, {
+        baseUrl: values.baseUrl, apiKey: values.apiKey,
+      }, isCopy);
       await onSubmit({
         name: values.name,
-        category: providerCategory,
+        category: categoryOverride,
+        restoreOfficial: isOfficialMode,
         providerEndpointKey: values.providerEndpointKey,
         providerProfileId: values.providerProfileId,
         providerEndpointId: values.providerEndpointId,
-        apiFormat: providerCategory === 'official' ? undefined : normalizeApiFormat(values.apiFormat),
-        baseUrl: values.baseUrl?.trim() || undefined,
-        apiKey: values.apiKey?.trim() || undefined,
+        apiFormat: providerMode === 'official' ? undefined : normalizeApiFormat(values.apiFormat),
+        baseUrl: preserveImportedCredentials ? values.baseUrl : values.baseUrl?.trim() || undefined,
+        apiKey: preserveImportedCredentials ? values.apiKey : values.apiKey?.trim() || undefined,
         model: values.model,
         haikuModel: values.haikuModel,
         haikuModelName: values.haikuModelName,
@@ -550,10 +579,10 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         fableTierAlias: values.fableTierAlias,
         haikuTierAlias: values.haikuTierAlias,
         notes: values.notes,
-        customHeaders: providerCategory === 'official'
+        customHeaders: providerMode === 'official'
           ? { enabled: false, headers: [] }
           : customHeaders,
-        modelRewrites: providerCategory === 'official'
+        modelRewrites: providerMode === 'official'
           ? { enabled: false, rewrites: [] }
           : modelRewrites,
       });
@@ -814,7 +843,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
             <Form.Item
               name="baseUrl"
               label="Base URL"
-              rules={[{ required: true, message: t('common.error') }]}
+              dependencies={['apiKey']}
+              rules={credentialRules}
             >
               <Input placeholder="https://api.anthropic.com" />
             </Form.Item>
@@ -822,7 +852,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
             <Form.Item
               name="apiKey"
               label="API Key"
-              rules={[{ required: true, message: t('common.error') }]}
+              dependencies={['baseUrl']}
+              rules={credentialRules}
             >
               <Input
                 type={showApiKey ? 'text' : 'password'}
