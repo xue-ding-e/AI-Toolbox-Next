@@ -299,6 +299,9 @@ const SkillsPage: React.FC = () => {
   const [groupModePreference, setGroupModePreference] =
     React.useState<SkillGroupModePreference | null>(null);
   const groupMode = resolveSkillGroupingMode(groupModePreference, groups.length);
+  const groupModeSaveGeneration = React.useRef(0);
+  const groupModeSaveMessageKey = React.useId();
+
   const [groupActiveKeys, setGroupActiveKeys] = React.useState<string[]>([]);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = React.useState(false);
@@ -507,15 +510,26 @@ const SkillsPage: React.FC = () => {
       });
     return () => {
       cancelled = true;
+      groupModeSaveGeneration.current += 1;
+      message.destroy(groupModeSaveMessageKey);
     };
-  }, []);
+  }, [groupModeSaveMessageKey]);
 
   const handleGroupModeChange = React.useCallback((nextMode: SkillGroupingMode) => {
+    const generation = ++groupModeSaveGeneration.current;
+    message.destroy(groupModeSaveMessageKey);
     setGroupModePreference(nextMode);
     api.setSkillGroupMode(nextMode).catch((error) => {
       console.error('Failed to save skill group mode:', error);
+      // A newer choice or an unmounted page owns any later feedback.
+      if (groupModeSaveGeneration.current === generation) {
+        message.error({
+          key: groupModeSaveMessageKey,
+          content: t('skills.groupControls.saveFailed'),
+        });
+      }
     });
-  }, []);
+  }, [groupModeSaveMessageKey, t]);
 
   const isSearchActive = !!searchText.trim();
   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;

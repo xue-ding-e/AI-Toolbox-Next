@@ -3830,6 +3830,7 @@
     "groupBySource": "Source",
     "groupControls": {
       "groupingLabel": "Grouping mode",
+      "saveFailed": "The grouping choice was not saved. It applies only to the current view and may reset when you return.",
       "selectionModeLabel": "Batch management",
       "groupToolsLabel": "Tool display granularity",
       "browseMode": "Browse",
