@@ -16,7 +16,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -34,9 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = '${{ github.sha }}'
-          echo 'aa896b0e053d5897138315e77171da82ef303e51ed0f6a2ad17ebcb7741cb791  validation/candidate.diff' | sha256sum -c -
-          echo '31462568408146ad703d4cc7d04349722473ae8fce5e42d5a081a8e622a64791  validation/manifest.json' | sha256sum -c -
-          echo '2d181b9cfd009c884476911f0d3475b20e5c3d7337593ee5babaa285ec06a7e5  validation/validate.py' | sha256sum -c -
+          echo '735f0c15fbc3da123c89cd7c14e425fb888ec08ffe701cd76ac58debb91e54c9  validation/candidate.diff' | sha256sum -c -
+          echo '052331170268ff0cd715254e85c55ff2b5c519459c629ab4b793d95e1a727ae9  validation/manifest.json' | sha256sum -c -
+          echo '67dd1a10029dd48bfac901e6d1a949ca4a76a3fcf03eeaeb4c66fd9392be9fee  validation/validate.py' | sha256sum -c -
       - name: Record existing official browser and fixed JS tools
         run: |
           node --version
@@ -59,4 +59,7 @@ jobs:
             ${{ runner.temp }}/grok-fetch-evidence/*/grok-fetched-models-*/failure.png
             ${{ runner.temp }}/grok-fetch-evidence/*/grok-fetched-models-*/case-*-failure.html
             ${{ runner.temp }}/grok-fetch-evidence/*/grok-fetched-models-*/case-*-failure.png
+            ${{ runner.temp }}/grok-fetch-evidence/*/grok-fetched-models-*/*.js
+            ${{ runner.temp }}/grok-fetch-evidence/*/grok-fetched-models-*/*.js.map
+            ${{ runner.temp }}/grok-fetch-evidence/*.sha256
           retention-days: 7
