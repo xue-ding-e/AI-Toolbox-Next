@@ -1,0 +1,99 @@
+{
+  "base": "861aa4f05c83d0927128292276bd59bfeb54a2da",
+  "repository": "xue-ding-e/AI-Toolbox-Next",
+  "ref": "refs/heads/validation/reasoning-item-ids",
+  "patchSha256": "f41310dccb56f56bbea133d54f8bcba70cb4f1ba2695cbcb30069b0d55379d58",
+  "validatorSha256": "4e8ce4a4750a3a4c3f940f3d7e2ff684edc2d08a2518d92a7e15caa67d926a3e",
+  "toolchain": "1.99.1",
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/manifest.json",
+    "validation/validate.py"
+  ],
+  "productFiles": [
+    "tauri/src/coding/proxy_gateway/transformer/kernel_tests.rs",
+    "tauri/src/coding/proxy_gateway/transformer/reasoning_item_id_tests.rs",
+    "tauri/src/coding/proxy_gateway/transformer/stream.rs"
+  ],
+  "identities": {
+    "tauri/src/coding/proxy_gateway/transformer/kernel_tests.rs": {
+      "baseBlob": "2344976074c46ead727b902726b1e879bd932ba9",
+      "baseSha256": "d312454bcbb77f71481a0705f433f4dd75c5afce3911a54e621ce24e0247b9d8",
+      "sha256": "a533485a215113d55e74c29d71e8c09a22ef778e443025f0f590c4b2d999a07d"
+    },
+    "tauri/src/coding/proxy_gateway/transformer/reasoning_item_id_tests.rs": {
+      "baseBlob": null,
+      "baseSha256": null,
+      "sha256": "c38352acdd80f7b20a696dc03b9451e88c241b0f4edaf9c5c4b5541528ef263e"
+    },
+    "tauri/src/coding/proxy_gateway/transformer/stream.rs": {
+      "baseBlob": "7698811c784323fbc349074f25b93492b4570799",
+      "baseSha256": "91fe4a79279bbfc97899c3eebc201de2412609779ee4d26e1822c7d9f9ce2aea",
+      "sha256": "2adae2e3029ac0c5fabe5d3a7e970ce749527da28bd945e2e31c26d2c9f43066"
+    }
+  },
+  "locks": {
+    "pnpm-lock.yaml": "a71feeda32c8cfee44d686dc21d5707239b8a2bb4e368c19d5c3d23c22bf6730",
+    "tauri/Cargo.lock": "06081bc7b2baedc6d9f0886c43075f2d8c8c77f661a854994ac92ec06a6d58f7"
+  },
+  "rustTests": [
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::chat_to_responses_reasoning_id_uses_rs_prefix",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::anthropic_to_responses_reasoning_id_uses_rs_prefix",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::gemini_to_responses_reasoning_id_uses_rs_prefix",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::chat_to_responses_reasoning_ids_are_unique_with_reused_upstream_id",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::anthropic_to_responses_reasoning_ids_are_unique_with_reused_upstream_id",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::gemini_to_responses_reasoning_ids_are_unique_with_reused_upstream_id",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::converted_reasoning_identity_summary_and_tool_call_survive_the_full_lifecycle",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::responses_identity_preserves_native_reasoning_id_and_ciphertext_bytes"
+  ],
+  "redTests": {
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::chat_to_responses_reasoning_id_uses_rs_prefix": {
+      "kind": "prefix",
+      "panicLine": 70,
+      "message": "OpenAiChat generated an invalid Responses reasoning id: reasoning_0"
+    },
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::anthropic_to_responses_reasoning_id_uses_rs_prefix": {
+      "kind": "prefix",
+      "panicLine": 70,
+      "message": "AnthropicMessages generated an invalid Responses reasoning id: reasoning_0"
+    },
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::gemini_to_responses_reasoning_id_uses_rs_prefix": {
+      "kind": "prefix",
+      "panicLine": 70,
+      "message": "GeminiNative generated an invalid Responses reasoning id: reasoning_0"
+    },
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::chat_to_responses_reasoning_ids_are_unique_with_reused_upstream_id": {
+      "kind": "collision",
+      "panicLine": 81,
+      "message": "OpenAiChat reused a reasoning item id across independent streams"
+    },
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::anthropic_to_responses_reasoning_ids_are_unique_with_reused_upstream_id": {
+      "kind": "collision",
+      "panicLine": 81,
+      "message": "AnthropicMessages reused a reasoning item id across independent streams"
+    },
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::gemini_to_responses_reasoning_ids_are_unique_with_reused_upstream_id": {
+      "kind": "collision",
+      "panicLine": 81,
+      "message": "GeminiNative reused a reasoning item id across independent streams"
+    }
+  },
+  "controlTests": [
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::converted_reasoning_identity_summary_and_tool_call_survive_the_full_lifecycle",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::responses_identity_preserves_native_reasoning_id_and_ciphertext_bytes"
+  ],
+  "budgetsSeconds": {
+    "baselineCompile": 900,
+    "fixedCompile": 480,
+    "exactCase": 45,
+    "transformerModule": 300,
+    "overallFromWorkflowStart": 1860,
+    "finallyReserve": 120
+  },
+  "assertionContract": "Exact real libtest binary; expected baseline product RED requires exit 101, one named failure, exact panic file/line/message and collision operands; no setup failures count as RED.",
+  "scope": "Synthetic protocol fixtures and real existing StreamKernel only. No application launch, external API calls, listeners, personal configuration or credential reads. Official build dependency downloads are separate prerequisite commands.",
+  "generatedDirectories": [
+    "tauri/gen/schemas"
+  ]
+}
