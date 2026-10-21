@@ -1,4 +1,4 @@
-name: Compaction regression
+name: Isolated SQLite restore rollback validation
 on:
   workflow_dispatch:
 permissions:
@@ -7,39 +7,112 @@ concurrency:
   group: ai-toolbox-maintenance-validation
   cancel-in-progress: false
 jobs:
-  websocket-regression:
-    if: github.ref == 'refs/heads/maintenance/compaction-refusal-memory'
+  rollback:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/restore-rollback'
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 40
     env:
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
+      CARGO_TARGET_DIR: ${{ github.workspace }}/source/tauri/target
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.sha }}
+          path: validation
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record toolchain and disk
-        run: |
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify all five regressions are selected
-        shell: bash
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 35c2680d920e1c32307749767bbff5dfba993e3f
+          path: source
+          persist-credentials: false
+      - name: Verify exact validation input scope
+        working-directory: validation
+        env:
+          VALIDATION_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib websocket_compaction_refusal_memory -- --list > /tmp/compaction-tests.txt
-          cat /tmp/compaction-tests.txt
-          for name in ignores_failed_event ignores_incomplete_event ignores_failed_snapshot ignores_incomplete_snapshot keeps_ordinary_refusal; do
-            grep -Fx "coding::proxy_gateway::runtime::websocket::tests::websocket_compaction_refusal_memory_${name}: test" /tmp/compaction-tests.txt
+          test "$(git rev-parse HEAD)" = "$VALIDATION_SHA"
+          git fetch --no-tags origin 35c2680d920e1c32307749767bbff5dfba993e3f
+          printf '%s\n' '.github/workflows/compaction-regression.yml' 'scripts/restore-rollback/bounded_process.py' 'scripts/restore-rollback/format_candidate.py' 'scripts/restore-rollback/rollback-test.diff' | sort > /tmp/expected-validation-files
+          git diff --name-only 35c2680d920e1c32307749767bbff5dfba993e3f HEAD | sort > /tmp/actual-validation-files
+          diff /tmp/expected-validation-files /tmp/actual-validation-files
+          echo 'cecc722cf7c4a67810e3080b4dac32c84d82dc1953363ef90a45d7eb3e5fbacb  scripts/restore-rollback/rollback-test.diff' | sha256sum -c -
+          echo '9fea88d10176ae8b08c9d0abfdbf121503a4d886603c994d3ae080bcc7ea842b  scripts/restore-rollback/bounded_process.py' | sha256sum -c -
+          echo 'a40521f848444512e747a05e8bbed52eefc265cf4366c3e5207fc9d6bfa30f63  scripts/restore-rollback/format_candidate.py' | sha256sum -c -
+          mkdir -p /tmp/ai-rollback-evidence
+          git rev-parse HEAD > /tmp/ai-rollback-evidence/validation-sha.txt
+          git ls-tree -r HEAD > /tmp/ai-rollback-evidence/validation-tree.txt
+      - name: Official prerequisites and fixed Rust
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt
+      - name: Apply only reviewed test patch
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ai-rollback-evidence
+          test "$(git rev-parse HEAD)" = 35c2680d920e1c32307749767bbff5dfba993e3f
+          git rev-parse HEAD > /tmp/ai-rollback-evidence/base.txt
+          sha256sum tauri/Cargo.lock > /tmp/ai-rollback-evidence/lock-before.txt
+          git apply --check ../validation/scripts/restore-rollback/rollback-test.diff
+          git apply ../validation/scripts/restore-rollback/rollback-test.diff
+          test "$(git diff --name-only)" = tauri/src/settings/backup/utils.rs
+          python3 ../validation/scripts/restore-rollback/format_candidate.py
+          git diff --check
+          git diff > /tmp/ai-rollback-evidence/tested.diff
+          cp tauri/src/settings/backup/utils.rs /tmp/ai-rollback-evidence/utils.rs
+          sha256sum tauri/src/settings/backup/utils.rs > /tmp/ai-rollback-evidence/source.sha256
+      - name: Compile real library test binary (15 minute watchdog)
+        timeout-minutes: 17
+        working-directory: source
+        run: |
+          set -euo pipefail
+          python3 ../validation/scripts/restore-rollback/bounded_process.py 900 /tmp/ai-rollback-evidence/compile.jsonl cargo +1.99.1 test --locked --manifest-path tauri/Cargo.toml --lib --no-run --message-format=json
+          python3 - <<'PY'
+          import json,pathlib
+          binaries=[]
+          for line in pathlib.Path('/tmp/ai-rollback-evidence/compile.jsonl').read_text().splitlines():
+              try: entry=json.loads(line)
+              except json.JSONDecodeError: continue
+              if entry.get('reason')=='compiler-artifact' and entry.get('profile',{}).get('test') and entry.get('target',{}).get('name')=='ai_toolbox_lib' and entry.get('executable'):
+                  binaries.append(entry['executable'])
+          assert len(binaries)==1,binaries
+          binary=pathlib.Path(binaries[0]).resolve(strict=True)
+          target=pathlib.Path('tauri/target').resolve(strict=True)
+          assert binary.is_relative_to(target) and binary.is_file(),binary
+          pathlib.Path('/tmp/ai-rollback-evidence/test-binary.txt').write_text(str(binary))
+          PY
+      - name: Exact inventory and serial positive and rollback controls
+        timeout-minutes: 5
+        working-directory: source
+        run: |
+          set -euo pipefail
+          binary=$(cat /tmp/ai-rollback-evidence/test-binary.txt)
+          runner=../validation/scripts/restore-rollback/bounded_process.py
+          for name in restore_old_schema_snapshot_migrates_missing_tables restore_migration_failure_rolls_back_synthetic_database; do
+            full="settings::backup::utils::tests::$name"
+            python3 "$runner" 15 "/tmp/ai-rollback-evidence/$name.list" "$binary" --exact "$full" --list
+            grep -Fx "$full: test" "/tmp/ai-rollback-evidence/$name.list"
+            grep -Fx '1 test, 0 benchmarks' "/tmp/ai-rollback-evidence/$name.list"
           done
-          test "$(grep -c '^coding::proxy_gateway::runtime::websocket::tests::websocket_compaction_refusal_memory_.*: test$' /tmp/compaction-tests.txt)" -eq 5
-      - name: Real WebSocket refusal-memory regression
-        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib websocket_compaction_refusal_memory -- --nocapture
+          for name in restore_old_schema_snapshot_migrates_missing_tables restore_migration_failure_rolls_back_synthetic_database; do
+            fixture_tmp=$(mktemp -d /tmp/ai-rollback-case-XXXXXXXX)
+            TMPDIR="$fixture_tmp" TMP="$fixture_tmp" TEMP="$fixture_tmp" python3 "$runner" 90 "/tmp/ai-rollback-evidence/$name.log" "$binary" --exact "settings::backup::utils::tests::$name" --test-threads=1 --nocapture
+            grep -F 'test result: ok. 1 passed;' "/tmp/ai-rollback-evidence/$name.log"
+            test -z "$(find "$fixture_tmp" -mindepth 1 -print -quit)"
+            rmdir "$fixture_tmp"
+          done
+          sha256sum tauri/Cargo.lock > /tmp/ai-rollback-evidence/lock-after.txt
+          diff /tmp/ai-rollback-evidence/lock-{before,after}.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: restore-rollback-evidence
+          path: /tmp/ai-rollback-evidence/
+          retention-days: 7

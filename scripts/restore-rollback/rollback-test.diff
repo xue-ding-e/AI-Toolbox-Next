@@ -1,0 +1,166 @@
+--- a/tauri/src/settings/backup/utils.rs
++++ b/tauri/src/settings/backup/utils.rs
+@@ -5800,6 +5800,163 @@
+     }
+ 
+     #[test]
++    fn restore_migration_failure_rolls_back_synthetic_database() -> Result<(), String> {
++        use crate::db::migrations::{self, TARGET_SCHEMA_VERSION};
++        use rusqlite::Connection;
++        use sha2::{Digest, Sha256};
++        use std::fs::File;
++        use std::io::Read;
++        use std::path::PathBuf;
++
++        const CHILD_ROOT: &str = "AI_TOOLBOX_RESTORE_ROLLBACK_TEST_ROOT";
++        const CHILD_TOKEN: &str = "AI_TOOLBOX_RESTORE_ROLLBACK_TEST_TOKEN";
++        let child = std::env::args().any(|arg| arg == "--exact")
++            && std::env::var(CHILD_TOKEN).is_ok();
++        // A normal suite invocation never trusts an inherited root variable.
++        if !child {
++            let root = tempfile::Builder::new().prefix("ai-restore-rollback-")
++                .tempdir().map_err(|e| e.to_string())?;
++            let root_path = std::fs::canonicalize(root.path()).map_err(|e| e.to_string())?;
++            let scratch = root_path.join("tmp");
++            std::fs::create_dir(&scratch).map_err(|e| e.to_string())?;
++            let token = uuid::Uuid::new_v4().to_string();
++            std::fs::write(root_path.join("owned-marker"), &token).map_err(|e| e.to_string())?;
++            let stdout_path = root_path.join("stdout.log");
++            let stderr_path = root_path.join("stderr.log");
++            let thread = std::thread::current();
++            let test_name = thread.name().ok_or("missing test name")?;
++            let mut process = std::process::Command::new(
++                std::env::current_exe().map_err(|e| e.to_string())?,
++            )
++            .args(["--exact", test_name, "--test-threads=1", "--nocapture"])
++            .env(CHILD_ROOT, &root_path).env(CHILD_TOKEN, &token)
++            .env("TMPDIR", &scratch).env("TMP", &scratch).env("TEMP", &scratch)
++            .stdout(File::create(&stdout_path).map_err(|e| e.to_string())?)
++            .stderr(File::create(&stderr_path).map_err(|e| e.to_string())?)
++            .spawn().map_err(|e| e.to_string())?;
++            let stop_child = |process: &mut std::process::Child| -> (bool, String) {
++                let killed = process.kill();
++                let stop_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
++                loop {
++                    match process.try_wait() {
++                        Ok(Some(status)) => return (true, format!("kill={killed:?}; exited={status}")),
++                        Ok(None) if std::time::Instant::now() < stop_deadline =>
++                            std::thread::sleep(std::time::Duration::from_millis(50)),
++                        result => return (false, format!("kill={killed:?}; exit unconfirmed: {result:?}")),
++                    }
++                }
++            };
++            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
++            let status = loop {
++                let oversized = [&stdout_path, &stderr_path].iter().any(|path|
++                    std::fs::metadata(path).map(|m| m.len() > 16_384).unwrap_or(true));
++                if oversized {
++                    let (exited, detail) = stop_child(&mut process);
++                    if !exited { let _retained = root.keep(); }
++                    return Err(format!("isolated rollback test log exceeded 16 KiB; {detail}"));
++                }
++                match process.try_wait() {
++                    Ok(Some(status)) => break status,
++                    Ok(None) if std::time::Instant::now() < deadline =>
++                        std::thread::sleep(std::time::Duration::from_millis(50)),
++                    result => {
++                        let (exited, detail) = stop_child(&mut process);
++                        // Do not remove files beneath a child whose exit is unconfirmed.
++                        // The outer CI hard timeout remains the final process-tree safeguard.
++                        if !exited { let _retained = root.keep(); }
++                        return Err(format!("isolated rollback test exceeded 60s or wait failed: {result:?}; {detail}"));
++                    }
++                }
++            };
++            let read_log = |path: &Path| -> Result<String, String> {
++                let mut result = String::new();
++                File::open(path).map_err(|e| e.to_string())?.take(16_385)
++                    .read_to_string(&mut result).map_err(|e| e.to_string())?;
++                if result.len() > 16_384 { return Err("test log exceeds 16 KiB".into()); }
++                Ok(result)
++            };
++            let stdout = read_log(&stdout_path)?;
++            let stderr = read_log(&stderr_path)?;
++            assert!(status.success(), "isolated rollback test failed: {stdout} {stderr}");
++            assert!(stdout.contains("1 passed"), "child must execute the exact test, not zero tests");
++            return Ok(());
++        }
++        let raw_root = PathBuf::from(std::env::var_os(CHILD_ROOT).ok_or("missing owned child root")?);
++        assert!(!std::fs::symlink_metadata(&raw_root).map_err(|e| e.to_string())?.file_type().is_symlink());
++        let root = std::fs::canonicalize(&raw_root).map_err(|e| e.to_string())?;
++        assert_eq!(root, raw_root, "owned root must be canonical");
++        assert!(root.file_name().and_then(|s| s.to_str()).unwrap_or("").starts_with("ai-restore-rollback-"));
++        let marker = root.join("owned-marker");
++        assert!(std::fs::symlink_metadata(&marker).map_err(|e| e.to_string())?.file_type().is_file());
++        assert_eq!(std::fs::metadata(&marker).map_err(|e| e.to_string())?.len(), 36);
++        for entry in std::fs::read_dir(&root).map_err(|e| e.to_string())? {
++            let name = entry.map_err(|e| e.to_string())?.file_name();
++            assert!(["tmp", "owned-marker", "stdout.log", "stderr.log"].iter().any(|allowed| name == *allowed),
++                "owned root must contain only fresh harness entries");
++        }
++        let token = std::env::var(CHILD_TOKEN).map_err(|e| e.to_string())?;
++        assert!(uuid::Uuid::parse_str(&token).is_ok());
++        assert_eq!(std::fs::read(&marker).map_err(|e| e.to_string())?, token.as_bytes());
++        std::fs::remove_file(&marker).map_err(|e| e.to_string())?; // consume once
++        let raw_scratch = std::env::temp_dir();
++        assert!(!std::fs::symlink_metadata(&raw_scratch).map_err(|e| e.to_string())?.file_type().is_symlink());
++        let scratch = std::fs::canonicalize(raw_scratch).map_err(|e| e.to_string())?;
++        assert_eq!(scratch, root.join("tmp"));
++        assert_eq!(std::fs::read_dir(&scratch).map_err(|e| e.to_string())?.count(), 0);
++        for name in ["target.db", "future-snapshot.db"] {
++            assert!(matches!(std::fs::symlink_metadata(root.join(name)), Err(e) if e.kind()==std::io::ErrorKind::NotFound),
++                "fixture database path must not exist, including dangling symlinks");
++        }
++
++        let target = crate::db::SqliteDbState::open(root.join("target.db"))?;
++        target.with_conn(|conn| {
++            conn.execute_batch("CREATE TABLE rollback_fixture (marker TEXT NOT NULL); INSERT INTO rollback_fixture VALUES ('original');")
++                .map_err(|e| e.to_string())
++        })?;
++        let schema_snapshot = |conn: &Connection| -> Result<Vec<(String, String, String, Option<String>)>, String> {
++            conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name, tbl_name")
++                .map_err(|e| e.to_string())?
++                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
++                .map_err(|e| e.to_string())?.collect::<Result<_, _>>().map_err(|e| e.to_string())
++        };
++        let original_schema = target.with_conn(schema_snapshot)?;
++        let snapshot_path = root.join("future-snapshot.db");
++        {
++            let mut snapshot = Connection::open(&snapshot_path).map_err(|e| e.to_string())?;
++            crate::db::sqlite_state::initialize_connection(&mut snapshot)?;
++            snapshot.execute_batch("CREATE TABLE rollback_fixture (marker TEXT NOT NULL); INSERT INTO rollback_fixture VALUES ('injected');")
++                .map_err(|e| e.to_string())?;
++            migrations::set_user_version(&snapshot, TARGET_SCHEMA_VERSION + 1)?;
++            crate::db::health::checkpoint_truncate(&snapshot)?;
++        }
++        let source_hash = Sha256::digest(std::fs::read(&snapshot_path).map_err(|e| e.to_string())?);
++        // Deliberately call the real inner helper, not ZIP's earlier future-version guard.
++        // Its migration-specific error is reached only after conn.restore succeeds.
++        let error = super::restore_sqlite_snapshot_and_migrate(&target, &snapshot_path)
++            .expect_err("future-version snapshot must fail after restoring into target");
++        assert!(error.starts_with("Failed to migrate restored SQLite database to schema"));
++        assert!(error.contains("AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW"));
++        assert!(!error.contains("rolling back to the pre-restore database failed"));
++        target.with_conn(|conn| {
++            assert_eq!(migrations::get_user_version(conn)?, TARGET_SCHEMA_VERSION);
++            assert_eq!(schema_snapshot(conn)?, original_schema);
++            let markers: Vec<String> = conn.prepare("SELECT marker FROM rollback_fixture")
++                .map_err(|e| e.to_string())?
++                .query_map([], |row| row.get(0)).map_err(|e| e.to_string())?
++                .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
++            assert_eq!(markers, ["original"]);
++            let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))
++                .map_err(|e| e.to_string())?;
++            assert_eq!(integrity, "ok");
++            Ok(())
++        })?;
++        assert_eq!(Sha256::digest(std::fs::read(&snapshot_path).map_err(|e| e.to_string())?), source_hash);
++        assert_eq!(std::fs::read_dir(&scratch).map_err(|e| e.to_string())?.count(), 0,
++            "the helper must remove its temporary safety backup after rollback");
++        Ok(())
++    }
++
++    #[test]
+     fn restore_old_schema_snapshot_migrates_missing_tables() -> Result<(), String> {
+         use crate::db::migrations::{self, TARGET_SCHEMA_VERSION};
+         use rusqlite::Connection;
