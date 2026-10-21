@@ -1,0 +1,189 @@
+--- a/web/features/coding/skills/pages/SkillsPage.tsx
++++ b/web/features/coding/skills/pages/SkillsPage.tsx
+@@ -299,6 +299,9 @@
+   const [groupModePreference, setGroupModePreference] =
+     React.useState<SkillGroupModePreference | null>(null);
+   const groupMode = resolveSkillGroupingMode(groupModePreference, groups.length);
++  const groupModeSaveGeneration = React.useRef(0);
++  const groupModeSaveMessageKey = React.useId();
++
+   const [groupActiveKeys, setGroupActiveKeys] = React.useState<string[]>([]);
+   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+   const [selectionMode, setSelectionMode] = React.useState(false);
+@@ -507,15 +510,26 @@
+       });
+     return () => {
+       cancelled = true;
++      groupModeSaveGeneration.current += 1;
++      message.destroy(groupModeSaveMessageKey);
+     };
+-  }, []);
++  }, [groupModeSaveMessageKey]);
+ 
+   const handleGroupModeChange = React.useCallback((nextMode: SkillGroupingMode) => {
++    const generation = ++groupModeSaveGeneration.current;
++    message.destroy(groupModeSaveMessageKey);
+     setGroupModePreference(nextMode);
+     api.setSkillGroupMode(nextMode).catch((error) => {
+       console.error('Failed to save skill group mode:', error);
++      // A newer choice or an unmounted page owns any later feedback.
++      if (groupModeSaveGeneration.current === generation) {
++        message.error({
++          key: groupModeSaveMessageKey,
++          content: t('skills.groupControls.saveFailed'),
++        });
++      }
+     });
+-  }, []);
++  }, [groupModeSaveMessageKey, t]);
+ 
+   const isSearchActive = !!searchText.trim();
+   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
+--- a/web/i18n/locales/en-US.json
++++ b/web/i18n/locales/en-US.json
+@@ -3830,6 +3830,7 @@
+     "groupBySource": "Source",
+     "groupControls": {
+       "groupingLabel": "Grouping mode",
++      "saveFailed": "The grouping choice was not saved. It applies only to the current view and may reset when you return.",
+       "selectionModeLabel": "Batch management",
+       "groupToolsLabel": "Tool display granularity",
+       "browseMode": "Browse",
+--- a/web/i18n/locales/zh-CN.json
++++ b/web/i18n/locales/zh-CN.json
+@@ -3827,6 +3827,7 @@
+     "groupBySource": "来源",
+     "groupControls": {
+       "groupingLabel": "分组方式",
++      "saveFailed": "分组选择未保存，仅在当前视图生效；重新进入时可能恢复原设置。",
+       "selectionModeLabel": "批量管理",
+       "groupToolsLabel": "工具展示粒度",
+       "browseMode": "浏览",
+--- a/web/test/features/coding/skills/groupMode/fixtures/SkillsGroupModeFixture.jsx
++++ b/web/test/features/coding/skills/groupMode/fixtures/SkillsGroupModeFixture.jsx
+@@ -1,21 +1,27 @@
+ import {boundary} from './boundary.mjs';
+ import React from 'react';
+ import {createRoot} from 'react-dom/client';
+-import {ConfigProvider} from 'antd';
++import {ConfigProvider,message} from 'antd';
+ import i18next from 'i18next';
+ import {I18nextProvider} from 'react-i18next';
++import enUS from '@/i18n/locales/en-US.json';
++import zhCN from '@/i18n/locales/zh-CN.json';
++// Keep real notices until explicit dismissal so cleanup cannot pass by auto-expiry.
++message.config({duration:0});
+ // Load real view only after official mockIPC installs the strict IPC boundary.
+ const {default:SkillsPage}=await import('@/features/coding/skills/pages/SkillsPage');
+-const i18n=i18next.createInstance();await i18n.init({lng:'en',fallbackLng:'en',resources:{en:{translation:{}}},initImmediate:false});
++const locale=new URLSearchParams(location.search).get('locale')==='zh'?'zh':'en';
++const copy=(locale==='zh'?zhCN:enUS).skills.groupControls.saveFailed;
++const i18n=i18next.createInstance();await i18n.init({lng:locale,fallbackLng:locale,resources:{[locale]:{translation:{skills:{groupControls:{saveFailed:copy}}}}},initImmediate:false});
+ let barrier,ready=false;
+ function Fixture(){
+  React.useLayoutEffect(()=>{ready=true;return()=>{ready=false;};},[]);
+  const [key,setKey]=React.useState(0),[present,setPresent]=React.useState(true),[tick,setTick]=React.useState(0);const done=React.useRef();
+  barrier=()=>new Promise(resolve=>{done.current=resolve;setTick(n=>n+1);});
+  React.useLayoutEffect(()=>{done.current?.();done.current=undefined;},[tick]);
+- return <I18nextProvider i18n={i18n}><ConfigProvider><button id="remount" onClick={()=>{setPresent(true);setKey(n=>n+1);}}>Remount</button><button id="unmount" onClick={()=>setPresent(false)}>Unmount</button><output id="barrier">{tick}</output><main id="skills-page">{present&&<SkillsPage key={key}/>}</main></ConfigProvider></I18nextProvider>;
++ return <I18nextProvider i18n={i18n}><ConfigProvider><button id="remount" onClick={()=>{setPresent(true);setKey(n=>n+1);}}>Remount</button><button id="unmount" onClick={()=>setPresent(false)}>Unmount</button><button id="unrelated-notice" onClick={()=>message.info({key:"synthetic-unrelated-notice",content:"Synthetic unrelated notice",duration:0})}>Unrelated notice</button><output id="barrier">{tick}</output><main id="skills-page">{present&&<SkillsPage key={key}/>}</main></ConfigProvider></I18nextProvider>;
+ }
+ createRoot(document.getElementById('root')).render(<Fixture/>);
+ async function drain(){let last='',stable=0;for(let i=0;i<12;i++){await Promise.resolve();await barrier();await Promise.resolve();const state=window.skillsGroupFixture.snapshot();const value=JSON.stringify({boundary:boundary.snapshot(),mode:state.mode,groupHeaders:state.groupHeaders,mounted:state.mounted,alerts:state.alerts});stable=value===last?stable+1:0;last=value;if(stable===2)return;}throw Error('Fixture effects did not stabilize');}
+ const visible=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
+-window.skillsGroupFixture={isReady:()=>ready,drain,async resolveInitial(){boundary.resolveInitial();await drain();},snapshot(){if(!ready)throw Error('Fixture first commit not ready');const selected=[...document.querySelectorAll('[aria-label="skills.groupControls.groupingLabel"] [role="radio"][aria-checked="true"]')].filter(visible);return {...boundary.snapshot(),mode:selected.map(e=>e.textContent),groupHeaders:[...document.querySelectorAll('#skills-page section button[aria-expanded] > span:first-of-type')].filter(visible).map(e=>e.textContent),text:document.querySelector('#skills-page').textContent,alerts:[...document.querySelectorAll('.ant-message-notice,[role="alert"]')].filter(visible).map(e=>e.textContent),mounted:document.querySelector('#skills-page').childElementCount>0,barrier:Number(document.querySelector('#barrier').textContent)};}};
++window.skillsGroupFixture={isReady:()=>ready,drain,async settleWrite(id,ok){boundary.settleWrite(id,ok);await drain();},async resolveInitial(){boundary.resolveInitial();await drain();},snapshot(){if(!ready)throw Error('Fixture first commit not ready');const selected=[...document.querySelectorAll('[aria-label="skills.groupControls.groupingLabel"] [role="radio"][aria-checked="true"]')].filter(visible);return {...boundary.snapshot(),mode:selected.map(e=>e.textContent),groupHeaders:[...document.querySelectorAll('#skills-page section button[aria-expanded] > span:first-of-type')].filter(visible).map(e=>e.textContent),text:document.querySelector('#skills-page').textContent,alerts:[...document.querySelectorAll('.ant-message-notice')].filter(visible).map(e=>e.textContent),errorNotices:[...document.querySelectorAll('.ant-message-error')].filter(visible).map(e=>e.textContent),mounted:document.querySelector('#skills-page').childElementCount>0,barrier:Number(document.querySelector('#barrier').textContent)};}};
+--- a/web/test/features/coding/skills/groupMode/fixtures/boundary.mjs
++++ b/web/test/features/coding/skills/groupMode/fixtures/boundary.mjs
+@@ -2,8 +2,9 @@
+ // Restrict this synthetic fixture before dynamically importing the application page.
+ const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'";document.head.append(policy);
+ const scenario=new URLSearchParams(location.search).get('scenario')||'auto-empty';
++const caseToken=new URLSearchParams(location.search).get('caseToken');
+ let stored=scenario==='explicit-custom'?'custom':scenario==='explicit-source'||scenario==='save-failure'?'source':'auto';
+-const calls=[],writes=[],listeners=new Map();let forbidden=0,readCount=0,initialResolve;
++const calls=[],writes=[],listeners=new Map();let forbidden=0,readCount=0,initialResolve;const pendingWrites=new Map(),writeOutcomes=[];
+ const skill={id:'synthetic-skill',name:'Synthetic Skill',source_type:'local',source_ref:'/synthetic/source-fixture',central_path:'/synthetic/skills/item',created_at:1,updated_at:1,last_sync_at:null,status:'active',sort_index:0,user_group:null,group_id:null,user_note:null,management_enabled:true,disabled_previous_tools:[],tags:[],description:'Synthetic fixture only',content_hash:null,source_health:'ok',source_error:null,enabled_tools:[],targets:[]};
+ const groups=scenario==='auto-group'||scenario==='explicit-source'?[{id:'synthetic-group',name:'Synthetic Group',note:null,sort_index:0,created_at:1,updated_at:1}]:[];
+ if(groups.length)skill.group_id=groups[0].id;
+@@ -32,8 +33,9 @@
+   case 'skills_set_group_mode':
+    if(!exactKeys(['mode'])||!['custom','source'].includes(args.mode))return deny(command);
+    writes.push(args.mode);
+-   if(scenario==='save-failure')throw Error('Synthetic preference save failure');
+-   stored=args.mode;return null;
++   if(scenario==='deferred-save')return new Promise((resolve,reject)=>{pendingWrites.set(writes.length,{mode:args.mode,resolve,reject});});
++   if(scenario==='save-failure'){writeOutcomes.push({id:writes.length,mode:args.mode,ok:false});throw Error('Synthetic preference save failure');}
++   writeOutcomes.push({id:writes.length,mode:args.mode,ok:true});stored=args.mode;return null;
+   case 'skills_get_tool_status':return {tools:[],installed:[],newly_installed:[]};
+   case 'skills_get_managed_skills':return [structuredClone(skill)];
+   case 'skills_get_groups':return structuredClone(groups);
+@@ -43,4 +45,4 @@
+   default:return deny(command);
+  }
+ });
+-export const boundary={snapshot:()=>({scenario,stored,calls:[...calls],writes:[...writes],forbidden,readCount,listeners:listeners.size,pendingInitial:!!initialResolve}),resolveInitial(){if(!initialResolve)throw Error('No pending initial read');const resolve=initialResolve;initialResolve=undefined;resolve();}};
++export const boundary={snapshot:()=>({scenario,caseToken,stored,calls:[...calls],writes:[...writes],forbidden,readCount,listeners:listeners.size,pendingInitial:!!initialResolve,pendingWrites:[...pendingWrites.keys()],writeOutcomes:structuredClone(writeOutcomes)}),settleWrite(id,ok){const item=pendingWrites.get(id);if(!item)throw Error('Unknown pending write');pendingWrites.delete(id);writeOutcomes.push({id,mode:item.mode,ok});if(ok){stored=item.mode;item.resolve(null);}else item.reject(Error('Synthetic deferred save failure'));},resolveInitial(){if(!initialResolve)throw Error('No pending initial read');const resolve=initialResolve;initialResolve=undefined;resolve();}};
+--- a/web/test/features/coding/skills/groupMode/skillsGroupModeBrowserChecks.mjs
++++ b/web/test/features/coding/skills/groupMode/skillsGroupModeBrowserChecks.mjs
+@@ -2,7 +2,7 @@
+ import {writeFile} from 'node:fs/promises';
+ import path from 'node:path';
+ export async function verifySkillsGroupMode({send,evaluate,baseUrl,exceptions,artifactRoot}){
+- const results=[];let phase='setup',observations=[];
++ const results=[];let phase='setup',observations=[],failureKind=null,caseSequence=0;
+  const snapshot=()=>evaluate('skillsGroupFixture.snapshot()');
+  const observe=async label=>{const state=await snapshot();observations.push({label,state});return state;};
+  const wait=async fn=>{for(let n=0;n<200;n++){if(await fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Fixture UI deadline');};
+@@ -22,24 +22,44 @@
+  async function choose(mode){await click(modes,'skills.groupBy'+(mode==='source'?'Source':'Custom'));}
+  async function check(fn){const state=await observe('invariant');phase='invariant';fn(state);phase='interaction';}
+  async function remount(){const writes=(await snapshot()).writes.length;await click('#remount');await openOptions();assert.equal((await snapshot()).writes.length,writes,'Remount must not write preferences');}
+- async function run(name,scenario,fn){phase='setup';observations=[];const start=exceptions.length;try{
+-  await send('Page.navigate',{url:baseUrl+'/?scenario='+scenario});
+-  await wait(()=>evaluate(`!!window.skillsGroupFixture&&skillsGroupFixture.isReady()&&skillsGroupFixture.snapshot().scenario===${JSON.stringify(scenario)}&&skillsGroupFixture.snapshot().readCount===1`));await drain();await openOptions();
++ async function run(name,scenario,fn,{locale='en',expectedRed=false}={}){phase='setup';observations=[];failureKind=null;const caseToken='skills-feedback-'+(++caseSequence);const start=exceptions.length;try{
++  await send('Page.navigate',{url:baseUrl+'/?scenario='+scenario+'&locale='+locale+'&caseToken='+caseToken});
++  await wait(()=>evaluate(`!!window.skillsGroupFixture&&skillsGroupFixture.isReady()&&skillsGroupFixture.snapshot().caseToken===${JSON.stringify(caseToken)}&&skillsGroupFixture.snapshot().scenario===${JSON.stringify(scenario)}&&skillsGroupFixture.snapshot().readCount===1`));await drain();await openOptions();
+   const ready=await observe('ready');assert.equal(ready.forbidden,0);assert.equal(ready.writes.length,0,'Mount must not persist derived mode');
+   await fn();phase='safety';assert.equal((await snapshot()).forbidden,0);assert.equal(exceptions.length,start);
+-  results.push({name,passed:true,observations,pageExceptions:[]});
++  results.push({name,expectedRed,passed:true,observations,pageExceptions:[]});
+  }catch(error){let state;try{state=await snapshot();}catch{}const diagnosticErrors=[];
+   try{await writeFile(path.join(artifactRoot,`case-${results.length}-failure.html`),await evaluate('document.documentElement.outerHTML'));const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(path.join(artifactRoot,`case-${results.length}-failure.png`),Buffer.from(shot.data,'base64'));}catch(e){diagnosticErrors.push(String(e));}
+-  results.push({name,passed:false,phase,error:String(error),observations,state,pageExceptions:exceptions.slice(start),diagnosticErrors});
++  results.push({name,expectedRed,passed:false,phase,failureKind,classification:phase==='invariant'&&error?.name==='AssertionError'&&state?.forbidden===0&&exceptions.length===start?'product-invariant':'fixture-error',error:String(error),observations,state,pageExceptions:exceptions.slice(start),diagnosticErrors});
+  }}
++ const errorCopy={en:'The grouping choice was not saved. It applies only to the current view and may reset when you return.',zh:'分组选择未保存，仅在当前视图生效；重新进入时可能恢复原设置。'};
++ const errors=state=>state.errorNotices;
++ async function expectError(locale){
++  phase='interaction';const pre=await observe('feedback-precondition');assert.equal(pre.forbidden,0);assert.ok(pre.writes.length>0);assert.deepEqual(pre.pendingWrites,[]);assert.deepEqual(pre.writeOutcomes.at(-1),{id:pre.writes.length,mode:pre.writes.at(-1),ok:false});let state,found=false;
++  for(let n=0;n<200;n++){state=await snapshot();if(errors(state).some(text=>text.includes(errorCopy[locale]))){found=true;break;}await new Promise(r=>setTimeout(r,20));}
++  observations.push({label:'visible-error-after-bounded-wait',state});phase='invariant';failureKind='missing-current-save-feedback';assert.ok(found,'Latest rejected save must show localized visible feedback');failureKind=null;assert.equal(errors(state).length,1);phase='interaction';
++ }
++ async function expectNoError({sentinel=false}={}){
++  phase='interaction';const until=Date.now()+400;let count=0;
++  do{await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');const state=await snapshot();observations.push({label:'bounded-no-error-observation',state});phase='invariant';assert.equal(errors(state).length,0);if(sentinel)assert.ok(state.alerts.some(text=>text.includes('Synthetic unrelated notice')));phase='interaction';count++;await new Promise(r=>setTimeout(r,20));}while(Date.now()<until);
++  assert.ok(count>=2,'Negative observation requires multiple rendered samples');
++ }
++ async function settle(id,ok){phase='interaction';await evaluate(`skillsGroupFixture.settleWrite(${id},${ok})`);}
++ async function pending(ids){await check(s=>assert.deepEqual(s.pendingWrites,ids));}
+  await run('auto with no groups uses source without writing','auto-empty',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
+  await run('auto with owned group uses custom without writing','auto-group',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['Synthetic Group']);});});
+  await run('explicit source overrides existing custom group','explicit-source',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
+  await run('explicit custom survives zero groups','explicit-custom',async()=>{await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);});});
+  await run('successful choice persists across real page remount','auto-empty',async()=>{await choose('custom');await check(s=>{assert.equal(s.stored,'custom');assert.deepEqual(s.writes,['custom']);});await remount();await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);});});
+  await run('late initial read does not overwrite user choice','delayed-read',async()=>{await choose('custom');await evaluate('skillsGroupFixture.resolveInitial()');await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);assert.equal(s.stored,'custom');});});
+- await run('failed save characterization preserves old storage','save-failure',async()=>{await choose('custom');await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.deepEqual(s.groupHeaders,['skills.groupUngrouped']);assert.equal(s.stored,'source');assert.deepEqual(s.writes,['custom']);assert.deepEqual(s.alerts,[],'Current upstream shows no visible persistence error; characterization, not desired UX');});await remount();await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
++ await run('current English failure is visibly unsaved','save-failure',async()=>{await choose('custom');await check(s=>{assert.deepEqual(s.mode,['skills.groupByCustom']);assert.equal(s.stored,'source');assert.deepEqual(s.writes,['custom']);});await expectError('en');await remount();await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});},{expectedRed:true});
+  await run('successive normal writes retain final intent','auto-empty',async()=>{await choose('custom');await choose('source');await check(s=>{assert.deepEqual(s.writes,['custom','source']);assert.equal(s.stored,'source');});await remount();await check(s=>{assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.groupHeaders,['synthetic']);});});
+  await run('unmount smoke: delayed read does not resurrect view','unmount-read',async()=>{await click('#unmount');await evaluate('skillsGroupFixture.resolveInitial()');await check(s=>{assert.equal(s.mounted,false);assert.equal(s.writes.length,0);});});
+- const report={passed:results.filter(x=>x.passed).length,failed:results.filter(x=>!x.passed).length,results};await writeFile(path.join(artifactRoot,'skills-group-cases.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));assert.equal(report.failed,0,'Inspect phase and observations; setup failures are not product defects');return results;
++ await run('current Chinese failure is visibly unsaved','save-failure',async()=>{await choose('custom');await check(s=>{assert.equal(s.stored,'source');assert.deepEqual(s.mode,['skills.groupByCustom']);});await expectError('zh');},{locale:'zh',expectedRed:true});
++ await run('old failure stays silent while latest pending then latest failure reports','deferred-save',async()=>{await choose('custom');await choose('source');await pending([1,2]);await settle(1,false);await expectNoError();await pending([2]);await settle(2,false);await expectError('en');},{expectedRed:true});
++ await run('old failure stays silent after newer success','deferred-save',async()=>{await choose('custom');await choose('source');await pending([1,2]);await settle(2,true);await settle(1,false);await expectNoError();await check(s=>{assert.equal(s.stored,'source');assert.deepEqual(s.mode,['skills.groupBySource']);assert.deepEqual(s.writes,['custom','source']);});});
++ await run('ABA old matching-value failure is stale but latest reports','deferred-save',async()=>{await choose('custom');await choose('source');await choose('custom');await pending([1,2,3]);await settle(2,true);await settle(1,false);await expectNoError();await pending([3]);await settle(3,false);await expectError('en');await check(s=>assert.deepEqual(s.mode,['skills.groupByCustom']));},{expectedRed:true});
++ await run('unmounted save cannot report on remounted page but new save can','deferred-save',async()=>{await choose('custom');await pending([1]);await click('#unmount');await remount();await settle(1,false);await expectNoError();await choose('custom');await pending([2]);await settle(2,false);await expectError('en');},{expectedRed:true});
++ await run('new choice and unmount clear only own error','deferred-save',async()=>{await click('#unrelated-notice');await wait(async()=> (await snapshot()).alerts.some(text=>text.includes('Synthetic unrelated notice')));await openOptions();await choose('custom');await pending([1]);await settle(1,false);await expectError('en');await choose('source');await pending([2]);await wait(async()=>errors(await snapshot()).length===0);await expectNoError({sentinel:true});await settle(2,false);await expectError('en');await check(s=>{assert.deepEqual(s.writes,['custom','source']);assert.equal(errors(s).length,1);assert.ok(s.alerts.some(text=>text.includes('Synthetic unrelated notice')));});await click('#unmount');await wait(async()=>errors(await snapshot()).length===0);await expectNoError({sentinel:true});},{expectedRed:true});
++ const fixtureErrors=results.filter(x=>x.classification==='fixture-error').length;const report={passed:results.filter(x=>x.passed).length,failed:results.filter(x=>!x.passed).length,fixtureErrors,pageExceptions:[...exceptions],validRed:exceptions.length===0&&results.length===15&&results.filter(x=>x.expectedRed).length===6&&results.every(x=>x.expectedRed?(!x.passed&&x.classification==='product-invariant'&&x.failureKind==='missing-current-save-feedback'):x.passed)&&fixtureErrors===0&&results.every(x=>x.pageExceptions.length===0),results};await writeFile(path.join(artifactRoot,'skills-group-cases.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));assert.equal(exceptions.length,0,'Renderer exceptions are fixture failures');assert.equal(report.failed,0,'Inspect phase and observations; setup failures are not product defects');return results;
+ }

@@ -1,0 +1,18 @@
+{
+  "base": "81ed352a837c213bfac900a975136ab83d28dbe9",
+  "patchSha256": "b4911451e363efd655a5e4b7f12f969aefaad7f8d966e735e75e0beee7232404",
+  "productFiles": [
+    "web/features/coding/skills/pages/SkillsPage.tsx",
+    "web/i18n/locales/en-US.json",
+    "web/i18n/locales/zh-CN.json",
+    "web/test/features/coding/skills/groupMode/fixtures/SkillsGroupModeFixture.jsx",
+    "web/test/features/coding/skills/groupMode/fixtures/boundary.mjs",
+    "web/test/features/coding/skills/groupMode/skillsGroupModeBrowserChecks.mjs"
+  ],
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/manifest.json",
+    "validation/validate.py"
+  ]
+}
