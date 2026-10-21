@@ -312,7 +312,7 @@ async fn apply_direct_provider_without_events<R: Runtime>(
             .await
         }
         GatewayCliKey::ClaudeDesktop => {
-            crate::coding::claude_desktop::commands::apply_config_internal_without_events(
+            crate::coding::claude_desktop::commands::prepare_gateway_provider_without_events(
                 &db,
                 app,
                 provider_id,

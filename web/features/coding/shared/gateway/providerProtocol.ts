@@ -228,6 +228,15 @@ export const isClaudeSafeModelId = (model: string): boolean => {
 export const hasNonClaudeModelIds = (modelIds: string[]): boolean =>
   modelIds.some((modelId) => !isClaudeSafeModelId(modelId));
 
+/** A Claude-safe upstream still needs routing when it differs from its route ID.
+ * Adapted from upstream 7f486ef; existing non-Claude-ID checks remain separate. */
+export const hasClaudeDesktopRoutingModels = (
+  routes: Record<string, { model?: string }> | null | undefined,
+): boolean => Object.entries(routes ?? {}).some(([routeId, route]) => {
+  const model = route?.model?.trim() ?? '';
+  return model !== '' && model !== routeId.trim();
+});
+
 export type GatewayProxyReason = 'protocol' | 'model' | 'both' | null;
 
 /** Classify why a provider needs the local gateway: a protocol mismatch, an

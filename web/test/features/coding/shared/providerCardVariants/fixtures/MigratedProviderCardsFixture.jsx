@@ -40,6 +40,7 @@ import gatewayProfiles from '../../../../../../../tauri/resources/gateway_provid
 import '@/App.css';
 
 const parameters = new URLSearchParams(location.search);
+const desktopGatewayCase = parameters.get('desktopGateway');
 const language = parameters.get('language') || 'zh-CN';
 const themeMode = parameters.get('theme') || 'light';
 const resolvedTheme = themeMode === 'system'
@@ -99,6 +100,58 @@ const claudeDesktopProps = {
   gatewayStatus: null,
   gatewayTakeoverActive: false,
 };
+
+// Separate navigation keeps the existing migration matrix and its geometry
+// untouched. These are input props, not replicas of the card's proxy decision.
+function ClaudeDesktopGatewayFixture() {
+  const viewMode = parameters.get('view');
+  if (!['identity', 'takeover', 'mapped', 'stopped'].includes(desktopGatewayCase)
+    || !['list', 'card'].includes(viewMode)) {
+    throw new Error('Invalid Claude Desktop gateway fixture scenario');
+  }
+  const isApplied = desktopGatewayCase === 'takeover';
+  const provider = {
+    ...claudeDesktopProvider,
+    id: 'desktop-gateway-' + desktopGatewayCase + '-' + viewMode,
+    name: 'Synthetic Desktop Gateway',
+    settingsConfig: JSON.stringify({ env: {
+      ANTHROPIC_BASE_URL: 'https://desktop-gateway.example.test',
+      ANTHROPIC_AUTH_TOKEN: 'synthetic-not-a-real-credential',
+    } }),
+    meta: {
+      apiFormat: 'anthropic',
+      claudeDesktopModelRoutes: {
+        // Stopped is a legacy non-Claude control, not safe-remap coverage.
+        'claude-sonnet-5': { model: desktopGatewayCase === 'identity' ? 'claude-sonnet-5'
+          : desktopGatewayCase === 'stopped' ? 'deepseek-chat' : 'claude-opus-5' },
+      },
+    },
+    notes: '',
+    isApplied,
+  };
+  const gatewayStatus = {
+    cli_key: 'claude_desktop',
+    state: isApplied ? 'takeover_applied' : desktopGatewayCase === 'stopped' ? 'gateway_stopped' : 'direct',
+    dot: isApplied ? 'green' : 'gray',
+    can_takeover: !isApplied && desktopGatewayCase !== 'stopped',
+    can_restore_direct: isApplied,
+    gateway_origin: null,
+    runtime_root: null,
+    managed_targets: [],
+    mode: isApplied ? 'single' : null,
+    primary_provider_id: isApplied ? provider.id : null,
+    provider_priorities: [],
+    message: null,
+  };
+  return (
+    <div data-fixture="desktop-gateway" style={{ padding: 16 }}>
+      <ClaudeDesktopProviderCard {...claudeDesktopProps} provider={provider} viewMode={viewMode}
+        isApplied={isApplied} gatewayStatus={gatewayStatus} gatewayTakeoverActive={isApplied}
+        onSelect={selected => state.callbacks.push({ action: 'direct', viewMode, providerId: selected.id })}
+      />
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ Gemini CLI */
 
@@ -303,8 +356,47 @@ const omoProps = {
 /* ------------------------------------------------------------------ fixture API */
 
 const cards = (name) => [...document.querySelectorAll(`[data-fixture="${name}"]`)];
+const desktopGatewayActionKeys = {
+  direct: 'claudecode.provider.apply',
+  proxy: 'gateway.proxy.applyWithProxyButton',
+  restore: 'gateway.proxy.restoreDirectButton',
+};
+const desktopGatewayButtons = action => {
+  const label = i18n.t(desktopGatewayActionKeys[action]).replace(/\s+/g, '');
+  return [...(cards('desktop-gateway')[0]?.querySelectorAll('button') ?? [])]
+    .filter(button => button.textContent.replace(/\s+/g, '') === label);
+};
+const desktopGatewayButton = action => {
+  const buttons = desktopGatewayButtons(action);
+  if (buttons.length !== 1) throw new Error('Expected exactly one real Desktop action: ' + action);
+  return buttons[0];
+};
+const isVisible = node => {
+  const rect = node.getBoundingClientRect();
+  if (!rect.width || !rect.height || !node.getClientRects().length) return false;
+  for (let ancestor = node; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) === 0) return false;
+  }
+  return true;
+};
 
 window.migratedProviderCardsFixture = {
+  desktopGatewayActions() {
+    return Object.fromEntries(Object.keys(desktopGatewayActionKeys).map(action => [action,
+      desktopGatewayButtons(action).map(button => ({ visible: isVisible(button), disabled: button.disabled })),
+    ]));
+  },
+  desktopGatewayTarget(action) {
+    const button = desktopGatewayButton(action);
+    const rect = button.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { x, y, width: rect.width, height: rect.height, visible: isVisible(button),
+      inViewport: x > 0 && x < innerWidth && y > 0 && y < innerHeight,
+      hit: Boolean(hit && button.contains(hit)), hitTag: hit?.tagName ?? null };
+  },
   /** The rendered text of one fixture block, whitespace-normalised. */
   text(name) {
     const node = cards(name)[0];
@@ -474,6 +566,7 @@ function FixtureHost() {
     <ConfigProvider theme={{ algorithm: resolvedTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
       <ThemeTokenProbe />
       <MemoryRouter>
+        {desktopGatewayCase ? <ClaudeDesktopGatewayFixture /> : <>
         <button data-fixture-finish-refresh onClick={() => setPending(null)}>Finish synthetic refresh</button>
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
           {['list', 'card'].map(viewMode => (
@@ -511,6 +604,7 @@ function FixtureHost() {
             </React.Fragment>
           ))}
         </div>
+        </>}
       </MemoryRouter>
     </ConfigProvider>
   );

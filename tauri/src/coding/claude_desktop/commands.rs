@@ -8,7 +8,8 @@ use super::constants::{COMMON_CONFIG_ID, OFFICIAL_PROVIDER_ID};
 use super::types::*;
 use crate::coding::db_id::db_new_id;
 use crate::coding::proxy_gateway::{
-    cli_proxy, paths::ProxyGatewayPaths, settings as gateway_settings, types::GatewayCliKey,
+    cli_proxy, paths::ProxyGatewayPaths, provider_protocol, settings as gateway_settings,
+    types::GatewayCliKey,
 };
 use crate::db::helpers::{db_delete, db_get, db_list, db_put};
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
@@ -470,8 +471,32 @@ fn official_restore_settings(settings_config: &str) -> bool {
     !has_credential
 }
 
+/// The gateway orchestrator prepares a profile before it establishes takeover.
+/// Ordinary apply and best-effort reapply must never perform that preparation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileApplyPurpose {
+    Direct,
+    GatewayPreparation,
+}
+
 /// Write a provider's config to the on-disk profile (no DB changes).
 fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> Result<(), String> {
+    apply_provider_profile_with_paths(
+        db,
+        provider_id,
+        ProfileApplyPurpose::Direct,
+        config_writer::current_platform_paths,
+    )
+}
+
+/// Resolve platform paths only after rejecting an unsafe direct write. The
+/// resolver also lets tests exercise this production dispatch on private paths.
+fn apply_provider_profile_with_paths(
+    db: &SqliteDbState,
+    provider_id: &str,
+    purpose: ProfileApplyPurpose,
+    resolve_paths: impl FnOnce() -> Result<config_writer::ClaudeDesktopPaths, String>,
+) -> Result<(), String> {
     let provider = get_provider_from_sqlite(db, provider_id)?
         .ok_or_else(|| format!("Provider not found: {provider_id}"))?;
 
@@ -482,8 +507,6 @@ fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> R
         ));
     }
 
-    let paths = config_writer::current_platform_paths()?;
-
     // Official restore is driven by the stable provider id, or by a provider
     // created through the form's official channel (category=official with empty
     // credentials). A user/imported provider whose category happens to be
@@ -492,7 +515,7 @@ fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> R
     if provider.id == OFFICIAL_PROVIDER_ID
         || (provider.category == "official" && official_restore_settings(&provider.settings_config))
     {
-        return config_writer::restore_official(&paths);
+        return config_writer::restore_official(&resolve_paths()?);
     }
 
     // Parse once up-front: routing decisions and direct apply both read the
@@ -500,10 +523,19 @@ fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> R
     let parsed_settings = serde_json::from_str::<Value>(&provider.settings_config);
     let settings_ref = parsed_settings.as_ref().ok();
     let needs_routing = config_writer::has_routing_models(provider.meta.as_ref(), settings_ref);
+    if purpose == ProfileApplyPurpose::Direct
+        && (needs_routing || provider_protocol::provider_needs_gateway_proxy(
+            GatewayCliKey::ClaudeDesktop, &provider.category, provider.meta.as_ref(),
+            &provider.settings_config,
+        ))
+    {
+        return Err("该渠道的模型映射或协议需要本地网关，请使用「应用并代理」或先开启网关接管".to_string());
+    }
+    let paths = resolve_paths()?;
     if needs_routing {
-        // Route the 3P profile at the local gateway: the provider's model names
-        // are not claude-safe, so Direct mode cannot be written and the gateway
-        // performs the upstream mapping. Menu models are surfaced via
+        // Route the 3P profile at the local gateway: upstream model names
+        // differ from route IDs (even when both are Claude-safe), so the
+        // gateway performs the upstream mapping. Menu models are surfaced via
         // inferenceModels.
         let origin = gateway_origin_from_settings(db)?;
         let gateway_endpoint = format!("{origin}/claude-desktop");
@@ -573,16 +605,33 @@ pub async fn apply_config_internal_with_sync<R: Runtime>(
     from_tray: bool,
     _emit_sync_request: bool,
 ) -> Result<(), String> {
-    apply_config_internal_with_events(db, app, provider_id, from_tray, true, _emit_sync_request)
-        .await
+    apply_config_internal_with_events(
+        db, app, provider_id, from_tray, true, _emit_sync_request, ProfileApplyPurpose::Direct,
+    ).await
 }
 
+/// Event-free runtime recovery is still a direct projection, not permission
+/// to prepare a gateway profile. Its caller records failures as restore warnings.
 pub async fn apply_config_internal_without_events<R: Runtime>(
     db: &SqliteDbState,
     app: &tauri::AppHandle<R>,
     provider_id: &str,
 ) -> Result<(), String> {
-    apply_config_internal_with_events(db, app, provider_id, false, false, false).await
+    apply_config_internal_with_events(
+        db, app, provider_id, false, false, false, ProfileApplyPurpose::Direct,
+    ).await
+}
+
+/// Only the gateway provider-switch orchestrator may use this pre-engage path.
+/// Its existing restore/preparation/engage ordering and failure handling remain unchanged.
+pub(crate) async fn prepare_gateway_provider_without_events<R: Runtime>(
+    db: &SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+) -> Result<(), String> {
+    apply_config_internal_with_events(
+        db, app, provider_id, false, false, false, ProfileApplyPurpose::GatewayPreparation,
+    ).await
 }
 
 async fn apply_config_internal_with_events<R: Runtime>(
@@ -592,9 +641,12 @@ async fn apply_config_internal_with_events<R: Runtime>(
     from_tray: bool,
     emit_config_changed: bool,
     _emit_sync_request: bool,
+    purpose: ProfileApplyPurpose,
 ) -> Result<(), String> {
     ensure_claude_desktop_gateway_direct(app)?;
-    apply_provider_to_sqlite_provider(db, provider_id)?;
+    apply_provider_profile_with_paths(
+        db, provider_id, purpose, config_writer::current_platform_paths,
+    )?;
 
     // Update provider is_applied status.
     let now = Local::now().to_rfc3339();
@@ -915,5 +967,141 @@ mod tests {
     #[test]
     fn official_restore_settings_handles_invalid_json() {
         assert!(!official_restore_settings("not json"));
+    }
+
+    mod profile_apply_purpose {
+        use super::super::*;
+        use serde_json::json;
+        use std::fs;
+
+        fn fixture(model: &str) -> (SqliteDbState, tempfile::TempDir, config_writer::ClaudeDesktopPaths) {
+            let db = SqliteDbState::in_memory_for_test().expect("private sqlite");
+            let root = tempfile::tempdir().expect("private files");
+            let paths = config_writer::ClaudeDesktopPaths {
+                normal_config_path: root.path().join("normal/config.json"),
+                threep_config_path: root.path().join("threep/config.json"),
+                config_library_path: root.path().join("threep/library"),
+                profile_path: root.path().join("threep/library/profile.json"),
+                meta_path: root.path().join("threep/library/_meta.json"),
+            };
+            for path in [&paths.normal_config_path, &paths.threep_config_path, &paths.profile_path, &paths.meta_path] {
+                fs::create_dir_all(path.parent().unwrap()).expect("private directory");
+                fs::write(path, br#"{"unrelatedMarker":"retain"}"#).expect("fixture marker");
+            }
+            put_provider_to_sqlite(&db, "synthetic", &row(model)).expect("synthetic row");
+            (db, root, paths)
+        }
+
+        fn row(model: &str) -> ClaudeDesktopProviderContent {
+            ClaudeDesktopProviderContent {
+                name: "Synthetic mapping".into(), category: "custom".into(),
+                settings_config: json!({"env":{"ANTHROPIC_BASE_URL":"https://synthetic.invalid","ANTHROPIC_AUTH_TOKEN":"synthetic-not-a-secret"}}).to_string(),
+                source_provider_id: None, website_url: None, notes: None, icon: None,
+                icon_color: None, sort_index: Some(0),
+                meta: Some(json!({"claudeDesktopModelRoutes":{"claude-sonnet-5":{"model":model,"labelOverride":"Synthetic route","supports1m":true}}})),
+                is_applied: true, is_disabled: false,
+                created_at: "2026-10-21T00:00:00Z".into(), updated_at: "2026-10-21T00:00:00Z".into(),
+            }
+        }
+
+        fn snapshot(paths: &config_writer::ClaudeDesktopPaths) -> Vec<Option<Vec<u8>>> {
+            [&paths.normal_config_path, &paths.threep_config_path, &paths.profile_path, &paths.meta_path]
+                .into_iter().map(|p| if p.exists() { Some(fs::read(p).expect("read private file")) } else { None }).collect()
+        }
+
+        #[test]
+        fn direct_remap_rejected_before_path_resolution_or_file_changes() {
+            let (db, _root, paths) = fixture("claude-opus-5");
+            let before = snapshot(&paths);
+            let error = apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
+                || panic!("direct rejection must precede platform-path resolution")).unwrap_err();
+            assert!(error.contains("应用并代理"));
+            assert_eq!(snapshot(&paths), before);
+        }
+
+        #[test]
+        fn direct_non_native_protocol_rejected_without_model_remap() {
+            let (db, _root, paths) = fixture("claude-sonnet-5");
+            let mut non_native = row("claude-sonnet-5");
+            non_native.meta.as_mut().unwrap()["apiFormat"] = json!("openai_chat");
+            put_provider_to_sqlite(&db, "synthetic", &non_native).unwrap();
+            let before = snapshot(&paths);
+            assert!(apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
+                || panic!("non-native protocol must not resolve paths")).is_err());
+            assert_eq!(snapshot(&paths), before);
+        }
+
+        #[test]
+        fn credentialed_official_mapping_is_not_a_restore_bypass() {
+            let (db, _root, paths) = fixture("claude-opus-5");
+            let mut imported = row("claude-opus-5");
+            imported.category = "official".into();
+            put_provider_to_sqlite(&db, "synthetic", &imported).unwrap();
+            let before = snapshot(&paths);
+            assert!(apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
+                || panic!("credentialed mapping must not restore or resolve paths")).is_err());
+            assert_eq!(snapshot(&paths), before);
+        }
+
+        #[test]
+        fn direct_identity_keeps_normal_profile_write() {
+            let (db, _root, paths) = fixture("claude-sonnet-5");
+            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct, || Ok(paths.clone())).unwrap();
+            let profile: Value = serde_json::from_slice(&fs::read(&paths.profile_path).unwrap()).unwrap();
+            assert_eq!(profile["inferenceGatewayBaseUrl"], "https://synthetic.invalid");
+            let config: Value = serde_json::from_slice(&fs::read(&paths.normal_config_path).unwrap()).unwrap();
+            assert_eq!(config["unrelatedMarker"], "retain");
+        }
+
+        #[test]
+        fn preparation_allows_mapping_and_preserves_model_menu() {
+            let (db, _root, paths) = fixture("claude-opus-5");
+            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::GatewayPreparation, || Ok(paths.clone())).unwrap();
+            let profile: Value = serde_json::from_slice(&fs::read(&paths.profile_path).unwrap()).unwrap();
+            assert!(profile["inferenceGatewayBaseUrl"].as_str().unwrap().ends_with("/claude-desktop"));
+            assert_eq!(profile["inferenceModels"][0]["name"], "claude-sonnet-5");
+            assert_eq!(profile["inferenceModels"][0]["labelOverride"], "Synthetic route");
+            assert_eq!(profile["inferenceModels"][0]["supports1m"], true);
+        }
+
+        #[test]
+        fn official_restore_remains_available_in_direct_purpose() {
+            let (db, _root, paths) = fixture("claude-opus-5");
+            let mut official = row("claude-opus-5");
+            official.category = "official".into(); official.settings_config = "{\"env\":{}}".into();
+            put_provider_to_sqlite(&db, "synthetic", &official).unwrap();
+            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct, || Ok(paths.clone())).unwrap();
+            assert!(!paths.profile_path.exists());
+            let config: Value = serde_json::from_slice(&fs::read(&paths.normal_config_path).unwrap()).unwrap();
+            assert_eq!(config["deploymentMode"], "1p");
+            assert_eq!(config["unrelatedMarker"], "retain");
+        }
+
+        #[test]
+        fn saved_mapping_survives_skipped_reapply_then_gateway_writer_reads_it() {
+            let (db, _root, paths) = fixture("claude-sonnet-5");
+            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct, || Ok(paths.clone())).unwrap();
+            let old_files = snapshot(&paths);
+            // Mirrors existing best-effort save ordering, not a Tauri-command integration test.
+            let mut updated = row("claude-opus-5");
+            updated.meta.as_mut().unwrap()["claudeDesktopModelRoutes"]["claude-sonnet-5"]["labelOverride"] = json!("Updated route");
+            updated.meta.as_mut().unwrap()["claudeDesktopModelRoutes"]["claude-sonnet-5"]["supports1m"] = json!(false);
+            put_provider_to_sqlite(&db, "synthetic", &updated).unwrap();
+            assert!(apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
+                || panic!("no intermediate write")).is_err());
+            assert_eq!(snapshot(&paths), old_files);
+            let saved = get_provider_from_sqlite(&db, "synthetic").unwrap().unwrap();
+            assert!(saved.is_applied); // Existing saved-but-not-reapplied semantics are not repaired here.
+            assert_eq!(saved.meta.as_ref().unwrap()["claudeDesktopModelRoutes"]["claude-sonnet-5"]["model"], "claude-opus-5");
+            let settings: Value = serde_json::from_str(&saved.settings_config).unwrap();
+            let specs = config_writer::desktop_proxy_model_specs(saved.meta.as_ref(), Some(&settings));
+            config_writer::apply_gateway_proxy_profile(&paths, "http://127.0.0.1:37123/claude-desktop",
+                "synthetic-gateway-sentinel", Some(&specs)).unwrap();
+            let profile: Value = serde_json::from_slice(&fs::read(&paths.profile_path).unwrap()).unwrap();
+            assert_eq!(profile["inferenceGatewayBaseUrl"], "http://127.0.0.1:37123/claude-desktop");
+            assert_eq!(profile["inferenceModels"][0]["name"], "claude-sonnet-5");
+            assert_eq!(profile["inferenceModels"][0]["labelOverride"], "Updated route");
+            assert!(profile["inferenceModels"][0].get("supports1m").is_none());
+        }
     }
 }
