@@ -1,0 +1,97 @@
+{
+  "base": "459b34a65039d93209c02efe10985d91b3caeda2",
+  "patchSha256": "e1eff0a594ffb54f8bdd1a0789441e1375e1a4c3e1e9ab19a990e2d0edb44ded",
+  "validatorSha256": "d0b59c8c1ae8eeb8e6f35ca026f2af4053e556bd23f90b806247206733e55589",
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/visual-validate.py",
+    "validation/visual-manifest.json"
+  ],
+  "productFiles": [
+    "package.json",
+    "tauri/src/coding/ssh/connection_probe.rs",
+    "tauri/src/coding/ssh/session.rs",
+    "tauri/src/coding/ssh/sync.rs",
+    "tauri/src/coding/ssh/types.rs",
+    "web/features/settings/components/SSHSyncModal.tsx",
+    "web/features/settings/utils/syncMessageTranslator.ts",
+    "web/i18n/locales/en-US.json",
+    "web/i18n/locales/zh-CN.json",
+    "web/test/features/settings/sshCapability/sshCapabilityBrowserChecks.mjs",
+    "web/test/features/settings/sshCapability/verify.mjs",
+    "web/test/features/settings/sshRequest/fixtures/SSHRequestFixture.jsx",
+    "web/test/features/settings/sshRequest/fixtures/boundary.mjs",
+    "web/types/sshsync.ts"
+  ],
+  "identities": {
+    "package.json": {
+      "sha256": "ff5125244bbbc2f3375e08f62a08e066a8e1452e9e941d0b50929e0c9d28208f",
+      "baseBlob": "ef3e79b7ccab14907a3e20e6b1d5a53cd7090b86"
+    },
+    "tauri/src/coding/ssh/connection_probe.rs": {
+      "sha256": "1f0c5e843778c9276c4e32b90d8f734b45e39d7a722529dd9201006c71e392b1",
+      "baseBlob": null
+    },
+    "tauri/src/coding/ssh/session.rs": {
+      "sha256": "8660084a49508d9885eafe443efcb4d1d4c9b9e1f0e1b40d36866b105eccdcbf",
+      "baseBlob": "a4daa60e97e63ce9aa113c0ee95c05ee90882a5c"
+    },
+    "tauri/src/coding/ssh/sync.rs": {
+      "sha256": "0a0e79be5bb2fdf2f41fad3a3e71e391f2835dd8d38f99e8dbf8f58e12687a82",
+      "baseBlob": "33c512f47abe4d3b99a518defee279277a60cfc7"
+    },
+    "tauri/src/coding/ssh/types.rs": {
+      "sha256": "5a5a152552e21912f4b4366f11ffadb1b216402158c4d30edaa6b2be514cdcdc",
+      "baseBlob": "8d69b32f2aa10590aceaf75beccc1435d47202f5"
+    },
+    "web/features/settings/components/SSHSyncModal.tsx": {
+      "sha256": "38a3489093d2fecac17803b48e89451a6feac3cab27aecdc7ed4859e206bc85a",
+      "baseBlob": "6e5cd8ded5737b55e2350dc8dc2f78643e51f52a"
+    },
+    "web/features/settings/utils/syncMessageTranslator.ts": {
+      "sha256": "cf6600cee80b182da1bbfa6eb17b24453fa33a8289e472f0161b377734015998",
+      "baseBlob": "88a448f55209151721b58454286971a67b2b0d88"
+    },
+    "web/i18n/locales/en-US.json": {
+      "sha256": "e3b6e2984420c245d0d214e2ca704aaeecf6712b61caa29885d97f350cdc1576",
+      "baseBlob": "804eb87a8fef1de6ccfbfd314fea9326a680db3f"
+    },
+    "web/i18n/locales/zh-CN.json": {
+      "sha256": "a8bb7b6109cbfb332f86f597765f406b222e0a978d3eabbaa5603ca4f0b4bc87",
+      "baseBlob": "9231a534aa8b8a849bcb6b9b21b38443e64856e8"
+    },
+    "web/test/features/settings/sshCapability/sshCapabilityBrowserChecks.mjs": {
+      "sha256": "05cc86f74be85eec33dcd8a900b771c2677041facc6ba664492a0cc452d612b7",
+      "baseBlob": null
+    },
+    "web/test/features/settings/sshCapability/verify.mjs": {
+      "sha256": "37748bbc6e117edf1eeb069b7c8fef5afc89083cb079982ee6c374843ba9aeeb",
+      "baseBlob": null
+    },
+    "web/test/features/settings/sshRequest/fixtures/SSHRequestFixture.jsx": {
+      "sha256": "d6371e4f78c047163adee9d7d0dd399222c7122d3f4af4867246c2006fa5cb9c",
+      "baseBlob": "52ee84f3a1e684e2874a0535a66a392443203a75"
+    },
+    "web/test/features/settings/sshRequest/fixtures/boundary.mjs": {
+      "sha256": "eb157f821f0f64b3a2663c1c3ebe393dabe5e3e54cf4c816d30e7fc5ff5908e2",
+      "baseBlob": "61d7699c55692202278ab03effa74dc145ea1dbe"
+    },
+    "web/types/sshsync.ts": {
+      "sha256": "897f81ee56d40841c18faad95a292be7fce5e9ebaeae20b89f31d54806ebc646",
+      "baseBlob": "a8566564c4b1f11decbde59372a298d80fa3c2d9"
+    }
+  },
+  "originalModalSha256": "3a7c212112c70d0a76509ae9ceccde1f4a092dd440ed7de1601aca62cb4a4494",
+  "baselineDescription": "Synthetic future IPC boundary plus exact base Modal; missing-new-capability-ui only, not product RED",
+  "browserCounts": {
+    "zhCNRepresentativeOnly": 2
+  },
+  "visualOnly": true,
+  "priorSuccessfulFullRun": "39580593945",
+  "temporaryFixtureFiles": [
+    "web/test/features/settings/sshCapability/sshCapabilityBrowserChecks.mjs",
+    "web/test/features/settings/sshCapability/verify.mjs"
+  ],
+  "temporaryAdaptationSha256": "6635e30809154770b6ecdd526d315c3ada7dcfabc67e0387ac7d37d6e89cbf2d"
+}
