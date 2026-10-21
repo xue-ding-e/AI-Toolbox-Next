@@ -94,6 +94,6 @@ for folder in [red,green]:
  import shutil
  for child in folder.glob('ssh-request-race-*'):
   for item in child.iterdir():
-   if item.name not in {'ssh-request-cases.json','results.json','failure.html','failure.png'}:
+   if item.name not in {'ssh-request-cases.json','results.json','failure.html','failure.png'} and not (item.name.startswith('case-') and (item.name.endswith('-failure.html') or item.name.endswith('-failure.png'))):
     if item.is_dir():shutil.rmtree(item)
     else:item.unlink()
