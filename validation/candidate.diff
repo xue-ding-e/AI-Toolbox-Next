@@ -1,0 +1,204 @@
+--- a/package.json
++++ b/package.json
+@@ -24,7 +24,7 @@
+     "test:provider-card-layout": "node ./scripts/verify-provider-card-layout.mjs",
+     "test:provider-card-view": "node ./scripts/verify-provider-card-view.mjs",
+     "test:ime-autocomplete": "node ./scripts/verify-ime-safe-autocomplete.mjs",
+-    "test": "pnpm run test:web && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake",
++    "test": "pnpm run test:web && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-request-race",
+     "sync:version": "node scripts/sync-tauri-version.mjs",
+     "tauri": "tauri",
+     "prepare": "husky",
+@@ -44,6 +44,7 @@
+     "test:gateway-heatmap": "node ./scripts/verify-gateway-heatmap.mjs",
+     "test:gemini-account-pending": "node ./scripts/verify-gemini-account-pending.mjs",
+     "test:official-account-pending": "node ./scripts/verify-official-account-pending.mjs",
++    "test:ssh-request-race": "node ./scripts/verify-ssh-request-race.mjs",
+     "test:deeplink-handshake": "node ./scripts/verify-deeplink-handshake.mjs"
+   },
+   "dependencies": {
+--- /dev/null
++++ b/scripts/verify-ssh-request-race.mjs
+@@ -0,0 +1,6 @@
++import path from 'node:path';
++import {fileURLToPath} from 'node:url';
++import {runBrowserFixture} from './lib/browser-fixture.mjs';
++import {verifySSHRequestRace} from '../web/test/features/settings/sshRequest/sshRequestBrowserChecks.mjs';
++const fixtureDirectory=fileURLToPath(new URL('../web/test/features/settings/sshRequest/fixtures/',import.meta.url));
++await runBrowserFixture({fixtureDirectory,fixtureFilename:'SSHRequestFixture.jsx',artifactPrefix:'ssh-request-race-',verify:verifySSHRequestRace,fixtureAliases:[{find:/^@\/services\/sshSyncApi$/,replacement:path.join(fixtureDirectory,'boundary.mjs')},{find:/^@\/stores$/,replacement:path.join(fixtureDirectory,'boundary.mjs')},{find:/^@tauri-apps\/api\/(event|core)$/,replacement:path.join(fixtureDirectory,'boundary.mjs')}]});
+--- /dev/null
++++ b/web/test/features/settings/sshRequest/fixtures/SSHRequestFixture.jsx
+@@ -0,0 +1,32 @@
++import React from 'react';
++import {flushSync} from 'react-dom';
++import {createRoot} from 'react-dom/client';
++import {ConfigProvider} from 'antd';
++import i18next from 'i18next';
++import {I18nextProvider} from 'react-i18next';
++import {SSHSyncModal} from '@/features/settings/components/SSHSyncModal';
++import {boundary} from './boundary.mjs';
++const i18n=i18next.createInstance();await i18n.init({lng:'en',fallbackLng:'en',resources:{en:{translation:{}}},initImmediate:false});
++let barrier;
++function Fixture(){const[open,setOpen]=React.useState(true);const[present,setPresent]=React.useState(true);const[tick,setTick]=React.useState(0);const complete=React.useRef();barrier=()=>new Promise(r=>{complete.current=r;flushSync(()=>setTick(x=>x+1));});React.useEffect(()=>{complete.current?.();complete.current=undefined;},[tick]);return <I18nextProvider i18n={i18n}><ConfigProvider><button id="reopen" onClick={()=>setOpen(true)}>Reopen</button><button id="unmount" onClick={()=>setPresent(false)}>Unmount</button><output id="barrier">{tick}</output>{present&&<SSHSyncModal open={open} onClose={()=>setOpen(false)}/>}</ConfigProvider></I18nextProvider>;}
++const root=createRoot(document.getElementById('root'));root.render(<Fixture/>);
++// A same-root passive-effect commit follows delivered boundary promises. Repeat only
++// the read-only barrier until config/event counters and request inventory stabilize;
++// never resolve an additional request or retry an interaction in this drain.
++async function drain(){
++ let previous='';let stable=0;
++ for(let i=0;i<10;i++){
++  await Promise.resolve();await barrier();await Promise.resolve();
++  const state=boundary.snapshot();const current=JSON.stringify(state);
++  stable=current===previous?stable+1:0;previous=current;
++  if(stable===2)return state;
++ }
++ throw Error('Config/event effects did not stabilize');
++}
++function visible(e){const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';}
++window.sshRequestFixture={...boundary,drain,async settle(id,reject){await boundary.settle(id,reject);await drain();},snapshot(){
++ const dialogs=[...document.querySelectorAll('.ant-modal')].filter(visible);
++ return {...boundary.snapshot(),text:dialogs.map(x=>x.textContent).join('\n'),visible:dialogs.length>0,
++ spinners:dialogs.reduce((n,d)=>n+[...d.querySelectorAll('.ant-spin-spinning')].filter(visible).length,0),
++ animations:dialogs.flatMap(d=>d.getAnimations({subtree:true}).filter(a=>a.playState==='running'&&Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>({type:a.constructor.name,playState:a.playState}))),
++ barrier:Number(document.querySelector('#barrier')?.textContent),caseId:new URLSearchParams(location.search).get('case')};}};
+--- /dev/null
++++ b/web/test/features/settings/sshRequest/fixtures/boundary.mjs
+@@ -0,0 +1,18 @@
++const connections=['A','B'].map(id=>({id,name:'Connection '+id,host:id.toLowerCase()+'.invalid',port:22,username:'synthetic',authMethod:'none',password:'',privateKeyPath:'',privateKeyContent:'',passphrase:'',sortOrder:id==='A'?0:1}));
++let config={enabled:true,activeConnectionId:'A',syncMcp:false,syncSkills:false,lastSyncStatus:'never',connections,fileMappings:[{id:'synthetic-disabled',name:'Synthetic mapping',module:'claude',enabled:false,localPath:'/synthetic/source',remotePath:'/synthetic/target',isDirectory:false,isPattern:false,directoryExcludes:[],cleanupPaths:[]}],moduleStatuses:[]};
++const listeners=new Map();const calls=[];let forbidden=0;let revision=0;let reads=0;
++export const useSettingsStore=Object.assign(()=>({visibleTabs:[]}),{getState:()=>({visibleTabs:[]})});
++export async function listen(name,callback){const set=listeners.get(name)||new Set();set.add(callback);listeners.set(name,set);return()=>set.delete(callback);}
++function emit(){revision++;for(const cb of listeners.get('ssh-config-changed')||[])cb({payload:null});}
++export async function sshGetConfig(){reads++;return structuredClone(config);}
++export async function sshGetStatus(){reads++;return {sshAvailable:true,activeConnectionName:config.activeConnectionId,lastSyncStatus:'',lastSyncError:'',lastSyncWarnings:[]};}
++export async function sshSetActiveConnection(id){config={...config,activeConnectionId:id};emit();}
++export async function sshSaveConfig(value){config=structuredClone(value);emit();}
++export function sshTestConnection(conn){return new Promise((resolve,reject)=>calls.push({id:conn.id,resolve,reject,settled:false}));}
++const deny=()=>{forbidden++;throw Error('Unexpected non-test SSH operation');};
++export const sshGetDefaultMappings=deny,sshSync=deny,sshDeleteFileMapping=deny,sshResetFileMappings=deny,sshCreateConnection=deny,sshUpdateConnection=deny,sshDeleteConnection=deny,sshAddFileMapping=deny,sshUpdateFileMapping=deny;
++export const invoke=deny;
++export const boundary={
++ snapshot:()=>({revision,reads,calls:calls.map(({id,settled})=>({id,settled})),forbidden}),
++ settle(indices,reject=false){const pending=indices.map(i=>calls[i]);if(!pending.length||pending.some(c=>!c||c.settled))throw Error('Invalid pending call indices');for(const c of pending){c.settled=true;if(reject)c.reject(new Error('synthetic-'+c.id+'-error'));else c.resolve({connected:true,serverInfo:c.id+'-result'});}return Promise.resolve();},
++};
+--- /dev/null
++++ b/web/test/features/settings/sshRequest/sshRequestBrowserChecks.mjs
+@@ -0,0 +1,51 @@
++import assert from 'node:assert/strict';
++import {writeFile} from 'node:fs/promises';
++import path from 'node:path';
++export async function verifySSHRequestRace({send,evaluate,baseUrl,exceptions,artifactRoot}) {
++ const results=[];let serial=0;let phase='setup';let observations=[];
++ const snapshot=()=>evaluate('sshRequestFixture.snapshot()');
++ const wait=async pred=>{for(let i=0;i<200;i++){if(await pred())return;await new Promise(r=>setTimeout(r,20));}throw Error('UI state deadline');};
++ const drain=async()=>{await evaluate('sshRequestFixture.drain()');await wait(async()=>!(await snapshot()).animations.length);};
++ const observe=async label=>{const state=await snapshot();observations.push({label,state});return state;};
++ const click=async(selector,exactText)=>{
++  phase='interaction';
++  const point=await evaluate(`(()=>{const es=[...document.querySelectorAll(${JSON.stringify(selector)})].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&(${JSON.stringify(exactText??null)}===null||e.textContent===${JSON.stringify(exactText??null)});});if(es.length!==1)throw Error('Expected one visible target: '+es.length);const e=es[0],r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))throw Error('Target occluded/outside viewport');return{x,y};})()`);
++  await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
++  await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
++ };
++ const pending=async id=>(await snapshot()).calls.flatMap((c,i)=>c.id===id&&!c.settled?[i]:[]);
++ const settle=async(indices,reject=false)=>{phase='settlement';await observe('before settlement '+indices.join(','));await evaluate(`sshRequestFixture.settle(${JSON.stringify(indices)},${reject})`);await observe('after settlement');};
++ const check=async fn=>{const state=await observe('invariant');phase='invariant';fn(state);phase='interaction';};
++ const chooseB=async()=>{
++  await click('.ant-modal .ant-select-selector');
++  await wait(()=>evaluate(`!![...document.querySelectorAll('.ant-select-item-option-content > div > span')].find(e=>e.textContent==='Connection B'&&e.getBoundingClientRect().height>0)`));
++  // Product Option renders a name span followed by edit/delete buttons. Click
++  // only the exact name, not the option center or an unguaranteed title attr.
++  await click('.ant-select-item-option-content > div > span','Connection B');
++  await drain();await wait(async()=> (await pending('B')).length>0);await observe('B selected after config-event drain');
++ };
++ async function run(name,control,fn){
++  phase='setup';observations=[];const exceptionStart=exceptions.length;
++  try{
++   const id=String(serial++);await send('Page.navigate',{url:baseUrl+'/?case='+id});
++   await wait(()=>evaluate(`!!window.sshRequestFixture&&sshRequestFixture.snapshot().caseId===${JSON.stringify(id)}&&sshRequestFixture.snapshot().calls.some(c=>c.id==='A')`));
++   await drain();await observe('ready');await fn();
++   phase='safety';assert.equal((await snapshot()).forbidden,0);assert.equal(exceptions.length,exceptionStart,'Page exception');
++   results.push({name,control,passed:true,observations,pageExceptions:[]});
++  }catch(e){
++   const pageExceptions=exceptions.slice(exceptionStart);let lastObservation;try{lastObservation=await snapshot();}catch{}
++   results.push({name,control,passed:false,classification:phase==='invariant'&&!control&&!pageExceptions.length&&lastObservation?.forbidden===0?'product-invariant':'fixture-or-control-error',phase,error:String(e),observations,lastObservation,pageExceptions});
++  }
++ }
++ await run('current success control',true,async()=>{const count=(await snapshot()).calls.length;await settle(await pending('A'));await check(s=>{assert.ok(s.text.includes('A-result'));assert.equal(s.spinners,0);assert.equal(s.calls.length,count,'stable config commit must not trigger another request');});});
++ await run('current failure control',true,async()=>{await settle(await pending('A'),true);await check(s=>{assert.ok(s.text.includes('synthetic-A-error'));assert.equal(s.spinners,0);});});
++ await run('B result survives late A success',false,async()=>{const a=await pending('A');await chooseB();await settle(await pending('B'));await settle(a);await check(s=>{assert.ok(s.text.includes('B-result'));assert.ok(!s.text.includes('A-result'));assert.equal(s.spinners,0);});});
++ await run('late A rejection preserves pending B spinner',false,async()=>{const a=await pending('A');await chooseB();await settle(a,true);await check(s=>{assert.ok(s.spinners>0);assert.ok(!s.text.includes('synthetic-A-error'));});});
++ await run('close reopen rejects old A result',false,async()=>{const a=await pending('A');await click('.ant-modal-close');await wait(async()=>!(await snapshot()).visible);await click('#reopen');await drain();await wait(async()=> (await snapshot()).visible&&(await pending('A')).some(i=>!a.includes(i)));await settle(a);await check(s=>{assert.ok(!s.text.includes('A-result'));assert.ok(s.spinners>0);});});
++ await run('disable reenable ignores old result',false,async()=>{const a=await pending('A');await click('.ant-modal button[role="switch"]');await drain();await wait(()=>evaluate(`document.querySelector('.ant-modal button[role="switch"]').getAttribute('aria-checked')==='false'`));await click('.ant-modal button[role="switch"]');await drain();await wait(async()=> (await pending('A')).some(i=>!a.includes(i)));await settle(a);await check(s=>{assert.ok(!s.text.includes('A-result'));assert.ok(s.spinners>0);});});
++ await run('unmount pending stays absent',true,async()=>{const a=await pending('A');await click('.ant-modal-close');await wait(async()=>!(await snapshot()).visible);await click('#unmount');await drain();await settle(a);await check(s=>assert.equal(s.visible,false));});
++ const report={passed:results.filter(x=>x.passed).length,productInvariantFailures:results.filter(x=>x.classification==='product-invariant').length,fixtureErrors:results.filter(x=>x.classification==='fixture-or-control-error').length,results};
++ report.validRed=report.productInvariantFailures>0&&report.fixtureErrors===0&&results.filter(x=>x.control).every(x=>x.passed)&&results.every(x=>!x.pageExceptions.length&&x.observations.every(o=>o.state.forbidden===0));
++ await writeFile(path.join(artifactRoot,'ssh-request-cases.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
++ assert.equal(results.filter(x=>!x.passed).length,0,'SSH result race cases failed; inspect classifications');return results;
++}
+--- a/web/features/settings/components/SSHSyncModal.tsx
++++ b/web/features/settings/components/SSHSyncModal.tsx
+@@ -4,7 +4,7 @@
+  * Modal for configuring SSH sync settings with connection management
+  */
+ 
+-import React, { useCallback, useEffect, useState } from 'react';
++import React, { useCallback, useEffect, useState, useRef } from 'react';
+ import { Modal, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs, Tooltip, Progress, theme } from 'antd';
+ import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined, ApiOutlined } from '@ant-design/icons';
+ import { useTranslation } from 'react-i18next';
+@@ -134,6 +134,16 @@
+   const [activeModuleTab, setActiveModuleTab] = useState<string>(visibleModuleKeys[0] || 'all');
+   const [testResult, setTestResult] = useState<SSHConnectionResult | null>(null);
+   const [testing, setTesting] = useState(false);
++  const testRequestGeneration = useRef(0);
++
++  // A late result belongs only to the connection and open modal that requested it.
++  // Invalidating UI results does not cancel the underlying SSH invocation.
++  useEffect(() => {
++    testRequestGeneration.current += 1;
++    setTestResult(null);
++    setTesting(false);
++    return () => { testRequestGeneration.current += 1; };
++  }, [open, activeConnectionId, enabled]);
+ 
+   const moduleStatusMap = React.useMemo(() => {
+     return new Map((config?.moduleStatuses || []).map((item) => [item.module, item] as const));
+@@ -300,6 +310,7 @@
+ 
+   // Handle active connection change
+   const handleActiveConnectionChange = async (value: string) => {
++    testRequestGeneration.current += 1;
+     setActiveConnectionId(value);
+     setTestResult(null);
+     try {
+@@ -313,22 +324,23 @@
+   const handleTestConnection = useCallback(async (connId?: string) => {
+     const targetId = connId || activeConnectionId;
+     const conn = config?.connections.find(c => c.id === targetId);
+-    if (!conn) return;
++    if (!conn || !open || !enabled) return;
++    const generation = ++testRequestGeneration.current;
+ 
+     setTesting(true);
+     setTestResult(null);
+     try {
+       const result = await sshTestConnection(conn);
+-      setTestResult(result);
++      if (generation === testRequestGeneration.current) setTestResult(result);
+     } catch (error) {
+-      setTestResult({
++      if (generation === testRequestGeneration.current) setTestResult({
+         connected: false,
+         error: String(error),
+       });
+     } finally {
+-      setTesting(false);
+-    }
+-  }, [activeConnectionId, config?.connections]);
++      if (generation === testRequestGeneration.current) setTesting(false);
++    }
++  }, [activeConnectionId, config?.connections, open, enabled]);
+ 
+   // Auto test connection when modal opens or active connection changes
+   useEffect(() => {
