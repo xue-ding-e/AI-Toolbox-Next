@@ -22,7 +22,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -40,8 +40,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = '${{ github.sha }}'
-          echo 'c72918d5333950f9b2d0af92ce66c71da0eaf650e7ab3c31cadcb0757427997e  validation/candidate.diff' | sha256sum -c -
-          echo '898b4d3c65001b052fee480a13a68716279bc107d8a43d7fe516005ddcca98fd  validation/manifest.json' | sha256sum -c -
+          echo '2f88a5156b22f1046db157f93ebd0522b181102cf5436f6c592ff942c3c2ec0b  validation/candidate.diff' | sha256sum -c -
+          echo '0f98d21f1d5dfafb0e8d78eb172c2ea601d07dbad74f26d045a5a3ba3690e7a6  validation/manifest.json' | sha256sum -c -
           echo '6806f9afede8b6c17ecf1d872326b9bf32f28562837eab579e6e0489e97c3f36  validation/validate.py' | sha256sum -c -
       - name: Official prerequisites and fixed Rust
         timeout-minutes: 10

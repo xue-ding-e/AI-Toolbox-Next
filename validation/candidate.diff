@@ -535,7 +535,7 @@
 +export const boundary={snapshot:()=>({scenario,stored,calls:[...calls],writes:[...writes],forbidden,readCount,listeners:listeners.size,pendingInitial:!!initialResolve}),resolveInitial(){if(!initialResolve)throw Error('No pending initial read');const resolve=initialResolve;initialResolve=undefined;resolve();}};
 --- /dev/null
 +++ b/web/test/features/coding/skills/groupMode/skillsGroupModeBrowserChecks.mjs
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,45 @@
 +import assert from 'node:assert/strict';
 +import {writeFile} from 'node:fs/promises';
 +import path from 'node:path';
@@ -545,9 +545,18 @@
 + const observe=async label=>{const state=await snapshot();observations.push({label,state});return state;};
 + const wait=async fn=>{for(let n=0;n<200;n++){if(await fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Fixture UI deadline');};
 + const drain=()=>evaluate('skillsGroupFixture.drain()');
-+ async function click(selector,text){phase='interaction';const point=await evaluate(`(()=>{const es=[...document.querySelectorAll(${JSON.stringify(selector)})].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&(${JSON.stringify(text??null)}===null||e.textContent===${JSON.stringify(text??null)});});if(es.length!==1)throw Error('Expected one visible target '+es.length);const e=es[0],r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))throw Error('Target occluded');return{x,y};})()`);await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});await drain();}
++ async function click(selector,text){phase='interaction';const point=await evaluate(`(()=>{const es=[...document.querySelectorAll(${JSON.stringify(selector)})].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&(${JSON.stringify(text??null)}===null||e.textContent===${JSON.stringify(text??null)});});if(es.length!==1)throw Error('Expected one visible target '+es.length);const e=es[0],r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))throw Error('Target occluded');return{x,y,rect:{x:r.x,y:r.y,width:r.width,height:r.height},tag:e.tagName,role:e.getAttribute('role'),checked:e.getAttribute('aria-checked'),hit:true,popoverClass:e.closest('.ant-popover')?.className??null};})()`);observations.push({label:'click-before',selector,text,point});await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:point.x,y:point.y});await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x:point.x,y:point.y});await drain();await observe('click-after');}
 + const modes='[aria-label="skills.groupControls.groupingLabel"] [role="radio"]';
-+ async function openOptions(){await click('button[title^="skills.toolbar.options"]');await wait(async()=> (await snapshot()).mode.length===1);}
++ async function openOptions(){
++  await click('button[title^="skills.toolbar.options"]');
++  let previous='',stable=0;
++  await wait(async()=>{
++   const geometry=await evaluate(`(()=>{const groups=[...document.querySelectorAll('[aria-label="skills.groupControls.groupingLabel"]')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';});if(groups.length!==1)return null;const group=groups[0],popup=group.closest('.ant-popover');if(!popup||/ant-zoom-big-(appear|enter|leave)/.test(popup.className))return null;const style=getComputedStyle(popup);if(style.visibility==='hidden'||Number(style.opacity)!==1||popup.getAnimations({subtree:true}).some(a=>a.playState==='running'||a.pending))return null;const radios=[...group.querySelectorAll('[role="radio"]')];if(radios.length!==2)return null;const rects=[];for(const e of radios){const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(r.width<=0||r.height<=0||getComputedStyle(e).visibility==='hidden'||x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))return null;rects.push({x:r.x,y:r.y,width:r.width,height:r.height,checked:e.getAttribute('aria-checked'),hit:true});}return{popupClass:popup.className,opacity:style.opacity,rects};})()`);
++   const key=JSON.stringify(geometry);stable=geometry&&key===previous?stable+1:0;previous=key;
++   if(stable>=2){observations.push({label:'popover-stable',geometry});return true;}return false;
++  });
++  await drain();
++ }
 + async function choose(mode){await click(modes,'skills.groupBy'+(mode==='source'?'Source':'Custom'));}
 + async function check(fn){const state=await observe('invariant');phase='invariant';fn(state);phase='interaction';}
 + async function remount(){const writes=(await snapshot()).writes.length;await click('#remount');await openOptions();assert.equal((await snapshot()).writes.length,writes,'Remount must not write preferences');}
