@@ -1,0 +1,1231 @@
+--- a/package.json
++++ b/package.json
+@@ -25,7 +25,7 @@
+     "test:provider-card-layout": "node ./scripts/verify-provider-card-layout.mjs",
+     "test:provider-card-view": "node ./scripts/verify-provider-card-view.mjs",
+     "test:ime-autocomplete": "node ./scripts/verify-ime-safe-autocomplete.mjs",
+-    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-request-race && pnpm run test:skills-group-mode",
++    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-capability && pnpm run test:skills-group-mode",
+     "sync:version": "node scripts/sync-tauri-version.mjs",
+     "tauri": "tauri",
+     "prepare": "husky",
+@@ -46,6 +46,7 @@
+     "test:gemini-account-pending": "node ./scripts/verify-gemini-account-pending.mjs",
+     "test:official-account-pending": "node ./scripts/verify-official-account-pending.mjs",
+     "test:ssh-request-race": "node ./scripts/verify-ssh-request-race.mjs",
++    "test:ssh-capability": "node ./web/test/features/settings/sshCapability/verify.mjs",
+     "test:deeplink-handshake": "node ./scripts/verify-deeplink-handshake.mjs",
+     "test:skills-group-mode": "node ./scripts/verify-skills-group-mode.mjs"
+   },
+--- /dev/null
++++ b/tauri/src/coding/ssh/connection_probe.rs
+@@ -0,0 +1,463 @@
++//! Temporary-connection lifecycle, shared by the russh adapter and pure fakes.
++use std::future::Future;
++use std::time::Duration;
++
++use super::super::types::{CleanupWarning, ProbeReason, SSHConnectionResult, SSHSyncCapability};
++
++pub(super) const OUTPUT_LIMIT: usize = 64 * 1024;
++
++#[derive(Default, Debug)]
++pub(super) struct ProbeOutput {
++    pub stdout: Vec<u8>,
++    pub stderr: Vec<u8>,
++    status: Option<u32>,
++    conflicting_status: bool,
++    signalled: bool,
++    closed: bool,
++}
++
++impl ProbeOutput {
++    pub fn append(&mut self, data: &[u8], stderr: bool) -> Result<(), ProbeReason> {
++        // Check raw, combined bytes BEFORE extending either buffer or decoding.
++        let remaining = OUTPUT_LIMIT - self.stdout.len() - self.stderr.len();
++        if data.len() > remaining {
++            return Err(ProbeReason::OutputLimitExceeded);
++        }
++        if stderr { &mut self.stderr } else { &mut self.stdout }.extend_from_slice(data);
++        Ok(())
++    }
++
++    pub fn status(&mut self, status: u32) {
++        if self.status.is_some_and(|previous| previous != status) {
++            self.conflicting_status = true;
++        }
++        self.status = Some(status);
++    }
++
++    pub fn signal(&mut self) { self.signalled = true; }
++    pub fn close(&mut self) { self.closed = true; }
++
++    pub fn capability(&self) -> (SSHSyncCapability, Option<ProbeReason>) {
++        use ProbeReason::*;
++        let reason = if !self.closed { Some(ChannelClosedEarly) }
++            else if self.signalled { Some(ExitSignal) }
++            else if self.conflicting_status { Some(ConflictingExitStatus) }
++            else if self.status.is_none() { Some(MissingExitStatus) }
++            else if self.status != Some(0) { Some(NonzeroExitStatus) }
++            else { None };
++        if let Some(reason) = reason {
++            return (SSHSyncCapability::Unknown, Some(reason));
++        }
++        // Match raw stdout only. Accept the probe's LF and SSH CRLF variants,
++        // not arbitrary whitespace, banners, substrings or decoded stderr.
++        let token = self.stdout.strip_suffix(b"\r\n")
++            .or_else(|| self.stdout.strip_suffix(b"\n")).unwrap_or(&self.stdout);
++        match token {
++            b"AI_TOOLBOX_POSIX_SYNC_V1" => (SSHSyncCapability::Supported, None),
++            b"AI_TOOLBOX_POSIX_SYNC_NO_HOME" => (SSHSyncCapability::MissingHome, None),
++            _ => (SSHSyncCapability::Unknown, Some(UnexpectedOutput)),
++        }
++    }
++}
++
++/// Small stream seam: the real russh channel and synthetic queues use exactly
++/// the same drain, accumulator and remote-close confirmation logic.
++pub(super) trait ChannelSource {
++    fn next(&mut self) -> impl Future<Output = Option<russh::ChannelMsg>> + Send;
++}
++
++pub(super) async fn collect<C: ChannelSource>(
++    channel: &mut C,
++    closed: tokio::sync::oneshot::Receiver<u32>,
++    expected_channel: u32,
++) -> Result<ProbeOutput, ProbeReason> {
++    use russh::ChannelMsg;
++    let mut output = ProbeOutput::default();
++    while let Some(message) = channel.next().await {
++        match message {
++            ChannelMsg::Data { data } => output.append(&data, false)?,
++            ChannelMsg::ExtendedData { data, ext: 1 } => output.append(&data, true)?,
++            ChannelMsg::ExitStatus { exit_status } => output.status(exit_status),
++            ChannelMsg::ExitSignal { .. } => output.signal(),
++            ChannelMsg::Failure => return Err(ProbeReason::ChannelFailure),
++            _ => {}
++        }
++    }
++    // EOF is not completion. Always drain to None first, even when the close
++    // notification arrived early, so queued tail bytes/status cannot be lost.
++    // The caller's single probe deadline also covers this callback wait.
++    if closed.await.map_err(|_| ProbeReason::ChannelClosedEarly)? != expected_channel {
++        return Err(ProbeReason::ChannelClosedEarly);
++    }
++    output.close();
++    Ok(output)
++}
++
++pub(super) trait Transport {
++    fn authenticate(&mut self) -> impl Future<Output = Result<(), String>> + Send;
++    // This future includes channel open, exec request and all output collection.
++    fn probe(&mut self, command: &str) -> impl Future<Output = Result<ProbeOutput, ProbeReason>> + Send;
++    fn disconnect(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
++}
++
++#[derive(Clone, Copy)]
++pub(super) struct Deadlines {
++    pub auth: Duration,
++    pub probe: Duration,
++    pub cleanup: Duration,
++}
++
++impl Default for Deadlines {
++    fn default() -> Self {
++        Self { auth: Duration::from_secs(10), probe: Duration::from_secs(10), cleanup: Duration::from_secs(2) }
++    }
++}
++
++pub(super) struct Outcome {
++    pub authentication: Result<(), String>,
++    pub probe: Option<Result<ProbeOutput, ProbeReason>>,
++    pub cleanup_warning: Option<CleanupWarning>,
++}
++
++impl Outcome {
++    pub fn into_result(self) -> SSHConnectionResult {
++        let (sync_capability, probe_reason) = match self.probe {
++            Some(Ok(output)) => {
++                let (capability, reason) = output.capability();
++                (Some(capability), reason)
++            }
++            Some(Err(reason)) => (Some(SSHSyncCapability::Unknown), Some(reason)),
++            None => (None, None),
++        };
++        SSHConnectionResult {
++            connected: self.authentication.is_ok(),
++            error: self.authentication.err(),
++            // A POSIX token is not server information; no OS/banner command.
++            server_info: None,
++            sync_capability,
++            probe_reason,
++            cleanup_warning: self.cleanup_warning,
++        }
++    }
++}
++
++/// Every normal return after obtaining a handle attempts disconnect exactly once.
++/// Cancellation/dropping this future cannot guarantee asynchronous cleanup.
++/// Tokio deadlines bound asynchronous waits, not synchronous private-key reads
++/// or parsing performed by the existing authentication implementation.
++pub(super) async fn run<T: Transport>(transport: &mut T, command: &str, limits: Deadlines) -> Outcome {
++    let authentication = tokio::time::timeout(limits.auth, transport.authenticate()).await
++        .unwrap_or_else(|_| Err("SSH 认证超时".to_string()));
++    let probe = if authentication.is_ok() {
++        Some(tokio::time::timeout(limits.probe, transport.probe(command)).await
++            .unwrap_or(Err(ProbeReason::ProbeTimeout)))
++    } else { None };
++    let cleanup_warning = match tokio::time::timeout(limits.cleanup, transport.disconnect()).await {
++        Ok(Ok(())) => None,
++        Ok(Err(())) => Some(CleanupWarning::DisconnectFailed),
++        Err(_) => Some(CleanupWarning::DisconnectTimeout),
++    };
++    Outcome { authentication, probe, cleanup_warning }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[derive(Clone, Copy)]
++    enum Mode { Ok, Fail, Pending, Streaming, UnclosedStream }
++
++    struct Fake {
++        auth: Mode,
++        probe: Mode,
++        cleanup: Mode,
++        calls: Vec<&'static str>,
++        chunks: usize,
++    }
++
++    impl Default for Fake {
++        fn default() -> Self {
++            Self { auth: Mode::Ok, probe: Mode::Ok, cleanup: Mode::Ok, calls: vec![], chunks: 0 }
++        }
++    }
++
++    impl Transport for Fake {
++        async fn authenticate(&mut self) -> Result<(), String> {
++            self.calls.push("auth");
++            match self.auth {
++                Mode::Fail => Err("authentication rejected".into()),
++                Mode::Pending => std::future::pending().await,
++                _ => Ok(()),
++            }
++        }
++
++        async fn probe(&mut self, command: &str) -> Result<ProbeOutput, ProbeReason> {
++            self.calls.push("probe");
++            assert_eq!(command, super::super::super::capabilities::POSIX_SYNC_PROBE);
++            match self.probe {
++                Mode::Fail => Err(ProbeReason::ExecFailed),
++                Mode::Pending => std::future::pending().await,
++                Mode::Streaming => {
++                    let mut output = ProbeOutput::default();
++                    loop {
++                        // Incoming data must not restart the one probe deadline.
++                        output.append(b"x", false)?;
++                        self.chunks += 1;
++                        tokio::time::sleep(Duration::from_millis(1)).await;
++                    }
++                }
++                Mode::UnclosedStream => {
++                    let mut queue = Queue::new(success_messages());
++                    queue.pending_at_end = true;
++                    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
++                    closed_tx.send(7).unwrap();
++                    collect(&mut queue, closed_rx, 7).await
++                }
++                Mode::Ok => {
++                    let mut output = ProbeOutput::default();
++                    output.append(b"AI_TOOLBOX_POSIX_", false)?;
++                    output.append(b"SYNC_V1\n", false)?;
++                    output.status(0);
++                    output.close();
++                    Ok(output)
++                }
++            }
++        }
++
++        async fn disconnect(&mut self) -> Result<(), ()> {
++            self.calls.push("disconnect");
++            match self.cleanup {
++                Mode::Fail => Err(()),
++                Mode::Pending => std::future::pending().await,
++                _ => Ok(()),
++            }
++        }
++    }
++
++    async fn exercise(fake: &mut Fake) -> Outcome {
++        let limits = Deadlines {
++            auth: Duration::from_millis(5),
++            probe: Duration::from_millis(5),
++            cleanup: Duration::from_millis(5),
++        };
++        tokio::time::timeout(Duration::from_secs(3), run(
++            fake, super::super::super::capabilities::POSIX_SYNC_PROBE, limits,
++        )).await.expect("the whole lifecycle must remain bounded")
++    }
++
++    #[tokio::test]
++    async fn authenticated_success_disconnects_once() {
++        let mut fake = Fake::default();
++        let outcome = exercise(&mut fake).await;
++        assert!(outcome.authentication.is_ok());
++        assert_eq!(outcome.probe.unwrap().unwrap().capability(), (SSHSyncCapability::Supported, None));
++        assert_eq!(outcome.cleanup_warning, None);
++        assert_eq!(fake.calls, ["auth", "probe", "disconnect"]);
++    }
++
++    #[tokio::test]
++    async fn rejected_or_pending_auth_skips_probe_and_disconnects_once() {
++        for auth in [Mode::Fail, Mode::Pending] {
++            let mut fake = Fake { auth, ..Fake::default() };
++            let outcome = exercise(&mut fake).await;
++            assert!(outcome.authentication.is_err());
++            assert!(outcome.probe.is_none());
++            let result = outcome.into_result();
++            assert!(!result.connected);
++            assert!(result.error.is_some());
++            assert_eq!(result.sync_capability, None);
++            assert_eq!(result.probe_reason, None);
++            assert_eq!(fake.calls, ["auth", "disconnect"]);
++        }
++    }
++
++    #[tokio::test]
++    async fn failed_or_pending_probe_preserves_authentication_and_disconnects() {
++        for (probe, reason) in [(Mode::Fail, ProbeReason::ExecFailed), (Mode::Pending, ProbeReason::ProbeTimeout)] {
++            let mut fake = Fake { probe, ..Fake::default() };
++            let outcome = exercise(&mut fake).await;
++            assert!(outcome.authentication.is_ok());
++            let result = outcome.into_result();
++            assert!(result.connected);
++            assert!(result.error.is_none());
++            assert_eq!(result.sync_capability, Some(SSHSyncCapability::Unknown));
++            assert_eq!(result.probe_reason, Some(reason));
++            assert_eq!(fake.calls, ["auth", "probe", "disconnect"]);
++        }
++    }
++
++    #[tokio::test]
++    async fn cleanup_failure_or_timeout_is_separate_from_primary_result() {
++        for (cleanup, warning) in [(Mode::Fail, CleanupWarning::DisconnectFailed), (Mode::Pending, CleanupWarning::DisconnectTimeout)] {
++            for auth in [Mode::Ok, Mode::Fail] {
++                let mut fake = Fake { auth, cleanup, ..Fake::default() };
++                let outcome = exercise(&mut fake).await;
++                assert_eq!(outcome.authentication.is_ok(), matches!(auth, Mode::Ok));
++                assert_eq!(outcome.cleanup_warning, Some(warning));
++                assert_eq!(fake.calls.iter().filter(|call| **call == "disconnect").count(), 1);
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn continuous_data_does_not_reset_probe_deadline() {
++        let mut fake = Fake { probe: Mode::Streaming, ..Fake::default() };
++        let outcome = exercise(&mut fake).await;
++        assert!(fake.chunks > 0);
++        assert_eq!(outcome.probe.unwrap().unwrap_err(), ProbeReason::ProbeTimeout);
++        assert_eq!(fake.calls, ["auth", "probe", "disconnect"]);
++    }
++
++    struct Queue {
++        messages: std::collections::VecDeque<russh::ChannelMsg>,
++        pending_at_end: bool,
++        drained: Option<tokio::sync::oneshot::Sender<()>>,
++    }
++
++    impl Queue {
++        fn new(messages: Vec<russh::ChannelMsg>) -> Self {
++            Self { messages: messages.into(), pending_at_end: false, drained: None }
++        }
++    }
++
++    impl ChannelSource for Queue {
++        async fn next(&mut self) -> Option<russh::ChannelMsg> {
++            if let Some(message) = self.messages.pop_front() {
++                return Some(message);
++            }
++            if self.pending_at_end {
++                return std::future::pending().await;
++            }
++            if let Some(drained) = self.drained.take() {
++                let _ = drained.send(());
++            }
++            None
++        }
++    }
++
++    fn data(bytes: &[u8]) -> russh::ChannelMsg {
++        russh::ChannelMsg::Data { data: russh::CryptoVec::from_slice(bytes) }
++    }
++
++    fn success_messages() -> Vec<russh::ChannelMsg> {
++        vec![data(b"AI_TOOLBOX_POSIX_SYNC_V1\n"), russh::ChannelMsg::ExitStatus { exit_status: 0 }]
++    }
++
++    #[tokio::test]
++    async fn early_close_notification_never_skips_queued_tail_or_status() {
++        for (tail, reason) in [
++            (data(b"unexpected tail"), ProbeReason::UnexpectedOutput),
++            (russh::ChannelMsg::ExitStatus { exit_status: 1 }, ProbeReason::ConflictingExitStatus),
++        ] {
++            let mut messages = success_messages();
++            messages.push(tail);
++            let mut queue = Queue::new(messages);
++            let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
++            closed_tx.send(7).unwrap();
++            let output = collect(&mut queue, closed_rx, 7).await.unwrap();
++            assert!(queue.messages.is_empty());
++            assert_eq!(output.capability(), (SSHSyncCapability::Unknown, Some(reason)));
++        }
++    }
++
++    #[tokio::test]
++    async fn drained_stream_waits_for_real_close_confirmation() {
++        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
++        let (drained_tx, drained_rx) = tokio::sync::oneshot::channel();
++        let mut queue = Queue::new(success_messages());
++        queue.drained = Some(drained_tx);
++        let (output, ()) = tokio::time::timeout(Duration::from_secs(3), async {
++            tokio::join!(
++                collect(&mut queue, closed_rx, 7),
++                async {
++                    drained_rx.await.unwrap();
++                    // This notification cannot arrive until the stream yielded None.
++                    closed_tx.send(7).unwrap();
++                },
++            )
++        }).await.expect("drain and close confirmation must finish");
++        assert_eq!(output.unwrap().capability(), (SSHSyncCapability::Supported, None));
++    }
++
++    #[tokio::test]
++    async fn canceled_or_wrong_channel_close_cannot_confirm_probe() {
++        for wrong_channel in [false, true] {
++            let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
++            if wrong_channel { closed_tx.send(8).unwrap(); } else { drop(closed_tx); }
++            let mut queue = Queue::new(success_messages());
++            let probe = collect(&mut queue, closed_rx, 7).await;
++            assert_eq!(probe.as_ref().unwrap_err(), &ProbeReason::ChannelClosedEarly);
++            let result = Outcome { authentication: Ok(()), probe: Some(probe), cleanup_warning: None }.into_result();
++            assert!(result.connected);
++            assert!(result.error.is_none());
++            assert_eq!(result.sync_capability, Some(SSHSyncCapability::Unknown));
++        }
++    }
++
++    #[tokio::test]
++    async fn token_status_and_close_signal_without_stream_end_still_time_out() {
++        let mut fake = Fake { probe: Mode::UnclosedStream, ..Fake::default() };
++        let result = exercise(&mut fake).await.into_result();
++        assert!(result.connected);
++        assert_eq!(result.sync_capability, Some(SSHSyncCapability::Unknown));
++        assert_eq!(result.probe_reason, Some(ProbeReason::ProbeTimeout));
++        assert_eq!(fake.calls, ["auth", "probe", "disconnect"]);
++    }
++
++    fn completed(stdout: &[u8]) -> ProbeOutput {
++        let mut output = ProbeOutput::default();
++        output.append(stdout, false).unwrap();
++        output.status(0);
++        output.close();
++        output
++    }
++
++    #[test]
++    fn combined_raw_limit_is_checked_before_extending() {
++        let mut output = ProbeOutput::default();
++        output.append(&vec![0xff; OUTPUT_LIMIT - 1], true).unwrap();
++        output.append(b"x", false).unwrap();
++        assert_eq!(output.append(b"y", false), Err(ProbeReason::OutputLimitExceeded));
++        assert_eq!(output.stdout, b"x");
++        assert_eq!(output.stderr.len(), OUTPUT_LIMIT - 1);
++        let mut oversized = ProbeOutput::default();
++        assert_eq!(oversized.append(&vec![0; OUTPUT_LIMIT + 1], true), Err(ProbeReason::OutputLimitExceeded));
++        assert!(oversized.stderr.is_empty());
++    }
++
++    #[test]
++    fn only_exact_raw_tokens_with_zero_status_and_close_are_classified() {
++        for suffix in ["", "\n", "\r\n"] {
++            for (token, capability) in [("AI_TOOLBOX_POSIX_SYNC_V1", SSHSyncCapability::Supported), ("AI_TOOLBOX_POSIX_SYNC_NO_HOME", SSHSyncCapability::MissingHome)] {
++                assert_eq!(completed(format!("{token}{suffix}").as_bytes()).capability(), (capability, None));
++            }
++        }
++        for raw in [b"AI_TOOLBOX_POSIX_SYNC_V1 extra".as_slice(), b"banner\nAI_TOOLBOX_POSIX_SYNC_V1\n", b"AI_TOOLBOX_POSIX_SYNC_V1\n\n", b" AI_TOOLBOX_POSIX_SYNC_V1", b"AI_TOOLBOX_POSIX_SYNC_V1\xff", b""] {
++            assert_eq!(completed(raw).capability(), (SSHSyncCapability::Unknown, Some(ProbeReason::UnexpectedOutput)));
++        }
++        let mut output = completed(b"");
++        output.append(b"AI_TOOLBOX_POSIX_SYNC_V1\n", true).unwrap();
++        assert_eq!(output.capability().1, Some(ProbeReason::UnexpectedOutput));
++        let mut output = completed(b"AI_TOOLBOX_POSIX_SYNC_V1\n");
++        output.append(b"\xff\xfe\x00", true).unwrap();
++        assert_eq!(output.capability(), (SSHSyncCapability::Supported, None));
++    }
++
++    #[test]
++    fn token_never_overrides_close_exit_signal_or_status_failures() {
++        let mut output = ProbeOutput::default();
++        output.append(b"AI_TOOLBOX_POSIX_SYNC_V1\n", false).unwrap();
++        assert_eq!(output.capability().1, Some(ProbeReason::ChannelClosedEarly));
++        output.close();
++        assert_eq!(output.capability().1, Some(ProbeReason::MissingExitStatus));
++        output.status(1);
++        assert_eq!(output.capability().1, Some(ProbeReason::NonzeroExitStatus));
++        output.status(0);
++        assert_eq!(output.capability().1, Some(ProbeReason::ConflictingExitStatus));
++        output.signal();
++        assert_eq!(output.capability().1, Some(ProbeReason::ExitSignal));
++        let mut same_status = completed(b"AI_TOOLBOX_POSIX_SYNC_V1\n");
++        same_status.status(0);
++        assert_eq!(same_status.capability().0, SSHSyncCapability::Supported);
++    }
++}
+--- a/tauri/src/coding/ssh/session.rs
++++ b/tauri/src/coding/ssh/session.rs
+@@ -15,7 +15,10 @@
+ use tokio::sync::Mutex;
+ 
+ use super::key_file;
+-use super::types::SSHConnection;
++use super::types::{ProbeReason, SSHConnection, SSHConnectionResult};
++
++#[path = "connection_probe.rs"]
++mod connection_probe;
+ 
+ /// 加载私钥：优先从内容直接解析，否则从文件路径加载
+ fn load_private_key(conn: &SSHConnection) -> Result<russh::keys::PrivateKey, String> {
+@@ -94,8 +97,8 @@
+ }
+ 
+ /// 对已建立的 SSH 连接进行用户认证（密码、公钥或 none）
+-async fn authenticate(
+-    session: &mut client::Handle<SshHandler>,
++async fn authenticate<H: client::Handler>(
++    session: &mut client::Handle<H>,
+     conn: &SSHConnection,
+ ) -> Result<(), String> {
+     if conn.auth_method == "none" {
+@@ -483,61 +486,94 @@
+     }
+ }
+ 
+-/// 创建一个独立的临时 SSH 连接并执行命令（用于测试连接）
+-/// 返回命令输出结果
+-pub async fn test_connection_with_command(
+-    conn: &SSHConnection,
+-    cmd: &str,
+-) -> Result<String, String> {
++/// russh 0.57 removes the channel sender before calling `channel_close`;
++/// `Channel::wait() == None` alone also occurs on a broken SSH transport.
++/// This temporary-only callback distinguishes a real SSH CHANNEL_CLOSE.
++struct TemporaryHandler {
++    closed: Option<tokio::sync::oneshot::Sender<u32>>,
++}
++
++impl client::Handler for TemporaryHandler {
++    type Error = russh::Error;
++
++    async fn check_server_key(&mut self, key: &ssh_key::PublicKey) -> Result<bool, Self::Error> {
++        // Preserve the existing host-key policy; this feature does not change it.
++        client::Handler::check_server_key(&mut SshHandler, key).await
++    }
++
++    async fn channel_close(&mut self, channel: russh::ChannelId, _session: &mut client::Session) -> Result<(), Self::Error> {
++        if let Some(closed) = self.closed.take() {
++            let _ = closed.send(channel.into());
++        }
++        Ok(())
++    }
++}
++
++struct TemporaryTransport<'a> {
++    handle: client::Handle<TemporaryHandler>,
++    conn: &'a SSHConnection,
++    closed: Option<tokio::sync::oneshot::Receiver<u32>>,
++}
++
++impl connection_probe::ChannelSource for russh::Channel<client::Msg> {
++    async fn next(&mut self) -> Option<ChannelMsg> {
++        self.wait().await
++    }
++}
++
++impl connection_probe::Transport for TemporaryTransport<'_> {
++    async fn authenticate(&mut self) -> Result<(), String> {
++        authenticate(&mut self.handle, self.conn).await
++    }
++
++    async fn probe(&mut self, command: &str) -> Result<connection_probe::ProbeOutput, ProbeReason> {
++        let mut channel = self.handle.channel_open_session().await
++            .map_err(|_| ProbeReason::ChannelOpenFailed)?;
++        channel.exec(true, command).await.map_err(|_| ProbeReason::ExecFailed)?;
++        let channel_id = channel.id().into();
++        let closed = self.closed.take().ok_or(ProbeReason::ChannelClosedEarly)?;
++        connection_probe::collect(&mut channel, closed, channel_id).await
++    }
++
++    async fn disconnect(&mut self) -> Result<(), ()> {
++        self.handle.disconnect(Disconnect::ByApplication, "", "").await.map_err(|_| ())
++    }
++}
++
++/// Read-only test of an independent connection, never the persistent session.
++/// `connected` records successful authentication during this test, NOT whether
++/// this temporary handle is still online. Disconnect is requested before return;
++/// successful enqueueing does not confirm remote connection shutdown.
++pub async fn test_connection_capability(conn: &SSHConnection) -> SSHConnectionResult {
+     let config = client::Config {
+         inactivity_timeout: Some(Duration::from_secs(10)),
+         ..Default::default()
+     };
+-
+-    let handler = SshHandler;
+-    let mut session = tokio::time::timeout(
++    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
++    let connection = tokio::time::timeout(
+         Duration::from_secs(15),
+-        client::connect(Arc::new(config), (conn.host.as_str(), conn.port), handler),
+-    )
+-    .await
+-    .map_err(|_| format!("连接超时: {}:{}", conn.host, conn.port))?
+-    .map_err(|e| format!("连接到 {}:{} 失败: {}", conn.host, conn.port, e))?;
+-
+-    authenticate(&mut session, conn).await?;
+-
+-    // 执行命令
+-    let mut channel = session
+-        .channel_open_session()
+-        .await
+-        .map_err(|e| format!("打开 channel 失败: {}", e))?;
+-
+-    channel
+-        .exec(true, cmd)
+-        .await
+-        .map_err(|e| format!("执行命令失败: {}", e))?;
+-
+-    let mut stdout_buf = Vec::new();
+-    let mut stderr_buf = Vec::new();
+-    loop {
+-        let Some(msg) = channel.wait().await else {
+-            break;
+-        };
+-        match msg {
+-            ChannelMsg::Data { ref data } => {
+-                stdout_buf.extend_from_slice(data);
+-            }
+-            ChannelMsg::ExtendedData { ref data, ext } => {
+-                if ext == 1 {
+-                    stderr_buf.extend_from_slice(data);
+-                }
+-            }
+-            _ => {}
+-        }
+-    }
+-
+-    let _ = session.disconnect(Disconnect::ByApplication, "", "").await;
+-
+-    Ok(String::from_utf8_lossy(&stdout_buf).to_string())
++        client::connect(Arc::new(config), (conn.host.as_str(), conn.port), TemporaryHandler { closed: Some(closed_tx) }),
++    ).await;
++    let handle = match connection {
++        Ok(Ok(handle)) => handle,
++        error => {
++            let error = match error {
++                Err(_) => format!("连接超时: {}:{}", conn.host, conn.port),
++                Ok(Err(error)) => format!("连接到 {}:{} 失败: {}", conn.host, conn.port, error),
++                Ok(Ok(_)) => unreachable!(),
++            };
++            return SSHConnectionResult {
++                connected: false, error: Some(error), server_info: None,
++                sync_capability: None, probe_reason: None, cleanup_warning: None,
++            };
++        }
++    };
++    let mut transport = TemporaryTransport { handle, conn, closed: Some(closed_rx) };
++    let outcome = connection_probe::run(
++        &mut transport, super::capabilities::POSIX_SYNC_PROBE,
++        connection_probe::Deadlines::default(),
++    ).await;
++    outcome.into_result()
+ }
+ 
+ /// 通过已有 SFTP 会话上传单个文件
+--- a/tauri/src/coding/ssh/sync.rs
++++ b/tauri/src/coding/ssh/sync.rs
+@@ -100,25 +100,7 @@
+ /// 测试 SSH 连接（独立短连接，不复用主连接）
+ /// 用于测试未保存的连接配置
+ pub async fn test_connection(conn: &SSHConnection) -> SSHConnectionResult {
+-    match session::test_connection_with_command(conn, "uname -a").await {
+-        Ok(output) => {
+-            let server_info = output.trim().to_string();
+-            SSHConnectionResult {
+-                connected: true,
+-                error: None,
+-                server_info: if server_info.is_empty() {
+-                    None
+-                } else {
+-                    Some(server_info)
+-                },
+-            }
+-        }
+-        Err(e) => SSHConnectionResult {
+-            connected: false,
+-            error: Some(e),
+-            server_info: None,
+-        },
+-    }
++    session::test_connection_capability(conn).await
+ }
+ 
+ // ============================================================================
+--- a/tauri/src/coding/ssh/types.rs
++++ b/tauri/src/coding/ssh/types.rs
+@@ -205,6 +205,23 @@
+ // SSH Result Types
+ // ============================================================================
+ 
++/// Read-only POSIX sync probe result, not an OS identity or persistent status.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub enum SSHSyncCapability { Supported, MissingHome, Unknown }
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub enum ProbeReason {
++    ChannelOpenFailed, ExecFailed, ChannelFailure, ChannelClosedEarly,
++    OutputLimitExceeded, ProbeTimeout, ExitSignal, ConflictingExitStatus,
++    MissingExitStatus, NonzeroExitStatus, UnexpectedOutput,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub enum CleanupWarning { DisconnectFailed, DisconnectTimeout }
++
+ /// SSH connection test result
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+@@ -212,6 +229,12 @@
+     pub connected: bool,
+     pub error: Option<String>,
+     pub server_info: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub sync_capability: Option<SSHSyncCapability>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub probe_reason: Option<ProbeReason>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub cleanup_warning: Option<CleanupWarning>,
+ }
+ 
+ /// SSH status result
+@@ -226,3 +249,36 @@
+     #[serde(default)]
+     pub last_sync_warnings: Vec<String>,
+ }
++
++#[cfg(test)]
++mod connection_result_tests {
++    use super::*;
++
++    #[test]
++    fn legacy_result_deserializes_without_capability_fields() {
++        let result: SSHConnectionResult = serde_json::from_str(
++            r#"{"connected":true,"error":null,"serverInfo":"legacy banner"}"#,
++        ).unwrap();
++        assert_eq!(result.sync_capability, None);
++        assert_eq!(result.probe_reason, None);
++        assert_eq!(result.cleanup_warning, None);
++    }
++
++    #[test]
++    fn result_serializes_stable_optional_enum_strings() {
++        let result = SSHConnectionResult {
++            connected: true,
++            error: None,
++            server_info: None,
++            sync_capability: Some(SSHSyncCapability::Unknown),
++            probe_reason: Some(ProbeReason::MissingExitStatus),
++            cleanup_warning: Some(CleanupWarning::DisconnectTimeout),
++        };
++        let value = serde_json::to_value(result).unwrap();
++        assert_eq!(value["syncCapability"], "unknown");
++        assert_eq!(value["probeReason"], "missingExitStatus");
++        assert_eq!(value["cleanupWarning"], "disconnectTimeout");
++        assert_eq!(value["connected"], true);
++        assert!(value["error"].is_null());
++    }
++}
+--- a/web/features/settings/components/SSHSyncModal.tsx
++++ b/web/features/settings/components/SSHSyncModal.tsx
+@@ -75,6 +75,13 @@
+   password: 'green',
+   none: 'default',
+ };
++
++// Only stable reason codes are translated; never expose raw probe diagnostics.
++const PROBE_REASONS = new Set<NonNullable<SSHConnectionResult['probeReason']>>([
++  'channelOpenFailed', 'execFailed', 'channelFailure', 'channelClosedEarly',
++  'outputLimitExceeded', 'probeTimeout', 'exitSignal', 'conflictingExitStatus',
++  'missingExitStatus', 'nonzeroExitStatus', 'unexpectedOutput',
++]);
+ 
+ const CURRENT_FILE_TAIL_MAX_LENGTH = 72;
+ 
+@@ -712,10 +719,38 @@
+                 {testing && <Spin size="small" />}
+                 {!testing && testResult && (
+                   testResult.connected
+-                    ? <Tag color="success">{t('settings.ssh.connected')}</Tag>
++                    ? <Tag color="success">{t('settings.ssh.authenticationSucceeded')}</Tag>
+                     : <Tag color="error">{t('settings.ssh.connectionFailed')}</Tag>
+                 )}
+               </Space>
++              {!testing && testResult?.connected && (
++                <Alert
++                  style={{ marginTop: 8 }}
++                  showIcon
++                  data-testid="ssh-sync-capability"
++                  type={testResult.syncCapability === 'supported' ? 'success' : 'warning'}
++                  message={t(`settings.ssh.capability.${
++                    testResult.syncCapability === 'supported' ? 'supported'
++                      : testResult.syncCapability === 'missingHome' ? 'missingHome' : 'unknown'
++                  }`)}
++                  description={testResult.syncCapability !== 'supported'
++                    && testResult.probeReason && PROBE_REASONS.has(testResult.probeReason)
++                    ? t(`settings.ssh.probeReason.${testResult.probeReason}`) : undefined}
++                />
++              )}
++              {!testing && testResult?.cleanupWarning && (
++                <Alert
++                  style={{ marginTop: 8 }}
++                  showIcon
++                  type="warning"
++                  data-testid="ssh-test-cleanup-warning"
++                  message={t('settings.ssh.cleanupWarning.title')}
++                  description={t(`settings.ssh.cleanupWarning.${
++                    testResult.cleanupWarning === 'disconnectTimeout' ? 'disconnectTimeout'
++                      : testResult.cleanupWarning === 'disconnectFailed' ? 'disconnectFailed' : 'unknown'
++                  }`)}
++                />
++              )}
+               {testResult?.serverInfo && (
+                 <div style={{ marginTop: 4 }}>
+                   <Text type="secondary" style={{ fontSize: 12 }}>{testResult.serverInfo}</Text>
+--- a/web/features/settings/utils/syncMessageTranslator.ts
++++ b/web/features/settings/utils/syncMessageTranslator.ts
+@@ -350,6 +350,7 @@
+ 	}
+ 
+ 	const patterns: Array<[RegExp, (...args: string[]) => string]> = [
++		[/^SSH 认证超时$/, () => t("settings.ssh.authenticationTimeout")],
+ 		[/^SSH 同步未启用$/, () => t("settings.syncMessages.sshSyncDisabled")],
+ 		[
+ 			/^另一个同步操作正在进行中$/,
+--- a/web/i18n/locales/en-US.json
++++ b/web/i18n/locales/en-US.json
+@@ -1358,6 +1358,32 @@
+       "password": "Password",
+       "passwordRequired": "Please enter password",
+       "connected": "Connected",
++      "authenticationSucceeded": "Authentication succeeded for this test",
++      "authenticationTimeout": "SSH authentication timed out.",
++      "capability": {
++        "supported": "POSIX shell syntax and HOME verified. Required sync tools and write permissions have not been checked.",
++        "missingHome": "Authentication succeeded, but HOME is empty. SSH sync prerequisites are not met.",
++        "unknown": "SSH sync prerequisites have not been verified. Authentication alone does not confirm sync support."
++      },
++      "probeReason": {
++        "channelOpenFailed": "The probe channel could not be opened.",
++        "execFailed": "The probe command could not be started.",
++        "channelFailure": "The probe channel failed.",
++        "channelClosedEarly": "The probe channel closed before completion.",
++        "outputLimitExceeded": "The probe output exceeded the safe limit.",
++        "probeTimeout": "The probe timed out.",
++        "exitSignal": "The probe ended with an exit signal.",
++        "conflictingExitStatus": "The probe returned conflicting exit statuses.",
++        "missingExitStatus": "The probe did not return an exit status.",
++        "nonzeroExitStatus": "The probe returned a nonzero exit status.",
++        "unexpectedOutput": "The probe response did not match the expected protocol."
++      },
++      "cleanupWarning": {
++        "title": "Test connection cleanup warning",
++        "disconnectFailed": "Disconnect failed. This does not change the authentication or probe result.",
++        "disconnectTimeout": "Disconnect timed out. This does not change the authentication or probe result.",
++        "unknown": "Connection cleanup could not be confirmed."
++      },
+       "connectionFailed": "Connection Failed",
+       "deleteConnectionConfirm": "Confirm Delete Connection",
+       "deleteConnectionConfirmMessage": "Are you sure you want to delete the connection \"{{name}}\"? This action cannot be undone.",
+--- a/web/i18n/locales/zh-CN.json
++++ b/web/i18n/locales/zh-CN.json
+@@ -1358,6 +1358,32 @@
+       "password": "密码",
+       "passwordRequired": "请输入密码",
+       "connected": "已连接",
++      "authenticationSucceeded": "本次测试认证成功",
++      "authenticationTimeout": "SSH 认证超时。",
++      "capability": {
++        "supported": "已核验 POSIX shell 语法和 HOME；尚未检查同步所需工具及写入权限。",
++        "missingHome": "认证成功，但 HOME 为空，不满足 SSH 同步前提。",
++        "unknown": "尚未核验 SSH 同步前提；仅认证成功不代表支持同步。"
++      },
++      "probeReason": {
++        "channelOpenFailed": "无法打开探测通道。",
++        "execFailed": "无法启动探测命令。",
++        "channelFailure": "探测通道失败。",
++        "channelClosedEarly": "探测完成前通道已关闭。",
++        "outputLimitExceeded": "探测输出超过安全上限。",
++        "probeTimeout": "探测超时。",
++        "exitSignal": "探测因退出信号而结束。",
++        "conflictingExitStatus": "探测返回了冲突的退出状态。",
++        "missingExitStatus": "探测未返回退出状态。",
++        "nonzeroExitStatus": "探测返回了非零退出状态。",
++        "unexpectedOutput": "探测响应不符合预期协议。"
++      },
++      "cleanupWarning": {
++        "title": "测试连接清理警告",
++        "disconnectFailed": "断开连接失败；不影响本次认证或探测结果。",
++        "disconnectTimeout": "断开连接超时；不影响本次认证或探测结果。",
++        "unknown": "无法确认连接清理结果。"
++      },
+       "connectionFailed": "连接失败",
+       "deleteConnectionConfirm": "确认删除连接",
+       "deleteConnectionConfirmMessage": "确定要删除连接「{{name}}」吗？此操作无法撤销。",
+--- /dev/null
++++ b/web/test/features/settings/sshCapability/sshCapabilityBrowserChecks.mjs
+@@ -0,0 +1,250 @@
++import assert from 'node:assert/strict';
++import {writeFile} from 'node:fs/promises';
++import path from 'node:path';
++
++// Explicit feature expectations are independent of the runtime locale files.
++const EXPECTED = {
++  "en-US": {
++    "authenticationSucceeded": "Authentication succeeded for this test",
++    "authenticationTimeout": "SSH authentication timed out.",
++    "connectionFailed": "Connection Failed",
++    "capability": {
++      "supported": "POSIX shell syntax and HOME verified. Required sync tools and write permissions have not been checked.",
++      "missingHome": "Authentication succeeded, but HOME is empty. SSH sync prerequisites are not met.",
++      "unknown": "SSH sync prerequisites have not been verified. Authentication alone does not confirm sync support."
++    },
++    "probeReason": {
++      "channelOpenFailed": "The probe channel could not be opened.",
++      "execFailed": "The probe command could not be started.",
++      "channelFailure": "The probe channel failed.",
++      "channelClosedEarly": "The probe channel closed before completion.",
++      "outputLimitExceeded": "The probe output exceeded the safe limit.",
++      "probeTimeout": "The probe timed out.",
++      "exitSignal": "The probe ended with an exit signal.",
++      "conflictingExitStatus": "The probe returned conflicting exit statuses.",
++      "missingExitStatus": "The probe did not return an exit status.",
++      "nonzeroExitStatus": "The probe returned a nonzero exit status.",
++      "unexpectedOutput": "The probe response did not match the expected protocol."
++    },
++    "cleanupWarning": {
++      "title": "Test connection cleanup warning",
++      "disconnectFailed": "Disconnect failed. This does not change the authentication or probe result.",
++      "disconnectTimeout": "Disconnect timed out. This does not change the authentication or probe result.",
++      "unknown": "Connection cleanup could not be confirmed."
++    }
++  },
++  "zh-CN": {
++    "authenticationSucceeded": "本次测试认证成功",
++    "authenticationTimeout": "SSH 认证超时。",
++    "connectionFailed": "连接失败",
++    "capability": {
++      "supported": "已核验 POSIX shell 语法和 HOME；尚未检查同步所需工具及写入权限。",
++      "missingHome": "认证成功，但 HOME 为空，不满足 SSH 同步前提。",
++      "unknown": "尚未核验 SSH 同步前提；仅认证成功不代表支持同步。"
++    },
++    "probeReason": {
++      "channelOpenFailed": "无法打开探测通道。",
++      "execFailed": "无法启动探测命令。",
++      "channelFailure": "探测通道失败。",
++      "channelClosedEarly": "探测完成前通道已关闭。",
++      "outputLimitExceeded": "探测输出超过安全上限。",
++      "probeTimeout": "探测超时。",
++      "exitSignal": "探测因退出信号而结束。",
++      "conflictingExitStatus": "探测返回了冲突的退出状态。",
++      "missingExitStatus": "探测未返回退出状态。",
++      "nonzeroExitStatus": "探测返回了非零退出状态。",
++      "unexpectedOutput": "探测响应不符合预期协议。"
++    },
++    "cleanupWarning": {
++      "title": "测试连接清理警告",
++      "disconnectFailed": "断开连接失败；不影响本次认证或探测结果。",
++      "disconnectTimeout": "断开连接超时；不影响本次认证或探测结果。",
++      "unknown": "无法确认连接清理结果。"
++    }
++  }
++};
++
++// Capture only this local synthetic fixture. Diagnostics never replace the
++// original assertion failure; record capture errors separately for inspection.
++async function captureEvidence({send,evaluate,artifactRoot,stem,includeDOM=false}) {
++  const evidence={files:[],diagnosticErrors:[]};
++  if(includeDOM) {
++    try {
++      const filename=stem+'.html';
++      await writeFile(path.join(artifactRoot,filename),await evaluate('document.documentElement.outerHTML'));
++      evidence.files.push(filename);
++    } catch(error) {evidence.diagnosticErrors.push('DOM: '+String(error));}
++  }
++  try {
++    const filename=stem+'.png';
++    const shot=await send('Page.captureScreenshot',{format:'png'});
++    await writeFile(path.join(artifactRoot,filename),Buffer.from(shot.data,'base64'));
++    evidence.files.push(filename);
++  } catch(error) {evidence.diagnosticErrors.push('screenshot: '+String(error));}
++  return evidence;
++}
++
++// These are synthetic future IPC responses, not evidence that the old backend
++// emitted them or that a real SSH server was tested. Baseline failures only mean
++// the new capability UI contract is not yet supported.
++export async function verifySSHCapability({send,evaluate,baseUrl,exceptions,artifactRoot}) {
++  const results=[];
++  let serial=0;
++  const snapshot=()=>evaluate('sshRequestFixture.snapshot()');
++  const wait=async predicate=>{
++    for(let i=0;i<200;i++) {if(await predicate())return;await new Promise(r=>setTimeout(r,20));}
++    throw Error('UI state deadline');
++  };
++  const drain=async()=>{await evaluate('sshRequestFixture.drain()');await wait(async()=>!(await snapshot()).animations.length);};
++  const click=async(selector,text=null)=>{
++    const point=await evaluate(`(()=>{const es=[...document.querySelectorAll(${JSON.stringify(selector)})].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&(${JSON.stringify(text)}===null||e.textContent===${JSON.stringify(text)});});if(es.length!==1)throw Error('Expected one visible target: '+es.length);const e=es[0],r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))throw Error('Target occluded/outside viewport');return{x,y};})()`);
++    await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
++    await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
++  };
++  for(const lang of ['en-US','zh-CN']) {
++    const locale=EXPECTED[lang];
++    const cases=[
++      {name:'authentication failure control',control:true,response:{connected:false,error:'synthetic-auth-failure'},capability:null,error:'synthetic-auth-failure'},
++      {name:'authentication timeout localized',response:{connected:false,error:'SSH 认证超时'},capability:null,error:locale.authenticationTimeout},
++      {name:'authentication failure with cleanup',response:{connected:false,error:'synthetic-auth-failure',cleanupWarning:'disconnectFailed'},capability:null,error:'synthetic-auth-failure',cleanup:'disconnectFailed'},
++      {name:'supported ignores contradictory reason',response:{connected:true,syncCapability:'supported',probeReason:'probeTimeout'},capability:'supported',absentReason:'probeTimeout'},
++      {name:'legacy missing capability',response:{connected:true},capability:'unknown'},
++      {name:'supported narrow probe',response:{connected:true,syncCapability:'supported'},capability:'supported'},
++      {name:'empty HOME',response:{connected:true,syncCapability:'missingHome'},capability:'missingHome'},
++      {name:'unknown without reason',response:{connected:true,syncCapability:'unknown'},capability:'unknown'},
++      ...Object.keys(locale.probeReason).map(reason=>({name:`unknown ${reason}`,response:{connected:true,syncCapability:'unknown',probeReason:reason},capability:'unknown',reason})),
++      ...['disconnectFailed','disconnectTimeout'].map(cleanup=>({name:`supported with ${cleanup}`,response:{connected:true,syncCapability:'supported',cleanupWarning:cleanup},capability:'supported',cleanup})),
++      {name:'unknown and cleanup remain separate',response:{connected:true,syncCapability:'unknown',probeReason:'probeTimeout',cleanupWarning:'disconnectTimeout'},capability:'unknown',reason:'probeTimeout',cleanup:'disconnectTimeout'},
++      {name:'unrecognized codes never shown',response:{connected:true,syncCapability:'synthetic-secret-capability',probeReason:'synthetic-secret-reason',cleanupWarning:'synthetic-secret-cleanup'},capability:'unknown',cleanup:'unknown'},
++    ];
++    if(lang==='en-US')cases.push(
++      {name:'B warning survives late A supported',response:{connected:true,syncCapability:'unknown',probeReason:'probeTimeout',serverInfo:'B-result'},capability:'unknown',reason:'probeTimeout',stale:{connected:true,syncCapability:'supported',serverInfo:'A-result'}},
++      {name:'late A cleanup cannot contaminate B supported',response:{connected:true,syncCapability:'supported',serverInfo:'B-result'},capability:'supported',stale:{connected:true,syncCapability:'unknown',cleanupWarning:'disconnectFailed',serverInfo:'A-result'}},
++    );
++    for(const spec of cases) {
++      const caseId=`capability-${serial++}`;
++      const exceptionStart=exceptions.length;
++      let state,phase='setup';const observations=[];
++      try {
++        await send('Page.navigate',{url:`${baseUrl}/?case=${caseId}&lang=${lang}`});
++        await wait(async()=>evaluate(`!!window.sshRequestFixture && sshRequestFixture.snapshot().caseId===${JSON.stringify(caseId)} && sshRequestFixture.snapshot().calls.some(c=>c.id==='A')`));
++        await drain();
++        let before=await snapshot();observations.push({label:'ready',state:before});
++        let pending=before.calls.flatMap((c,i)=>c.id==='A'&&!c.settled?[i]:[]);
++        const stale=spec.stale?pending:[];
++        if(spec.stale) {
++          await click('.ant-modal .ant-select');
++          await wait(()=>evaluate(`!![...document.querySelectorAll('.ant-select-item-option-content > div > span')].find(e=>e.textContent==='Connection B'&&e.getBoundingClientRect().height>0)`));
++          await click('.ant-select-item-option-content > div > span','Connection B');
++          await drain();await wait(async()=> (await snapshot()).calls.some(c=>c.id==='B'&&!c.settled));
++          before=await snapshot();pending=before.calls.flatMap((c,i)=>c.id==='B'&&!c.settled?[i]:[]);
++        }
++        assert.ok(pending.length>0);observations.push({label:'before settlement',state:before});
++        await evaluate(`sshRequestFixture.settle(${JSON.stringify(pending)},false,${JSON.stringify(spec.response)})`);
++        await drain();
++        if(spec.stale) {
++          await evaluate(`sshRequestFixture.settle(${JSON.stringify(stale)},false,${JSON.stringify(spec.stale)})`);
++          await drain();
++        }
++        state=await snapshot();observations.push({label:'after settlement',state});
++        phase='safety';
++        assert.equal(state.forbidden,0);
++        assert.equal(exceptions.length,exceptionStart,'Page exception');
++        assert.equal(state.calls.length,before.calls.length,'settlement must not start another request');
++        assert.equal(state.spinners,0);
++        phase='expectation';
++        if(spec.stale){assert.ok(state.text.includes('B-result'));assert.ok(!state.text.includes('A-result'));}
++        const capability=state.alerts.filter(a=>a.id==='ssh-sync-capability');
++        const cleanup=state.alerts.filter(a=>a.id==='ssh-test-cleanup-warning');
++        if(spec.capability) {
++          assert.ok(state.text.includes(locale.authenticationSucceeded));
++          assert.equal(capability.length,1);
++          assert.equal(capability[0].type,spec.capability==='supported'?'success':'warning');
++          assert.ok(capability[0].text.includes(locale.capability[spec.capability]));
++          if(spec.reason)assert.ok(capability[0].text.includes(locale.probeReason[spec.reason]));
++          if(spec.absentReason)assert.ok(!capability[0].text.includes(locale.probeReason[spec.absentReason]));
++        } else {
++          assert.equal(capability.length,0);
++          assert.ok(state.text.includes(locale.connectionFailed));
++          assert.ok(state.text.includes(spec.error));
++        }
++        assert.equal(cleanup.length,spec.cleanup?1:0);
++        if(spec.cleanup) {
++          assert.equal(cleanup[0].type,'warning');
++          assert.ok(cleanup[0].text.includes(locale.cleanupWarning.title));
++          assert.ok(cleanup[0].text.includes(locale.cleanupWarning[spec.cleanup]));
++        }
++        assert.ok(!state.text.includes('synthetic-secret-'));
++        assert.ok(!state.text.includes('settings.ssh.capability.'));
++        assert.ok(!state.text.includes('settings.ssh.probeReason.'));
++        // Two representative localized views per language, not every enum row.
++        const evidence=['unknown and cleanup remain separate','supported with disconnectFailed'].includes(spec.name)
++          ? await captureEvidence({send,evaluate,artifactRoot,stem:`${caseId}-${lang}-representative`}) : undefined;
++        results.push({name:spec.name,lang,control:!!spec.control,passed:true,state,observations,evidence});
++      } catch(error) {
++        const pageExceptions=exceptions.slice(exceptionStart);
++        const classification=phase==='expectation'&&pageExceptions.length===0&&state?.forbidden===0?'expectation-failed':'fixture-or-control-error';
++        const evidence=await captureEvidence({send,evaluate,artifactRoot,stem:`${caseId}-${lang}-failure`,includeDOM:true});
++        results.push({name:spec.name,lang,control:!!spec.control,passed:false,phase,evidence,
++          classification,error:String(error),state,observations,pageExceptions});
++      }
++    }
++  }
++  await writeFile(path.join(artifactRoot,'ssh-capability-cases.json'),JSON.stringify({syntheticBoundaryOnly:true,results},null,2));
++  assert.equal(results.filter(r=>!r.passed).length,0,'Capability expectations failed; not a real-server bug reproduction');
++  return results;
++}
++
++// Baseline mode is deliberately narrow: use the old Modal with the new boundary
++// fixture and demonstrate only absent new UI, after proving old auth still works.
++// It does not claim that any old backend actually produced these new fields.
++export async function verifySSHCapabilityBaseline({send,evaluate,baseUrl,exceptions,artifactRoot}) {
++  const results=[];
++  const snapshot=()=>evaluate('sshRequestFixture.snapshot()');
++  const wait=async predicate=>{
++    for(let i=0;i<200;i++){if(await predicate())return;await new Promise(r=>setTimeout(r,20));}
++    throw Error('Baseline UI state deadline');
++  };
++  const drain=async()=>{await evaluate('sshRequestFixture.drain()');await wait(async()=>!(await snapshot()).animations.length);};
++  for(const capability of ['unknown','missingHome']) {
++    const caseId=`baseline-${capability}`;
++    const exceptionStart=exceptions.length;
++    const observations=[];
++    let state,phase='setup';
++    try {
++      await send('Page.navigate',{url:`${baseUrl}/?case=${caseId}&lang=en-US`});
++      await wait(()=>evaluate(`!!window.sshRequestFixture && sshRequestFixture.snapshot().caseId===${JSON.stringify(caseId)} && sshRequestFixture.snapshot().calls.some(c=>c.id==='A')`));
++      await drain();
++      const before=await snapshot();observations.push({label:'ready',state:before});
++      const pending=before.calls.flatMap((c,i)=>c.id==='A'&&!c.settled?[i]:[]);
++      assert.ok(pending.length>0);
++      phase='settlement';
++      await evaluate(`sshRequestFixture.settle(${JSON.stringify(pending)},false,${JSON.stringify({connected:true,syncCapability:capability,serverInfo:caseId+'-result'})})`);
++      await drain();state=await snapshot();observations.push({label:'settled',state});
++      phase='existing-auth-control';
++      assert.equal(exceptions.length,exceptionStart,'Page exception');
++      assert.equal(state.forbidden,0);
++      assert.equal(state.spinners,0);
++      assert.equal(state.calls.length,before.calls.length,'Unexpected request inventory change');
++      assert.ok(state.calls.every((c,i)=>c.id===before.calls[i].id&&c.settled===true));
++      assert.ok(state.visible);
++      assert.ok(state.text.includes(caseId+'-result'),'Current request identity');
++      // Exact pre-feature en-US settings.ssh.connected label. Do not require the
++      // new authenticationSucceeded key, which would mask the capability check.
++      assert.equal(await evaluate(`(()=>{const tags=[...document.querySelectorAll('.ant-modal .ant-tag')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';});return tags.filter(e=>e.textContent==='Connected'&&e.classList.contains('ant-tag-success')).length;})()`),1);
++      assert.equal(state.alerts.filter(a=>a.id==='ssh-test-cleanup-warning').length,0);
++      phase='new-capability-presence';
++      const actual=state.alerts.filter(a=>a.id==='ssh-sync-capability').length;
++      assert.equal(actual,0,'Baseline must show the exact absence, not a different UI failure');
++      const evidence=await captureEvidence({send,evaluate,artifactRoot,stem:`${caseId}-old-ui`});
++      results.push({name:caseId,passed:true,classification:'missing-new-capability-ui',evidence,
++        newFeatureExpectation:{expected:1,actual:0},existingAuthControlsPassed:true,syntheticBoundaryOnly:true,observations});
++    } catch(error) {
++      const evidence=await captureEvidence({send,evaluate,artifactRoot,stem:`${caseId}-failure`,includeDOM:true});
++      results.push({name:caseId,passed:false,evidence,classification:'baseline-control-failed',phase,error:String(error),state,observations,pageExceptions:exceptions.slice(exceptionStart)});
++    }
++  }
++  await writeFile(path.join(artifactRoot,'ssh-capability-baseline-cases.json'),JSON.stringify({syntheticBoundaryOnly:true,results},null,2));
++  assert.equal(results.filter(r=>!r.passed).length,0,'Baseline controls failed; do not attribute this to missing capability UI');
++  return results;
++}
+--- /dev/null
++++ b/web/test/features/settings/sshCapability/verify.mjs
+@@ -0,0 +1,24 @@
++import path from 'node:path';
++import {fileURLToPath} from 'node:url';
++import {runBrowserFixture} from '../../../../../scripts/lib/browser-fixture.mjs';
++import {verifySSHRequestRace} from '../sshRequest/sshRequestBrowserChecks.mjs';
++import {verifySSHCapability,verifySSHCapabilityBaseline} from './sshCapabilityBrowserChecks.mjs';
++const mode=process.env.SSH_CAPABILITY_CHECK_MODE || 'full';
++if(!['full','baseline'].includes(mode))throw Error('Unknown SSH_CAPABILITY_CHECK_MODE');
++const fixtureDirectory=fileURLToPath(new URL('../sshRequest/fixtures/',import.meta.url));
++await runBrowserFixture({
++  fixtureDirectory,fixtureFilename:'SSHRequestFixture.jsx',artifactPrefix:'ssh-capability-',
++  verify:async options=>{
++    const failures=[];const checks=[];
++    for(const verify of mode==='baseline'?[verifySSHCapabilityBaseline]:[verifySSHRequestRace,verifySSHCapability]) {
++      try {checks.push(...await verify(options));} catch(error) {failures.push(error);}
++    }
++    if(failures.length)throw new AggregateError(failures,'SSH fixture expectations failed');
++    return checks;
++  },
++  fixtureAliases:[
++    {find:/^@\/services\/sshSyncApi$/,replacement:path.join(fixtureDirectory,'boundary.mjs')},
++    {find:/^@\/stores$/,replacement:path.join(fixtureDirectory,'boundary.mjs')},
++    {find:/^@tauri-apps\/api\/(event|core)$/,replacement:path.join(fixtureDirectory,'boundary.mjs')},
++  ],
++});
+--- a/web/test/features/settings/sshRequest/fixtures/SSHRequestFixture.jsx
++++ b/web/test/features/settings/sshRequest/fixtures/SSHRequestFixture.jsx
+@@ -6,7 +6,10 @@
+ import {I18nextProvider} from 'react-i18next';
+ import {SSHSyncModal} from '@/features/settings/components/SSHSyncModal';
+ import {boundary} from './boundary.mjs';
+-const i18n=i18next.createInstance();await i18n.init({lng:'en',fallbackLng:'en',resources:{en:{translation:{}}},initImmediate:false});
++import en from '@/i18n/locales/en-US.json';
++import zh from '@/i18n/locales/zh-CN.json';
++const language=new URLSearchParams(location.search).get('lang') || 'en-US';
++const i18n=i18next.createInstance();await i18n.init({lng:language,fallbackLng:'en-US',resources:{'en-US':{translation:en},'zh-CN':{translation:zh}},initImmediate:false});
+ let barrier;
+ function Fixture(){const[open,setOpen]=React.useState(true);const[present,setPresent]=React.useState(true);const[tick,setTick]=React.useState(0);const complete=React.useRef();barrier=()=>new Promise(r=>{complete.current=r;flushSync(()=>setTick(x=>x+1));});React.useEffect(()=>{complete.current?.();complete.current=undefined;},[tick]);return <I18nextProvider i18n={i18n}><ConfigProvider><button id="reopen" onClick={()=>setOpen(true)}>Reopen</button><button id="unmount" onClick={()=>setPresent(false)}>Unmount</button><output id="barrier">{tick}</output>{present&&<SSHSyncModal open={open} onClose={()=>setOpen(false)}/>}</ConfigProvider></I18nextProvider>;}
+ const root=createRoot(document.getElementById('root'));root.render(<Fixture/>);
+@@ -24,9 +27,10 @@
+  throw Error('Config/event effects did not stabilize');
+ }
+ function visible(e){const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';}
+-window.sshRequestFixture={...boundary,drain,async settle(id,reject){await boundary.settle(id,reject);await drain();},snapshot(){
++window.sshRequestFixture={...boundary,drain,async settle(id,reject,result){await boundary.settle(id,reject,result);await drain();},snapshot(){
+  const dialogs=[...document.querySelectorAll('.ant-modal')].filter(visible);
+  return {...boundary.snapshot(),text:dialogs.map(x=>x.textContent).join('\n'),visible:dialogs.length>0,
++ alerts:dialogs.flatMap(d=>[...d.querySelectorAll('[data-testid="ssh-sync-capability"], [data-testid="ssh-test-cleanup-warning"]')].filter(visible).map(e=>({id:e.dataset.testid,text:e.textContent,type:e.classList.contains('ant-alert-success')?'success':e.classList.contains('ant-alert-warning')?'warning':'other'}))),
+  spinners:dialogs.reduce((n,d)=>n+[...d.querySelectorAll('.ant-spin-spinning')].filter(visible).length,0),
+  animations:dialogs.flatMap(d=>d.getAnimations({subtree:true}).filter(a=>a.playState==='running'&&Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>({type:a.constructor.name,playState:a.playState}))),
+  barrier:Number(document.querySelector('#barrier')?.textContent),caseId:new URLSearchParams(location.search).get('case')};}};
+--- a/web/test/features/settings/sshRequest/fixtures/boundary.mjs
++++ b/web/test/features/settings/sshRequest/fixtures/boundary.mjs
+@@ -14,5 +14,5 @@
+ export const invoke=deny;
+ export const boundary={
+  snapshot:()=>({revision,reads,calls:calls.map(({id,settled})=>({id,settled})),forbidden}),
+- settle(indices,reject=false){const pending=indices.map(i=>calls[i]);if(!pending.length||pending.some(c=>!c||c.settled))throw Error('Invalid pending call indices');for(const c of pending){c.settled=true;if(reject)c.reject(new Error('synthetic-'+c.id+'-error'));else c.resolve({connected:true,serverInfo:c.id+'-result'});}return Promise.resolve();},
++ settle(indices,reject=false,result){const pending=indices.map(i=>calls[i]);if(!pending.length||pending.some(c=>!c||c.settled))throw Error('Invalid pending call indices');for(const c of pending){c.settled=true;if(reject)c.reject(new Error('synthetic-'+c.id+'-error'));else c.resolve(result ?? {connected:true,serverInfo:c.id+'-result'});}return Promise.resolve();},
+ };
+--- a/web/types/sshsync.ts
++++ b/web/types/sshsync.ts
+@@ -71,9 +71,17 @@
+  * SSH connection test result
+  */
+ export interface SSHConnectionResult {
++  /** Whether authentication succeeded for this test, not a live session status. */
+   connected: boolean;
+   error?: string;
+   serverInfo?: string;
++  /** A narrow POSIX shell/HOME probe; does not verify tools or write permissions. */
++  syncCapability?: 'supported' | 'missingHome' | 'unknown';
++  probeReason?: 'channelOpenFailed' | 'execFailed' | 'channelFailure'
++    | 'channelClosedEarly' | 'outputLimitExceeded' | 'probeTimeout'
++    | 'exitSignal' | 'conflictingExitStatus' | 'missingExitStatus'
++    | 'nonzeroExitStatus' | 'unexpectedOutput';
++  cleanupWarning?: 'disconnectFailed' | 'disconnectTimeout';
+ }
+ 
+ /**
