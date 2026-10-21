@@ -1,6 +1,6 @@
 {
   "base": "4bbbc8c477f0cfc1fe61080f1161f1b9b8882a83",
-  "patchSha256": "aa896b0e053d5897138315e77171da82ef303e51ed0f6a2ad17ebcb7741cb791",
+  "patchSha256": "735f0c15fbc3da123c89cd7c14e425fb888ec08ffe701cd76ac58debb91e54c9",
   "productFiles": [
     "package.json",
     "scripts/verify-grok-fetched-models.mjs",

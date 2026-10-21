@@ -470,7 +470,7 @@
 +}
 --- /dev/null
 +++ b/web/test/features/coding/grok/fetchedModels/fixtures/GrokFetchModelsFixture.jsx
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +import { boundary } from './boundary.mjs';
 +import React from 'react';
 +import { createRoot } from 'react-dom/client';
@@ -485,6 +485,8 @@
 +// The complete real page is imported only after official mockIPC is installed.
 +const { updatePresetModels } = await import('@/constants/presetModels');
 +updatePresetModels(bundledPresets);
++// Match the application's route-module entry order without mounting App.
++await import('@/app/routes');
 +const { default: GrokPage } = await import('@/features/coding/grok/pages/GrokPage');
 +const i18n = i18next.createInstance();
 +await i18n.init({ lng: 'en-US', fallbackLng: 'en-US', resources: {

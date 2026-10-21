@@ -71,6 +71,13 @@ def run(name,args,seconds):
 
 
 
+# Validation-only source maps; restore the existing runner before product hash checks.
+runner=source/'scripts/lib/browser-fixture.mjs'
+runner_original=runner.read_bytes()
+old=b"outDir: path.join(artifactRoot, 'dist'),"
+assert runner_original.count(old)==1
+runner.write_bytes(runner_original.replace(old,old+b' sourcemap: true,'))
+(evidence/'diagnostic-runner.sha256').write_text(sha(runner))
 folders=[]
 component=source/'web/features/coding/grok/pages/GrokPage.tsx'
 fixed=component.read_bytes()
@@ -94,6 +101,7 @@ try:
  assert run('unit',['node','--import','./scripts/register-node-ts-extension-loader.mjs','--test','./web/test/features/coding/grok/utils/grokFetchedModels.test.ts'],90)==0
  unit=(evidence/'unit.log').read_text();assert 'tests 8' in unit and 'pass 8' in unit and 'fail 0' in unit,unit
  assert run('tsc',['pnpm','exec','tsc','--noEmit'],240)==0
+ runner.write_bytes(runner_original)
  assert {p:sha(source/p) for p in locks}==locks
  assert {p:sha(source/p) for p in manifest['productFiles']}==identities['files']
  assert set(subprocess.check_output(['git','diff','--name-only'],cwd=source,text=True).splitlines())==set(manifest['productFiles'])
@@ -103,10 +111,16 @@ try:
  (evidence/'tested.diff').write_bytes(subprocess.check_output(['git','diff','--binary'],cwd=source))
  (evidence/'result.json').write_text(json.dumps({'redExpectedFailures':3,'redControlsPassed':1,'greenPassed':4,'unitPassed':8,'fullTsc':True,'candidateFilesUnchangedAfterTests':True,'locksUnchanged':True,'trackedDiffScopeVerified':True,'untrackedNonIgnored':untracked}))
 finally:
+ runner.write_bytes(runner_original)
  for directory in folders:
   for folder in directory.glob('grok-fetched-models-*'):
    for item in folder.iterdir():
+    if item.name=='dist':
+     assets=item/'assets'
+     if assets.exists():
+      for asset in assets.iterdir():
+       if asset.is_file() and (asset.name.endswith('.js') or asset.name.endswith('.js.map')):shutil.copy2(asset,folder/asset.name)
     allowed=item.name in {'grok-fetched-cases.json','results.json','failure.html','failure.png'} or (item.name.startswith('case-') and (item.name.endswith('-failure.html') or item.name.endswith('-failure.png')))
-    if not allowed:
+    if not allowed and not (item.is_file() and (item.name.endswith('.js') or item.name.endswith('.js.map'))):
      if item.is_dir():shutil.rmtree(item)
      else:item.unlink()
