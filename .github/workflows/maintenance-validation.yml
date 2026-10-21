@@ -19,7 +19,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -38,9 +38,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = '${{ github.sha }}'
-          echo '541bf5444c5ce417087dc686ddfce3d3dd2f4becdc7993bc11ef3df39fd8e08f  validation/candidate.diff' | sha256sum -c -
-          echo '0bec353704132e85bf3c9d15c988eeb939f3bc2dfe6d386fb7e509ab207ab060  validation/manifest.json' | sha256sum -c -
-          echo 'df6319e572977face7afd238c0748c926471d569e4a66cd4cddaf2c10744d90c  validation/validate.py' | sha256sum -c -
+          echo 'e2028b6cc64ab4c119f5caa69b68027242afcd45a71acbf9f4e51223f29e5bdf  validation/candidate.diff' | sha256sum -c -
+          echo '08225f03d9d0bb703cd09f7b16f964151bc4c659b4b006cca2c9615fb47a3c7b  validation/manifest.json' | sha256sum -c -
+          echo '06c2067288a131c1c480fb547cea135d7f49f6783d4ff97d0ce56d9a66c3f45b  validation/validate.py' | sha256sum -c -
       - name: Official Ubuntu CJK fonts and available Chrome
         timeout-minutes: 2
         run: |
