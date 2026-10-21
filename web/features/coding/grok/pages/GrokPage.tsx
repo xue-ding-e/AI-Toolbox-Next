@@ -82,6 +82,7 @@ import {
   upsertGrokCatalogModel,
   type GrokModelFormValues,
 } from '../utils/grokProviderModels';
+import { mergeFetchedGrokCatalogModels } from '../utils/grokFetchedModels';
 import { saveGrokProviderCatalogWithGatewayReengage } from '../utils/grokProviderCatalogSave';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
 import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
@@ -853,21 +854,13 @@ const GrokPage: React.FC = () => {
         models = models.filter((model) => !removed.has(model.key?.trim() || model.model));
       }
 
-      for (const fetched of result.selectedModels) {
-        const key = fetched.id.trim();
-        if (!key) {
-          continue;
-        }
-        const existing = models.find((model) => (model.key?.trim() || model.model) === key);
-        models = upsertGrokCatalogModel(models, {
-          ...existing,
-          key,
-          model: key,
-          displayName: fetched.name || existing?.displayName || key,
-          ...(baseUrl ? { baseUrl } : {}),
-          ...(apiBackend ? { apiBackend } : {}),
-        }, existing?.key);
-      }
+      // Enrich new catalog entries while preserving existing user settings.
+      models = mergeFetchedGrokCatalogModels(
+        models,
+        result.selectedModels,
+        resolveGrokProviderApiFormat(fetchModelsProvider),
+        { baseUrl, apiBackend },
+      );
 
       const currentDefault = getGrokProviderDefaultModelKey(fetchModelsProvider);
       const nextDefault = currentDefault && models.some((model) => (model.key?.trim() || model.model) === currentDefault)
