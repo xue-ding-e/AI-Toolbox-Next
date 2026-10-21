@@ -476,5 +476,225 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
     completed, assertionCounts: SCENARIO_COUNTS, checks, browserExceptions: exceptions,
   }, null, 2));
   console.log(`Passed ${completed.length} migrated-provider-card scenarios (${checks.length} assertions).`);
+  const routingChecks = await verifyClaudeDesktopRouting({ send, evaluate, baseUrl, artifactRoot, exceptions });
+  assert.equal(checks.length + routingChecks.length, 114, 'Complete migration and Desktop routing coverage');
+  return [...checks, ...routingChecks];
+}
+
+const DESKTOP_ROUTING_COUNTS = {
+  'desktop-identity-list': 4,
+  'desktop-identity-card': 4,
+  'desktop-takeover-list': 3,
+  'desktop-takeover-card': 3,
+  'desktop-mapped-list': 3,
+  'desktop-mapped-card': 3,
+  'desktop-stopped-list': 4,
+  'desktop-stopped-card': 4,
+};
+
+/**
+ * Independently runnable against the same real fixture for strict RED/GREEN.
+ * Every case records its phase and observations, even after another fails.
+ * Only safe-remap exposing a live, hit-testable direct action instead of proxy
+ * is the expected defect; setup/IPC/browser/pointer failures are never RED.
+ */
+export async function verifyClaudeDesktopRouting({ send, evaluate, baseUrl, artifactRoot, exceptions }) {
+  const checks = [];
+  const cases = [];
+  const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+  const fixture = expression => evaluate('migratedProviderCardsFixture.' + expression);
+  const check = (name, actual, expected = true) => {
+    assert.deepEqual(actual, expected, name);
+    checks.push(name);
+    console.log('PASS ' + name);
+  };
+  const waitFor = async (expression, label) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (await evaluate(expression)) return;
+      await delay(50);
+    }
+    throw new Error('Timed out waiting for: ' + label);
+  };
+  const mouse = async (type, x, y) => send('Input.dispatchMouseEvent', {
+    type, x, y, ...(type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }),
+  });
+  const assertClean = async observations => {
+    observations.unexpectedIPC = await fixture('state.unexpectedIPC');
+    observations.browserExceptions = [...exceptions];
+    assert.deepEqual(observations.unexpectedIPC, [], 'Mapping fixture must not call a backend');
+    assert.deepEqual(observations.browserExceptions, [], 'Browser exceptions remain failures');
+  };
+  const stableTarget = async (action, observations) => {
+    const argument = JSON.stringify(action);
+    let previous;
+    let stableSamples = 0;
+    let hovered = false;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const target = await fixture('desktopGatewayTarget(' + argument + ')');
+      observations.pointer = { action, ...target };
+      const stationary = previous && ['x', 'y', 'width', 'height']
+        .every(key => Math.abs(target[key] - previous[key]) < 0.25);
+      stableSamples = stationary && target.visible && target.inViewport && target.hit
+        ? stableSamples + 1 : 0;
+      if (stableSamples >= 5) {
+        if (hovered) return target;
+        await mouse('mouseMoved', target.x, target.y);
+        hovered = true;
+        stableSamples = 0;
+      }
+      previous = target;
+      await delay(50);
+    }
+    throw new Error('Desktop action never settled or was not hit-testable: ' + JSON.stringify(observations.pointer));
+  };
+  const captureDiagnostics = async (report, failure) => {
+    const basename = failure ? 'case-' + report.name + '-failure' : 'desktop-routing-' + report.name;
+    try {
+      const { data } = await send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(path.join(artifactRoot, basename + '.png'), Buffer.from(data, 'base64'));
+      report.screenshot = basename + '.png';
+    } catch (error) {
+      report.diagnosticError = { screenshot: error instanceof Error ? error.message : String(error) };
+    }
+    if (failure) {
+      try {
+        await writeFile(path.join(artifactRoot, basename + '.html'), await evaluate('document.documentElement.outerHTML'));
+        report.html = basename + '.html';
+      } catch (error) {
+        report.diagnosticError = { ...report.diagnosticError, html: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  };
+  const legacyRemapActions = { direct: [{ visible: true, disabled: false }], proxy: [], restore: [] };
+  for (const scenarioCase of ['identity', 'takeover', 'mapped', 'stopped']) {
+    for (const viewMode of ['list', 'card']) {
+      const name = 'desktop-' + scenarioCase + '-' + viewMode;
+      const report = { name, role: scenarioCase === 'mapped' ? 'regression' : 'control', phase: 'navigation', observations: {} };
+      const observations = report.observations;
+      const assertionStart = checks.length;
+      let expectedDefect = false;
+      let fixtureMounted = false;
+      try {
+        const runId = randomUUID();
+        await send('Page.navigate', { url: `${baseUrl}/?theme=light&desktopGateway=${scenarioCase}&view=${viewMode}&runId=${encodeURIComponent(runId)}` });
+        await waitFor('window.migratedProviderCardsFixture?.state.runId === ' + JSON.stringify(runId)
+          + ' && Boolean(document.querySelector("[data-fixture=desktop-gateway]"))', name + ': fresh fixture');
+        fixtureMounted = true;
+        report.phase = 'mount';
+        const providerId = 'desktop-gateway-' + scenarioCase + '-' + viewMode;
+        const surface = viewMode === 'list' ? '.ant-card' : '[data-provider-card-clickable]';
+        observations.surfaces = await evaluate('document.querySelectorAll(' + JSON.stringify(
+          '[data-fixture="desktop-gateway"] [data-provider-id="' + providerId + '"] ' + surface,
+        ) + ').length');
+        assert.equal(observations.surfaces, 1, name + ': actual shared view must mount');
+        await delay(300);
+        await assertClean(observations);
+        observations.actions = await fixture('desktopGatewayActions()');
+        observations.callbacks = await fixture('state.callbacks');
+        const action = scenarioCase === 'identity' ? 'direct' : scenarioCase === 'takeover' ? 'restore' : 'proxy';
+        const expected = { direct: [], proxy: [], restore: [] };
+        expected[action] = [{ visible: true, disabled: scenarioCase === 'stopped' }];
+        observations.expectedActions = expected;
+
+        // Establish that the erroneous direct button is really reachable before
+        // identifying this particular mismatch as a baseline regression.
+        if (scenarioCase === 'mapped' && JSON.stringify(observations.actions) === JSON.stringify(legacyRemapActions)) {
+          report.phase = 'baseline-direct-pointer';
+          await stableTarget('direct', observations);
+          await assertClean(observations);
+          observations.actions = await fixture('desktopGatewayActions()');
+          observations.callbacks = await fixture('state.callbacks');
+          assert.deepEqual(observations.callbacks, [], 'Inspection must not dispatch callbacks');
+          expectedDefect = JSON.stringify(observations.actions) === JSON.stringify(legacyRemapActions);
+        }
+        report.phase = 'action-availability';
+        check(name + ': only the correct real action is visible with the correct enabled state', observations.actions, expected);
+        report.phase = 'pointer';
+        const target = await stableTarget(action, observations);
+        observations.actions = await fixture('desktopGatewayActions()');
+        assert.deepEqual(observations.actions, expected, 'Action state must remain correct after hover');
+        check(name + ': real action is visible and hit-testable after hover settles', target.visible && target.inViewport && target.hit);
+
+        // The real mapping layer owns gateway service calls. Availability only
+        // for enabled proxy/restore; no IPC allowlist or substitute component.
+        // Stopped uses a legacy non-Claude model, not safe-remap while stopped.
+        report.phase = 'callback';
+        if (scenarioCase === 'identity' || scenarioCase === 'stopped') {
+          await mouse('mouseMoved', target.x, target.y);
+          await mouse('mousePressed', target.x, target.y);
+          await mouse('mouseReleased', target.x, target.y);
+          if (scenarioCase === 'identity') {
+            await waitFor('migratedProviderCardsFixture.state.callbacks.length === 1', name + ': direct callback');
+          } else {
+            await delay(100);
+          }
+          observations.callbacks = await fixture('state.callbacks');
+          check(name + ': pointer click dispatches only the permitted direct callback', observations.callbacks,
+            scenarioCase === 'identity' ? [{ action: 'direct', viewMode, providerId }] : []);
+          observations.detailOpened = await evaluate('Boolean(document.querySelector("[data-provider-detail-panel]"))');
+          check(name + ': action click does not open the compact detail panel', observations.detailOpened, false);
+        } else {
+          observations.callbacks = await fixture('state.callbacks');
+          check(name + ': inspecting gateway availability invokes no callback', observations.callbacks, []);
+        }
+        report.phase = 'final-guards';
+        await assertClean(observations);
+        assert.equal(checks.length - assertionStart, DESKTOP_ROUTING_COUNTS[name], 'Incomplete assertions: ' + name);
+        report.phase = 'complete';
+        report.status = 'passed';
+        if (scenarioCase === 'mapped' || scenarioCase === 'takeover') await captureDiagnostics(report, false);
+      } catch (error) {
+        report.status = 'failed';
+        report.failureKind = expectedDefect && report.phase === 'action-availability'
+          ? 'missing-proxy-for-safe-remap' : 'unexpected-failure';
+        report.error = error instanceof Error ? error.message : String(error);
+        if (fixtureMounted) {
+          try {
+            await assertClean(observations);
+          } catch (guardError) {
+            report.failureKind = 'unexpected-failure';
+            report.guardError = guardError instanceof Error ? guardError.message : String(guardError);
+          }
+        }
+        await captureDiagnostics(report, true);
+        console.error('FAIL ' + name + ' [' + report.phase + '/' + report.failureKind + ']: ' + report.error);
+      }
+      report.passedAssertions = checks.length - assertionStart;
+      cases.push(report);
+    }
+  }
+  const failures = cases.filter(item => item.status === 'failed');
+  const summary = {
+    attempted: cases.length,
+    passed: cases.length - failures.length,
+    failed: failures.length,
+    passedControls: cases.filter(item => item.role === 'control' && item.status === 'passed').length,
+    failedControls: failures.filter(item => item.role === 'control').length,
+    expectedDefectFailures: failures.filter(item => item.failureKind === 'missing-proxy-for-safe-remap').length,
+    unexpectedFailures: failures.filter(item => item.failureKind !== 'missing-proxy-for-safe-remap').length,
+  };
+  const validRed = summary.attempted === 8 && summary.passedControls === 6
+    && summary.failedControls === 0 && summary.unexpectedFailures === 0
+    && checks.length === 22 && exceptions.length === 0
+    && JSON.stringify(failures.map(item => item.name)) === JSON.stringify(['desktop-mapped-list', 'desktop-mapped-card']);
+  await writeFile(path.join(artifactRoot, 'desktop-routing-cases.json'), JSON.stringify({
+    validRed, summary,
+    coverageBoundary: {
+      enabledProxyAndRestore: 'visibility, enabled state and hit-test only; not clicked',
+      identity: 'standard pointer click reaches supplied direct callback',
+      stopped: 'legacy non-Claude model with can_takeover=false; standard disabled click',
+      notCovered: ['safe-remap-stopped', 'Tauri IPC', 'tray interaction', 'native app', 'gateway engage', 'gateway failure recovery'],
+    },
+    passed: cases.filter(item => item.status === 'passed').map(item => item.name),
+    failed: failures.map(item => item.name),
+    fixtureErrors: failures.filter(item => item.failureKind !== 'missing-proxy-for-safe-remap'),
+    assertionCounts: DESKTOP_ROUTING_COUNTS, cases, checks, browserExceptions: exceptions,
+  }, null, 2));
+  assert.deepEqual(cases.map(item => item.name), Object.keys(DESKTOP_ROUTING_COUNTS), 'Every Desktop routing case must execute');
+  assert.equal(cases.length, 8, 'Fixed Desktop routing scenario count prevents zero-test success');
+  assert.equal(failures.length, 0, 'Desktop routing failures: ' + JSON.stringify(summary));
+  assert.equal(exceptions.length, 0, 'Unhandled browser exceptions remain failures');
+  assert.equal(checks.length, 28, 'Fixed Desktop routing assertion count prevents partial success');
+  console.log(`Passed ${cases.length} Desktop routing scenarios (${checks.length} assertions).`);
   return checks;
 }

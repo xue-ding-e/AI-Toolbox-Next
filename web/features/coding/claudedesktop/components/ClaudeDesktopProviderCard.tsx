@@ -23,6 +23,7 @@ import {
   firstGatewayApiFormat,
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
+  hasClaudeDesktopRoutingModels,
   hasNonClaudeModelIds,
   isGatewayAggregateMode,
   isGatewayFailoverMode,
@@ -212,7 +213,8 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
   const needsGatewayProxy =
     !isOfficialProvider &&
     (providerNeedsGatewayProxy(providerApiFormat, 'anthropic') ||
-      hasNonClaudeModelIds(configuredModelIds));
+      hasNonClaudeModelIds(configuredModelIds) ||
+      hasClaudeDesktopRoutingModels(effectiveRoutes));
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = isGatewayFailoverMode(gatewayMode);
