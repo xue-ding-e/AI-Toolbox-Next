@@ -71,12 +71,12 @@ def run(name,args,seconds):
 
 
 
-# Validation-only source maps; restore the existing runner before product hash checks.
+# Validation-only readable bundle; restore the existing runner before product hash checks.
 runner=source/'scripts/lib/browser-fixture.mjs'
 runner_original=runner.read_bytes()
 old=b"outDir: path.join(artifactRoot, 'dist'),"
 assert runner_original.count(old)==1
-runner.write_bytes(runner_original.replace(old,old+b' sourcemap: true,'))
+runner.write_bytes(runner_original.replace(old,old+b' minify: false,'))
 (evidence/'diagnostic-runner.sha256').write_text(sha(runner))
 folders=[]
 component=source/'web/features/coding/grok/pages/GrokPage.tsx'
