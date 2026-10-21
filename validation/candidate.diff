@@ -1,0 +1,643 @@
+--- a/web/features/coding/grok/pages/GrokPage.tsx
++++ b/web/features/coding/grok/pages/GrokPage.tsx
+@@ -82,6 +82,7 @@
+   upsertGrokCatalogModel,
+   type GrokModelFormValues,
+ } from '../utils/grokProviderModels';
++import { mergeFetchedGrokCatalogModels } from '../utils/grokFetchedModels';
+ import { saveGrokProviderCatalogWithGatewayReengage } from '../utils/grokProviderCatalogSave';
+ import FetchModelsModal from '@/components/common/FetchModelsModal';
+ import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
+@@ -853,21 +854,13 @@
+         models = models.filter((model) => !removed.has(model.key?.trim() || model.model));
+       }
+ 
+-      for (const fetched of result.selectedModels) {
+-        const key = fetched.id.trim();
+-        if (!key) {
+-          continue;
+-        }
+-        const existing = models.find((model) => (model.key?.trim() || model.model) === key);
+-        models = upsertGrokCatalogModel(models, {
+-          ...existing,
+-          key,
+-          model: key,
+-          displayName: fetched.name || existing?.displayName || key,
+-          ...(baseUrl ? { baseUrl } : {}),
+-          ...(apiBackend ? { apiBackend } : {}),
+-        }, existing?.key);
+-      }
++      // Enrich new catalog entries while preserving existing user settings.
++      models = mergeFetchedGrokCatalogModels(
++        models,
++        result.selectedModels,
++        resolveGrokProviderApiFormat(fetchModelsProvider),
++        { baseUrl, apiBackend },
++      );
+ 
+       const currentDefault = getGrokProviderDefaultModelKey(fetchModelsProvider);
+       const nextDefault = currentDefault && models.some((model) => (model.key?.trim() || model.model) === currentDefault)
+--- /dev/null
++++ b/web/features/coding/grok/utils/grokFetchedModels.ts
+@@ -0,0 +1,149 @@
++import type { FetchedModel } from '../../../../components/common/FetchModelsModal/types.ts';
++import type { PresetModel } from '../../../../constants/presetModels.ts';
++import { findPresetModelById, PRESET_MODELS } from '../../../../constants/presetModels.ts';
++import type { GrokApiFormat, GrokCatalogModel } from '../../../../types/grok.ts';
++import {
++  extractReasoningEffortsFromPresetVariants,
++  getGrokPrimaryPresetNpmTypes,
++  pickDefaultReasoningEffort,
++  upsertGrokCatalogModel,
++} from './grokProviderModels.ts';
++
++/**
++ * Resolve the preset for one fetched model.
++ *
++ * The groups are searched in the order the model editor's preset strip shows
++ * them — xAI first, then the group matching the channel protocol — and only
++ * then the global fallback (`findPresetModelById` in "any group" mode).
++ *
++ * The per-group pass reads `PRESET_MODELS` directly because
++ * `findPresetModelById` always falls back to every group: calling it once per
++ * group would make the protocol preference dead code. Ids are unique across
++ * the bundled groups today, so both orders agree; this keeps the *stated*
++ * preference true if a later remote preset update introduces a collision.
++ */
++export function findGrokPresetForModel(
++  modelId: string,
++  apiFormat?: GrokApiFormat | string | null,
++): PresetModel | undefined {
++  const normalizedModelId = modelId.trim().toLowerCase();
++  if (!normalizedModelId) {
++    return undefined;
++  }
++  for (const npmType of getGrokPrimaryPresetNpmTypes(apiFormat)) {
++    const matched = (PRESET_MODELS[npmType] ?? [])
++      .find((presetModel) => presetModel.id.trim().toLowerCase() === normalizedModelId);
++    if (matched) {
++      return matched;
++    }
++  }
++  return findPresetModelById(modelId);
++}
++
++/**
++ * Build a catalog row for a model picked from the provider's model list.
++ *
++ * Presets supply the capability data the API's `/models` response never
++ * carries: display name, context window, reasoning menu and modalities. The
++ * upstream id is copied verbatim (preset matching is case-insensitive; casing
++ * belongs to the provider, not to the preset).
++ *
++ * `maxCompletionTokens` is deliberately not filled: the model editor does not
++ * expose it, and the bundled xAI presets declare an output limit equal to the
++ * context window — writing that into `[model.*]` would cap real responses.
++ */
++export function buildFetchedGrokCatalogModel(
++  fetchedModel: FetchedModel,
++  matchedPresetModel?: PresetModel | null,
++  channelDefaults?: {
++    baseUrl?: string;
++    apiBackend?: string;
++  },
++): GrokCatalogModel {
++  const modelId = fetchedModel.id.trim();
++  const base: GrokCatalogModel = {
++    key: modelId,
++    model: modelId,
++    displayName: fetchedModel.name?.trim() || modelId,
++    ...(channelDefaults?.baseUrl ? { baseUrl: channelDefaults.baseUrl } : {}),
++    ...(channelDefaults?.apiBackend ? { apiBackend: channelDefaults.apiBackend } : {}),
++  };
++  if (!matchedPresetModel) {
++    return base;
++  }
++
++  const efforts = extractReasoningEffortsFromPresetVariants(matchedPresetModel.variants);
++  const defaultEffort = pickDefaultReasoningEffort(efforts);
++  const modalities = matchedPresetModel.modalities;
++  const attachment = matchedPresetModel.attachment;
++
++  return {
++    ...base,
++    displayName: matchedPresetModel.name?.trim() || base.displayName,
++    ...(matchedPresetModel.contextLimit ? { contextWindow: matchedPresetModel.contextLimit } : {}),
++    ...(modalities ? { modalities: { ...modalities } } : {}),
++    ...(typeof attachment === 'boolean'
++      ? { attachment, supportsImage: attachment }
++      : {}),
++    // A preset with no variants says nothing about the effort menu, so the row
++    // omits it — exactly what the manual editor writes in that case. Only a
++    // parsed menu is persisted.
++    ...(efforts.length > 0
++      ? {
++        supportsReasoningEffort: true,
++        reasoningEfforts: efforts,
++        ...(defaultEffort ? { reasoningEffort: defaultEffort } : {}),
++      }
++      : {}),
++  };
++}
++
++/**
++ * Merge the models picked in FetchModelsModal into a channel's catalog.
++ *
++ * - Rows already in the catalog keep their context window and reasoning menu;
++ *   the display name follows the provider's `/models` label when it sends one
++ *   (the pre-existing behavior — the modal disables those rows anyway). The
++ *   channel Base URL / API backend are channel-level values, so they are
++ *   refreshed here when supplied; unrelated rows keep their own values.
++ * - New rows are enriched from the preset when one matches.
++ */
++export function mergeFetchedGrokCatalogModels(
++  current: GrokCatalogModel[],
++  fetchedModels: FetchedModel[],
++  apiFormat: GrokApiFormat | string | null | undefined,
++  channelDefaults: {
++    baseUrl?: string;
++    apiBackend?: string;
++  },
++): GrokCatalogModel[] {
++  let models = current;
++  for (const fetchedModel of fetchedModels) {
++    const key = fetchedModel.id.trim();
++    if (!key) {
++      continue;
++    }
++    const existing = models.find((model) => (model.key?.trim() || model.model) === key);
++    if (existing) {
++      models = upsertGrokCatalogModel(models, {
++        ...existing,
++        key,
++        model: key,
++        displayName: fetchedModel.name?.trim() || existing.displayName || key,
++        ...(channelDefaults.baseUrl ? { baseUrl: channelDefaults.baseUrl } : {}),
++        ...(channelDefaults.apiBackend ? { apiBackend: channelDefaults.apiBackend } : {}),
++      }, existing.key);
++      continue;
++    }
++    models = upsertGrokCatalogModel(
++      models,
++      buildFetchedGrokCatalogModel(
++        fetchedModel,
++        findGrokPresetForModel(key, apiFormat),
++        channelDefaults,
++      ),
++      key,
++    );
++  }
++  return models;
++}
+--- /dev/null
++++ b/web/test/features/coding/grok/utils/grokFetchedModels.test.ts
+@@ -0,0 +1,189 @@
++/// <reference types="node" />
++
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync } from 'node:fs';
++
++import {
++  buildFetchedGrokCatalogModel,
++  findGrokPresetForModel,
++  mergeFetchedGrokCatalogModels,
++} from '../../../../../features/coding/grok/utils/grokFetchedModels.ts';
++import { buildGrokProviderSettingsWithModels } from '../../../../../features/coding/grok/utils/grokProviderModels.ts';
++import { updatePresetModels } from '../../../../../constants/presetModels.ts';
++
++const bundledPresets = JSON.parse(
++  readFileSync(
++    new URL('../../../../../../tauri/resources/preset_models.json', import.meta.url),
++    'utf8',
++  ),
++);
++
++const channelDefaults = { baseUrl: 'https://relay.example.test/v1', apiBackend: 'chat_completions' };
++
++test('a fetched model known to the xAI preset group keeps the upstream id and gains its metadata', () => {
++  updatePresetModels(bundledPresets);
++
++  const row = buildFetchedGrokCatalogModel(
++    { id: 'grok-4.7', name: 'API display name' },
++    findGrokPresetForModel('grok-4.7', 'openai_chat'),
++    channelDefaults,
++  );
++
++  assert.equal(row.key, 'grok-4.7');
++  assert.equal(row.model, 'grok-4.7');
++  // The preset's own name wins over the provider's `/models` label: that label
++  // is the same id at best, and the preset is the curated display name.
++  assert.equal(row.displayName, 'Grok 4.7');
++  assert.equal(row.contextWindow, 500_000);
++  assert.equal(row.supportsReasoningEffort, true);
++  assert.deepEqual(row.reasoningEfforts, ['low', 'medium', 'high', 'xhigh']);
++  assert.equal(row.reasoningEffort, 'high');
++  assert.deepEqual(row.modalities, { input: ['text', 'image'], output: ['text'] });
++  assert.equal(row.attachment, true);
++  assert.equal(row.supportsImage, true);
++  assert.equal(row.baseUrl, channelDefaults.baseUrl);
++  assert.equal(row.apiBackend, channelDefaults.apiBackend);
++  // `maxCompletionTokens` stays out of the catalog: the bundled xAI presets
++  // declare an output limit equal to the context window, and the model editor
++  // has no field for it.
++  assert.equal(row.maxCompletionTokens, undefined);
++});
++
++test('preset matching is case-insensitive but never rewrites the upstream id', () => {
++  updatePresetModels(bundledPresets);
++
++  const preset = findGrokPresetForModel('GROK-4.7', 'openai_chat');
++  assert.equal(preset?.id, 'grok-4.7');
++
++  const row = buildFetchedGrokCatalogModel({ id: 'GROK-4.7' }, preset, channelDefaults);
++  assert.equal(row.key, 'GROK-4.7');
++  assert.equal(row.model, 'GROK-4.7');
++});
++
++test('a model with no preset writes only the upstream facts', () => {
++  updatePresetModels(bundledPresets);
++
++  const row = buildFetchedGrokCatalogModel(
++    { id: 'vendor/private-model', name: 'Private Model' },
++    findGrokPresetForModel('vendor/private-model', 'openai_chat'),
++    channelDefaults,
++  );
++
++  assert.deepEqual(row, {
++    key: 'vendor/private-model',
++    model: 'vendor/private-model',
++    displayName: 'Private Model',
++    baseUrl: channelDefaults.baseUrl,
++    apiBackend: channelDefaults.apiBackend,
++  });
++});
++
++test('the channel protocol decides which preset group is searched first', () => {
++  updatePresetModels(bundledPresets);
++
++  // Known in the Anthropic group only; reachable through the protocol-matched
++  // group even though the xAI group does not list it.
++  assert.equal(findGrokPresetForModel('claude-opus-4-8', 'anthropic_messages')?.id, 'claude-opus-4-8');
++  // And the fallback still finds it when the channel speaks chat, because the
++  // preset lookup is provider-aware but not provider-limited.
++  assert.equal(findGrokPresetForModel('claude-opus-4-8', 'openai_chat')?.id, 'claude-opus-4-8');
++});
++
++test('merging keeps an existing row’s own settings and enriches only the new ones', () => {
++  updatePresetModels(bundledPresets);
++
++  // Existing catalog keys equal the upstream model id, so this row *is* the
++  // fetched `grok-4.7` — the modal disables it, but a stale caller may still
++  // pass it, and it must not lose the user's context window / effort menu.
++  const current = [{
++    key: 'grok-4.7',
++    model: 'grok-4.7',
++    displayName: 'My Grok',
++    contextWindow: 123_456,
++    reasoningEfforts: ['low', 'high'],
++    reasoningEffort: 'low',
++    supportsReasoningEffort: true,
++  }];
++
++  const merged = mergeFetchedGrokCatalogModels(
++    current,
++    [
++      { id: 'grok-4.7' },
++      { id: 'grok-4.5', name: 'Grok 4.5' },
++    ],
++    'openai_chat',
++    channelDefaults,
++  );
++
++  const existing = merged.find((model) => model.key === 'grok-4.7');
++  assert.equal(existing?.contextWindow, 123_456);
++  assert.deepEqual(existing?.reasoningEfforts, ['low', 'high']);
++  assert.equal(existing?.reasoningEffort, 'low');
++  assert.equal(existing?.baseUrl, channelDefaults.baseUrl);
++  assert.equal(existing?.apiBackend, channelDefaults.apiBackend);
++  // The row keeps its own display name when the fetched entry has none.
++  assert.equal(existing?.displayName, 'My Grok');
++
++  const added = merged.find((model) => model.key === 'grok-4.5');
++  assert.equal(added?.displayName, 'Grok 4.5');
++  assert.equal(added?.contextWindow, 500_000);
++  assert.deepEqual(added?.reasoningEfforts, ['low', 'medium', 'high']);
++});
++
++test('colliding preset IDs respect xAI, protocol group, then global fallback priority', () => {
++  const row = (name: string) => ({ id: 'collision', name });
++  try {
++    updatePresetModels({
++      '@ai-sdk/unrelated': [row('global')],
++      '@ai-sdk/anthropic': [row('anthropic')],
++      '@ai-sdk/openai-compatible': [row('chat')],
++      '@ai-sdk/xai': [row('xAI')],
++    });
++    assert.equal(findGrokPresetForModel(' COLLISION ', 'anthropic_messages')?.name, 'xAI');
++    updatePresetModels({
++      '@ai-sdk/unrelated': [row('global')],
++      '@ai-sdk/anthropic': [row('anthropic')],
++      '@ai-sdk/openai-compatible': [row('chat')],
++    });
++    assert.equal(findGrokPresetForModel('collision', 'anthropic_messages')?.name, 'anthropic');
++    assert.equal(findGrokPresetForModel('collision', 'openai_chat')?.name, 'chat');
++    assert.equal(findGrokPresetForModel('collision', 'openai_responses')?.name, 'global');
++    assert.equal(findGrokPresetForModel('  ', 'openai_chat'), undefined);
++  } finally {
++    updatePresetModels(bundledPresets);
++  }
++});
++
++test('blank fetched IDs are skipped and unrelated rows retain their own settings', () => {
++  updatePresetModels(bundledPresets);
++  const current = [{
++    key: 'untouched', model: 'untouched', displayName: 'Custom',
++    contextWindow: 1234, baseUrl: 'https://other.example.test/v1',
++    apiBackend: 'responses', reasoningEffort: 'low',
++  }];
++  const original = structuredClone(current);
++  const merged = mergeFetchedGrokCatalogModels(current,
++    [{ id: '' }, { id: '  ' }, { id: 'grok-4.7' }], 'openai_chat', channelDefaults);
++  assert.equal(merged.length, 2);
++  assert.deepEqual(merged.find(row => row.key === 'untouched'), original[0]);
++  assert.deepEqual(current, original);
++  assert.equal(merged.find(row => row.key === 'grok-4.7')?.contextWindow, 500_000);
++});
++
++test('enriched catalog survives the real settings serializer without adding an output limit', () => {
++  updatePresetModels(bundledPresets);
++  const models = mergeFetchedGrokCatalogModels([], [{ id: 'grok-4.7' }], 'openai_chat', channelDefaults);
++  const serialized = JSON.parse(buildGrokProviderSettingsWithModels({
++    category: 'custom', settingsConfig: JSON.stringify({ baseUrl: channelDefaults.baseUrl }),
++  }, models, 'grok-4.7'));
++  const row = serialized.modelCatalog.models[0];
++  assert.equal(serialized.defaultModelKey, 'grok-4.7');
++  assert.equal(serialized.baseUrl, channelDefaults.baseUrl);
++  assert.equal(row.contextWindow, 500_000);
++  assert.deepEqual(row.reasoningEfforts, ['low', 'medium', 'high', 'xhigh']);
++  assert.deepEqual(row.modalities, { input: ['text', 'image'], output: ['text'] });
++  assert.equal(row.attachment, true);
++  assert.equal(row.supportsImage, true);
++  assert.equal(row.maxCompletionTokens, undefined);
++});
+--- /dev/null
++++ b/scripts/verify-grok-fetched-models.mjs
+@@ -0,0 +1,9 @@
++import { fileURLToPath } from 'node:url';
++import { runBrowserFixture } from './lib/browser-fixture.mjs';
++import { verifyGrokFetchedModels } from '../web/test/features/coding/grok/fetchedModels/grokFetchedModelsBrowserChecks.mjs';
++await runBrowserFixture({
++  fixtureDirectory: fileURLToPath(new URL('../web/test/features/coding/grok/fetchedModels/fixtures/', import.meta.url)),
++  fixtureFilename: 'GrokFetchModelsFixture.jsx',
++  artifactPrefix: 'grok-fetched-models-',
++  verify: verifyGrokFetchedModels,
++});
+--- /dev/null
++++ b/web/test/features/coding/grok/fetchedModels/grokFetchedModelsBrowserChecks.mjs
+@@ -0,0 +1,72 @@
++import assert from 'node:assert/strict';
++import { writeFile } from 'node:fs/promises';
++import path from 'node:path';
++export async function verifyGrokFetchedModels({ send, evaluate, baseUrl, exceptions, artifactRoot }) {
++  const results=[]; let phase='setup', observations=[];
++  const snapshot=()=>evaluate('grokFetchFixture.snapshot()');
++  const observe=async label=>{const state=await snapshot();observations.push({label,state});return state;};
++  const wait=async fn=>{for(let n=0;n<250;n++){if(await fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Fixture UI deadline');};
++  async function click(selector,textKey,params){
++    phase='interaction';
++    const text=textKey===undefined?undefined:await evaluate(`grokFetchFixture.translate(${JSON.stringify(textKey)},${JSON.stringify(params??{})})`);
++    const point=await evaluate(`(()=>{const es=[...document.querySelectorAll(${JSON.stringify(selector)})].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&(${JSON.stringify(text??null)}===null||e.textContent.trim()===${JSON.stringify(text??null)});});if(es.length!==1)throw Error('Expected one visible target: '+es.length);const e=es[0],r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(e.disabled||x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))throw Error('Target unavailable or occluded');return{x,y,tag:e.tagName};})()`);
++    observations.push({label:'click-before',selector,text,point});
++    await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:point.x,y:point.y});
++    await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x:point.x,y:point.y});
++  }
++  async function stableModal(){let previous='',stable=0;await wait(async()=>{
++    const g=await evaluate(`(()=>{const es=[...document.querySelectorAll('.ant-modal')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';});if(es.length!==1)return null;const e=es[0],r=e.getBoundingClientRect();if(e.getAnimations({subtree:true}).some(a=>a.playState==='running'||a.pending)||Number(getComputedStyle(e).opacity)!==1)return null;return{x:r.x,y:r.y,w:r.width,h:r.height};})()`);
++    const key=JSON.stringify(g);stable=g&&key===previous?stable+1:0;previous=key;return stable>=2;
++  });}
++  async function openFetch(){await click('button','common.model.fetchModels');await stableModal();const opened=await observe('opened');assert.equal(opened.fetchCount,0);assert.equal(opened.writes.length,0);await click('.ant-modal button','opencode.fetchModels.fetch');await wait(async()=> (await snapshot()).fetchCount===1);await wait(()=>evaluate(`!!document.querySelector('.ant-modal input[name="grok-4.7"]')`));await stableModal();}
++  async function run(name,scenario,fn){phase='setup';observations=[];const start=exceptions.length;const token=`${results.length}-${Date.now()}`;try{
++    await send('Page.navigate',{url:baseUrl+'/?scenario='+scenario+'&caseToken='+token});
++    await wait(()=>evaluate(`!!window.grokFetchFixture&&grokFetchFixture.isReady()&&grokFetchFixture.snapshot().caseToken===${JSON.stringify(token)}`));
++    const initial=await observe('ready');assert.equal(initial.forbidden.length,0);assert.equal(initial.writes.length,0);
++    await openFetch();await fn();phase='safety';assert.equal((await snapshot()).forbidden.length,0);assert.equal(exceptions.length,start);
++    results.push({name,passed:true,observations,pageExceptions:[]});
++  }catch(error){let state;try{state=await snapshot();}catch{}const diagnostics=[];try{await writeFile(path.join(artifactRoot,`case-${results.length}-failure.html`),await evaluate('document.documentElement.outerHTML'));const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(path.join(artifactRoot,`case-${results.length}-failure.png`),Buffer.from(shot.data,'base64'));}catch(e){diagnostics.push(String(e));}results.push({name,passed:false,phase,error:String(error),assertion:{code:error.code,actualIsUndefined:error.actual===undefined,expected:error.expected},observations,state,pageExceptions:exceptions.slice(start),diagnostics});}}
++  async function submit(removeCount=0){
++    assert.equal((await snapshot()).writes.length,0);
++    await click('.ant-modal input[name="grok-4.7"]');
++    await wait(()=>evaluate(`document.querySelector('.ant-modal input[name="grok-4.7"]').checked===true`));
++    await observe('selected-before-save');assert.equal((await snapshot()).writes.length,0);
++    await click('.ant-modal button','opencode.fetchModels.applyChanges',{addCount:1,removeCount});
++    await wait(async()=> (await snapshot()).writes.length===1);
++  }
++  for(const scenario of ['new','existing','remove-default']) await run(scenario+' catalog merge',scenario,async()=>{
++    if(scenario==='existing') assert.equal(await evaluate(`document.querySelector('.ant-modal input[name="grok-4.5"]').disabled`),true);
++    if(scenario==='remove-default') await click('.ant-modal label','opencode.fetchModels.removeMissing',{count:1});
++    await submit(scenario==='remove-default'?1:0);
++    await wait(async()=> (await snapshot()).dialogs.length===0);
++    const state=await observe('saved');assert.equal(state.forbidden.length,0);assert.equal(state.saveCount,1);
++    const saved=state.writes[0],models=saved.modelCatalog.models;
++    assert.deepEqual(JSON.parse(state.providers[0].settingsConfig),saved);
++    if(scenario==='existing'){
++      const prior=models.find(x=>x.key==='grok-4.5');
++      assert.equal(prior.contextWindow,123456);assert.deepEqual(prior.reasoningEfforts,['low','high']);
++      assert.equal(prior.reasoningEffort,'low');assert.equal(prior.displayName,'Fixture hand-edited Grok');assert.equal(saved.defaultModelKey,'grok-4.5');
++    }else{assert.equal(saved.defaultModelKey,'grok-4.7');assert.equal(models.length,1);}
++    const model=models.find(x=>x.key==='grok-4.7');assert(model);assert.equal(model.maxCompletionTokens,undefined);
++    phase='invariant:preset-context';assert.equal(model.contextWindow,500000,'Fetched known model lost preset context');phase='interaction';
++    assert.deepEqual(model.reasoningEfforts,['low','medium','high','xhigh']);
++    assert.deepEqual(model.modalities,{input:['text','image'],output:['text']});
++    assert.equal(model.displayName,'Grok 4.7');assert.equal(model.reasoningEffort,'high');
++    assert.equal(model.supportsReasoningEffort,true);assert.equal(model.attachment,true);assert.equal(model.supportsImage,true);
++    assert.equal(model.baseUrl,'https://grok-fixture.example.invalid/v1');assert.equal(model.apiBackend,'chat_completions');
++  });
++  await run('save failure does not claim stored catalog','save-failure',async()=>{
++    const before=(await snapshot()).providers;
++    await submit();
++    const errorText=await evaluate(`grokFetchFixture.translate('common.error')`);
++    await wait(async()=> (await snapshot()).alerts.some(x=>x.includes(errorText)));
++    const state=await observe('save-failure');phase='invariant';
++    assert.equal(state.saveCount,1);assert.deepEqual(state.providers,before);
++    assert.equal(state.dialogs.length,1);assert(state.alerts.some(x=>x.includes(errorText)));
++  });
++  const fixtureErrors=results.filter(x=>!x.passed&&!(x.phase==='invariant:preset-context'&&x.assertion?.code==='ERR_ASSERTION'&&x.assertion.actualIsUndefined&&x.assertion.expected===500000&&x.state?.forbidden.length===0&&x.pageExceptions.length===0));
++  const validRed=results.length===4&&results.slice(0,3).every(x=>!x.passed&&x.phase==='invariant:preset-context'&&x.assertion?.code==='ERR_ASSERTION'&&x.assertion.actualIsUndefined&&x.assertion.expected===500000&&x.state?.forbidden.length===0&&x.pageExceptions.length===0)&&results[3].passed&&fixtureErrors.length===0&&exceptions.length===0;
++  const report={passed:results.filter(x=>x.passed).length,failed:results.filter(x=>!x.passed).length,fixtureErrors:fixtureErrors.length,validRed,results,globalPageExceptions:exceptions};
++  await writeFile(path.join(artifactRoot,'grok-fetched-cases.json'),JSON.stringify(report,null,2));
++  assert(results.length>0,'No cases is not validation');assert.equal(report.failed,0);assert.equal(exceptions.length,0);return results;
++}
+--- /dev/null
++++ b/web/test/features/coding/grok/fetchedModels/fixtures/GrokFetchModelsFixture.jsx
+@@ -0,0 +1,41 @@
++import { boundary } from './boundary.mjs';
++import React from 'react';
++import { createRoot } from 'react-dom/client';
++import { App, ConfigProvider } from 'antd';
++import { MemoryRouter } from 'react-router-dom';
++import i18next from 'i18next';
++import { I18nextProvider } from 'react-i18next';
++import bundledPresets from '@/../tauri/resources/preset_models.json';
++import enUS from '@/i18n/locales/en-US.json';
++import zhCN from '@/i18n/locales/zh-CN.json';
++
++// The complete real page is imported only after official mockIPC is installed.
++const { updatePresetModels } = await import('@/constants/presetModels');
++updatePresetModels(bundledPresets);
++const { default: GrokPage } = await import('@/features/coding/grok/pages/GrokPage');
++const i18n = i18next.createInstance();
++await i18n.init({ lng: 'en-US', fallbackLng: 'en-US', resources: {
++  'en-US': { translation: enUS }, 'zh-CN': { translation: zhCN },
++},
++  initImmediate: false, interpolation: { escapeValue: false }, returnEmptyString: false });
++let committed = false;
++function Fixture() {
++  React.useLayoutEffect(() => { committed = true; return () => { committed = false; }; }, []);
++  return <I18nextProvider i18n={i18n}><ConfigProvider><App><MemoryRouter initialEntries={['/coding/grok']}>
++    <main id="grok-page"><GrokPage /></main>
++  </MemoryRouter></App></ConfigProvider></I18nextProvider>;
++}
++const visible = element => {
++  const rect = element.getBoundingClientRect();
++  return rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== 'hidden';
++};
++window.grokFetchFixture = {
++  translate: (key, params) => i18n.t(key, params),
++  isReady: () => committed && Boolean(document.querySelector('#grok-page')?.textContent.includes('Synthetic Grok Fixture')),
++  snapshot: () => ({ ...boundary.snapshot(), committed,
++    text: document.querySelector('#grok-page')?.textContent || '',
++    dialogs: [...document.querySelectorAll('[role="dialog"]')].filter(visible).map(element => element.textContent),
++    alerts: [...document.querySelectorAll('.ant-message-notice,[role="alert"]')].filter(visible).map(element => element.textContent),
++  }),
++};
++createRoot(document.getElementById('root')).render(<Fixture />);
+--- /dev/null
++++ b/web/test/features/coding/grok/fetchedModels/fixtures/boundary.mjs
+@@ -0,0 +1,107 @@
++import { mockIPC } from '@tauri-apps/api/mocks';
++
++// Installed before importing any application module. All data is synthetic.
++const allowedScenarios = new Set(['new', 'existing', 'remove-default', 'save-failure']);
++const params = new URLSearchParams(location.search);
++const scenario = params.get('scenario') || 'new';
++if (!allowedScenarios.has(scenario)) throw new Error('Unknown Grok fixture scenario');
++const caseToken = params.get('caseToken') || scenario;
++const calls = [], writes = [], forbidden = [], listeners = new Map();
++let fetchCount = 0, saveCount = 0;
++const clone = value => structuredClone(value);
++const baseUrl = 'https://grok-fixture.example.invalid/v1';
++const existing = {
++  key: 'grok-4.5', model: 'grok-4.5', displayName: 'Fixture hand-edited Grok',
++  contextWindow: 123456, reasoningEfforts: ['low', 'high'], reasoningEffort: 'low',
++  supportsReasoningEffort: true, baseUrl, apiBackend: 'chat_completions',
++};
++let providers = [{
++  id: 'fixture-grok', name: 'Synthetic Grok Fixture', category: 'custom',
++  settingsConfig: JSON.stringify({
++    auth: {}, baseUrl, config: '',
++    ...(scenario !== 'new' ? { defaultModelKey: 'grok-4.5' } : {}),
++    modelCatalog: { models: scenario === 'new' ? [] : [existing] },
++  }),
++  meta: { apiFormat: 'openai_chat' }, isApplied: false, isDisabled: false,
++  createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
++}];
++const status = {
++  cli_key: 'grok', state: 'direct', dot: 'gray', can_takeover: false,
++  can_restore_direct: false, gateway_origin: null, runtime_root: '/fixture/grok',
++  managed_targets: [], mode: null, primary_provider_id: null,
++  provider_priorities: [], message: null,
++};
++function deny(label) {
++  forbidden.push(label);
++  throw new Error('Forbidden Grok fixture operation: ' + label);
++}
++const policy = document.createElement('meta');
++policy.httpEquiv = 'Content-Security-Policy';
++policy.content = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'";
++document.head.append(policy);
++document.addEventListener('securitypolicyviolation', event => { forbidden.push('csp:' + event.violatedDirective); });
++window.open = () => deny('window.open');
++const noArgsCommands = new Set([
++  'get_grok_config_file_path', 'get_grok_root_path_info', 'list_grok_providers',
++  'list_opencode_favorite_providers', 'has_all_api_hub_extension',
++  'get_provider_list_state', 'list_grok_prompt_configs', 'refresh_tray_menu',
++]);
++mockIPC(async (command, args) => {
++  calls.push(command);
++  const exactKeys = keys => args && typeof args === 'object' && !Array.isArray(args)
++    && JSON.stringify(Object.keys(args).sort()) === JSON.stringify([...keys].sort());
++  if (noArgsCommands.has(command) && args !== undefined && !(args && Object.keys(args).length === 0)) return deny(command + ':args');
++  if (command === 'plugin:event|listen') {
++    if (!exactKeys(['event', 'target', 'handler']) || args.event !== 'gateway-running-changed'
++      || args.target?.kind !== 'Any' || Object.keys(args.target).length !== 1 || !Number.isInteger(args.handler)) return deny(command);
++    listeners.set(args.handler, args.event);
++    return args.handler;
++  }
++  if (command === 'plugin:event|unlisten') {
++    if (!exactKeys(['event', 'eventId']) || listeners.get(args.eventId) !== args.event) return deny(command);
++    listeners.delete(args.eventId);
++    return null;
++  }
++  switch (command) {
++    case 'get_grok_config_file_path': return '/fixture/grok/config.toml';
++    case 'get_grok_root_path_info': return { path: '/fixture/grok', source: 'default' };
++    case 'list_grok_providers': return clone(providers);
++    case 'list_opencode_favorite_providers':
++    case 'list_grok_prompt_configs': return [];
++    case 'has_all_api_hub_extension': return false;
++    case 'get_provider_list_state': return { sort_modes: {}, last_used: {}, view_modes: { grok: 'list' } };
++    case 'proxy_gateway_cli_status':
++      if (!exactKeys(['cliKey']) || args.cliKey !== 'grok') return deny(command + ':args');
++      return clone(status);
++    case 'fetch_provider_models': {
++      if (!exactKeys(['request'])) return deny(command + ':args');
++      const r = args.request;
++      if (!r || r.providerId !== 'fixture-grok' || r.baseUrl !== baseUrl || r.apiKey !== ''
++        || r.customUrl !== baseUrl + '/models' || r.sdkType !== '@ai-sdk/openai'
++        || r.apiType !== 'openai_compat' || r.headers !== undefined || r.configValueMode !== undefined) return deny(command + ':request');
++      if (Object.keys(r).some(key => !['providerId', 'baseUrl', 'apiKey', 'headers', 'apiType', 'sdkType', 'configValueMode', 'customUrl'].includes(key))) return deny(command + ':extra-fields');
++      fetchCount++;
++      const models = [{ id: 'grok-4.7', name: 'Raw endpoint label', ownedBy: 'xai' }];
++      if (scenario === 'existing' || scenario === 'save-failure') models.push({ id: 'grok-4.5', name: 'Different endpoint label', ownedBy: 'xai' });
++      return { models, total: models.length };
++    }
++    case 'update_grok_provider': {
++      if (!exactKeys(['provider']) || args.provider?.id !== 'fixture-grok' || args.provider.category !== 'custom'
++        || args.provider.isApplied !== false || typeof args.provider.settingsConfig !== 'string') return deny(command + ':args');
++      const settings = JSON.parse(args.provider.settingsConfig);
++      if (settings.baseUrl !== baseUrl || Object.keys(settings.auth || {}).length !== 0) return deny(command + ':settings');
++      // Only settings JSON is exposed in writes; never arbitrary provider credentials.
++      writes.push(clone(settings));
++      saveCount++;
++      if (scenario === 'save-failure') throw new Error('Synthetic Grok save failure');
++      providers = [clone(args.provider)];
++      return clone(providers[0]);
++    }
++    case 'refresh_tray_menu': return null;
++    default: return deny(command);
++  }
++});
++export const boundary = {
++  snapshot: () => ({ caseToken, scenario, providers: clone(providers), writes: clone(writes),
++    forbidden: [...forbidden], fetchCount, saveCount, calls: [...calls], listeners: listeners.size }),
++};
+--- a/package.json
++++ b/package.json
+@@ -16,6 +16,7 @@
+     "i18n:set-key": "node scripts/i18n-keys.mjs set-key",
+     "i18n:find-text": "node scripts/i18n-keys.mjs find-text",
+     "i18n:find-key": "node scripts/i18n-keys.mjs find-key",
++    "test:grok-fetched-models": "node ./scripts/verify-grok-fetched-models.mjs",
+     "test:web": "node ./scripts/run-web-tests.mjs",
+     "test:auth-config-guard": "node ./scripts/verify-auth-config-guard.mjs",
+     "test:codex-model-import": "node ./scripts/verify-codex-model-import.mjs",
+@@ -24,7 +25,7 @@
+     "test:provider-card-layout": "node ./scripts/verify-provider-card-layout.mjs",
+     "test:provider-card-view": "node ./scripts/verify-provider-card-view.mjs",
+     "test:ime-autocomplete": "node ./scripts/verify-ime-safe-autocomplete.mjs",
+-    "test": "pnpm run test:web && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-request-race && pnpm run test:skills-group-mode",
++    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-request-race && pnpm run test:skills-group-mode",
+     "sync:version": "node scripts/sync-tauri-version.mjs",
+     "tauri": "tauri",
+     "prepare": "husky",
