@@ -1,0 +1,51 @@
+--- a/internal/sessions/codex_portable.go
++++ b/internal/sessions/codex_portable.go
+@@ -127,16 +127,37 @@
+ 			}
+ 		}
+ 	}
++	scanComplete := true
+ 	for _, folder := range []string{"sessions", "archived_sessions"} {
+-		walkDir(filepath.Join(home, folder), func(p string, d fs.DirEntry, err error) error {
+-			if err != nil || d.IsDir() || codexThreadOf(d.Name()) == "" {
++		root := filepath.Join(home, folder)
++		err := walkDir(root, func(p string, d fs.DirEntry, err error) error {
++			if err != nil {
++				// A home need not have either root yet; an unreadable subtree
++				// is not an empty one, even if it vanished during the scan.
++				if p != root || !errors.Is(err, fs.ErrNotExist) {
++					scanComplete = false
++					log.Printf("codex rollout scan %s: %v", p, err)
++				}
+ 				return nil
+ 			}
+-			if fi, err := d.Info(); err == nil && fi.Mode().IsRegular() && !fi.ModTime().Before(since) {
++			if d.IsDir() || codexThreadOf(d.Name()) == "" {
++				return nil
++			}
++			fi, err := d.Info()
++			if err != nil {
++				scanComplete = false
++				log.Printf("codex rollout scan %s: %v", p, err)
++				return nil
++			}
++			if fi.Mode().IsRegular() && !fi.ModTime().Before(since) {
+ 				add(p)
+ 			}
+ 			return nil
+ 		})
++		if err != nil {
++			scanComplete = false
++			log.Printf("codex rollout scan %s: %v", root, err)
++		}
+ 	}
+ 	res.Done = true
+ 	var pending []string
+@@ -165,6 +186,7 @@
+ 			break
+ 		}
+ 	}
++	res.Done = res.Done && scanComplete
+ 	now := codexPortHome{Since: was.Since, Pending: pending}
+ 	if res.Done {
+ 		now.Since = start

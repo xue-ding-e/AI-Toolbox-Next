@@ -1,0 +1,10 @@
+--- a/internal/sessions/codex_portable.go
++++ b/internal/sessions/codex_portable.go
+@@ -151,6 +151,7 @@
+ 				pending = append(pending, due[i:]...)
+ 				break
+ 			}
++			pending = append(pending, p)
+ 			log.Printf("codex rollout %s: %v", p, err)
+ 		case changed:
+ 			res.Rewritten = append(res.Rewritten, p)
