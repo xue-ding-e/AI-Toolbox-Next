@@ -1,0 +1,26 @@
+diff --git a/internal/sessions/codex_portable.go b/internal/sessions/codex_portable.go
+index 2bf00fbd..9315c14c 100644
+--- a/internal/sessions/codex_portable.go
++++ b/internal/sessions/codex_portable.go
+@@ -77,6 +77,12 @@ type CodexPort struct {
+ // ctx ends. The first pass reads every rollout written since magpie began
+ // to compact; later ones only what changed since.
+ func PortCodexRollouts(ctx context.Context, home string) (CodexPort, error) {
++	return portCodexRollouts(ctx, home, filepath.WalkDir)
++}
++
++// portCodexRollouts accepts a walker so tests can model an incomplete scan
++// without changing filesystem permissions or sharing a mutable hook.
++func portCodexRollouts(ctx context.Context, home string, walkDir func(string, fs.WalkDirFunc) error) (CodexPort, error) {
+ 	var res CodexPort
+ 	locks := filepath.Join(home, "thread-writer-locks")
+ 	if fi, err := os.Stat(locks); err != nil || !fi.IsDir() {
+@@ -122,7 +128,7 @@ func PortCodexRollouts(ctx context.Context, home string) (CodexPort, error) {
+ 		}
+ 	}
+ 	for _, folder := range []string{"sessions", "archived_sessions"} {
+-		filepath.WalkDir(filepath.Join(home, folder), func(p string, d fs.DirEntry, err error) error {
++		walkDir(filepath.Join(home, folder), func(p string, d fs.DirEntry, err error) error {
+ 			if err != nil || d.IsDir() || codexThreadOf(d.Name()) == "" {
+ 				return nil
+ 			}
