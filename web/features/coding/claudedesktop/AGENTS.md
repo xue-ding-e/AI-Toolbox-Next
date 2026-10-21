@@ -35,7 +35,9 @@
 
 ## 核心设计决策（Why）
 
-- **渠道（profile）在创建时固定，编辑时不可改**。`providerEndpointKey` 下拉在 `isEdit` 时 `disabled`；"官方渠道"选项只在**新建**或编辑一个已是 `category === 'official'` 的记录时出现。原因是后端 apply 判定官方回退靠"seed id 或 `category=official` 且 env 无凭据"，把一个带凭据的自定义渠道改成 official 会写出语义矛盾的行。
+- **渠道（profile）在创建时固定，编辑时不可改**。`providerEndpointKey` 下拉在 `isEdit` 时 `disabled`；"官方渠道"选项只在**新建/复制**或编辑一个符合后端 restore predicate 的记录时出现。原因是后端 apply 判定官方回退靠"seed id 或 `category=official` 且 env 无凭据"，把一个带凭据的自定义渠道改成 official 会写出语义矛盾的行。
+- `category` 是来源分类，不是 restore mode；带凭据的 imported official 行按自定义/预设 endpoint 编辑，原样/备注保存保留原分类。form 与 page 共用 `officialRestore.ts` 的 seed-or-empty-credentials 判定，只有新建/复制时用户显式选择渠道才提交分类覆盖。
+- 仅既有 `ccs:claude:*` / `claude:*` 来源的 official 非 restore 行，凭据对与初始化逐值完全相同（不 trim）时可保留原缺项；空缺与空串都按表单初始化的空串比较。未改凭据从 form 到 page builder 都保留原始字符串，不 trim；任一凭据改动、新建/复制、普通 custom 行仍要求 URL 和 key 两项且拒绝纯空白。合法导入行编辑初始化不从预设补齐原空 URL；两个字段互设 dependencies，避免改一项后另一项沿用旧校验。
 - 官方模式保存的是 `{"env":{}}`（`buildProviderSettingsConfig` 的第一分支），这是**触发后端 restore_official 的信号**，不是"空配置"。`buildProviderMeta` 在 official 分支会清掉 `claudeDesktopModelRoutes` / `apiFormat` / `gatewayProfile` / `customHeaders`(含 snake_case) / `customUserAgent`(含 snake_case) / `modelRewrites`(含 snake_case)——这些键对 1P 无意义，留着会在切回自定义时把旧配置复活。
 - `meta.claudeDesktopMode` 是**废弃字段**，`buildProviderMeta` 无条件 `delete`。新代码不要读它、也不要写它。
 - 保存一个**已应用**的 provider 时会走 `saveProviderWithGatewayReengage`：网关接管中先 `restoreProxyGatewayCliDirect('claude_desktop')`，保存，再按原模式重新接管（single → `engageSingle(savedProvider.id)`，failover → 再叠 `engageFailover`）。**顺序不能改**——后端 `update_claude_desktop_provider` 在 `is_applied` 时会自动重新 apply，而 apply 又被 `ensure_claude_desktop_gateway_direct` 拒绝（"已由网关接管"）。所以必须在保存前脱离接管。**本页没有 `engageAggregate`**：聚合是 Codex 专属，`resolveGatewayReengageMode` 对 Claude Desktop 永远不会返回 `aggregate`；不要照抄 codex 页补上这个回调。

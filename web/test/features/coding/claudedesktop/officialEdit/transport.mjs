@@ -1,0 +1,20 @@
+import { mockIPC } from '@tauri-apps/api/mocks';
+import { scenarios } from './scenarios.mjs';
+export const scenario=scenarios.find(x=>x.id===new URLSearchParams(location.search).get('case'));
+if(!scenario)throw new Error('Unknown scenario');
+export const calls=[],denied=[],runtimeErrors=[];
+const reject=label=>{denied.push(label);throw new Error('Forbidden fixture operation: '+label);};
+window.__TAURI_OS_PLUGIN_INTERNALS__={platform:'linux'};
+const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';
+policy.content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'";
+document.head.append(policy);
+document.addEventListener('securitypolicyviolation',e=>denied.push('csp:'+e.violatedDirective));
+window.addEventListener('error',e=>runtimeErrors.push(e.message));
+window.addEventListener('unhandledrejection',e=>runtimeErrors.push(String(e.reason)));
+window.open=()=>reject('window.open');
+mockIPC(async(command,args)=>{
+ calls.push({command,args});
+ if(command==='proxy_gateway_supported_cli_keys'&&(!args||Object.keys(args).length===0))return['claude_desktop'];
+ if(command==='list_cc_switch_providers'&&scenario.candidate&&args?.appType==='claude'&&args?.dbPath===null&&Object.keys(args).length===2)return{found:true,dbPath:'/synthetic/not-real.db',providers:[structuredClone(scenario.candidate)]};
+ return reject(command);
+});

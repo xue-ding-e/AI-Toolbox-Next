@@ -25,7 +25,7 @@
     "test:provider-card-layout": "node ./scripts/verify-provider-card-layout.mjs",
     "test:provider-card-view": "node ./scripts/verify-provider-card-view.mjs",
     "test:ime-autocomplete": "node ./scripts/verify-ime-safe-autocomplete.mjs",
-    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-capability && pnpm run test:skills-group-mode",
+    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-capability && pnpm run test:skills-group-mode && pnpm run test:claude-desktop-official-edit",
     "sync:version": "node scripts/sync-tauri-version.mjs",
     "tauri": "tauri",
     "prepare": "husky",
@@ -48,7 +48,8 @@
     "test:ssh-request-race": "node ./scripts/verify-ssh-request-race.mjs",
     "test:ssh-capability": "node ./web/test/features/settings/sshCapability/verify.mjs",
     "test:deeplink-handshake": "node ./scripts/verify-deeplink-handshake.mjs",
-    "test:skills-group-mode": "node ./scripts/verify-skills-group-mode.mjs"
+    "test:skills-group-mode": "node ./scripts/verify-skills-group-mode.mjs",
+    "test:claude-desktop-official-edit": "node ./web/test/features/coding/claudedesktop/officialEdit/run.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "6.2.5",
