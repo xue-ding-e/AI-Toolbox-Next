@@ -1,0 +1,10 @@
+{
+  "base": "7450fc2d19fcd1c50832f2674dc0841b5bc2c43b",
+  "patchSha256": "303ae61afdf7b5cd5c8122c85ac704928bbad23100517c600565e266d26ce47c",
+  "validationFiles": [
+    ".github/workflows/ssh-request-race.yml",
+    "validation/candidate.diff",
+    "validation/validate.py",
+    "validation/manifest.json"
+  ]
+}
