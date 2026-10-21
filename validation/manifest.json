@@ -1,0 +1,29 @@
+{
+  "base": "268a567b93fecfd4c5f889a13b6d1c56f86e3c92",
+  "patchSha256": "43c8306161b37302e3c648e4d0b96baf6a2c7abd6a9676e3d4e55c373cf9b3a5",
+  "productFiles": [
+    "package.json",
+    "scripts/verify-skills-group-mode.mjs",
+    "tauri/src/coding/skills/AGENTS.md",
+    "tauri/src/coding/skills/adapter.rs",
+    "tauri/src/coding/skills/commands.rs",
+    "tauri/src/coding/skills/skill_store.rs",
+    "tauri/src/coding/skills/types.rs",
+    "tauri/src/lib.rs",
+    "web/features/coding/skills/AGENTS.md",
+    "web/features/coding/skills/pages/SkillsPage.tsx",
+    "web/features/coding/skills/services/skillsApi.ts",
+    "web/features/coding/skills/types/index.ts",
+    "web/features/coding/skills/utils/skillGrouping.ts",
+    "web/test/features/coding/skills/groupMode/fixtures/SkillsGroupModeFixture.jsx",
+    "web/test/features/coding/skills/groupMode/fixtures/boundary.mjs",
+    "web/test/features/coding/skills/groupMode/skillsGroupModeBrowserChecks.mjs",
+    "web/test/features/coding/skills/utils/skillGrouping.test.ts"
+  ],
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/manifest.json",
+    "validation/validate.py"
+  ]
+}
