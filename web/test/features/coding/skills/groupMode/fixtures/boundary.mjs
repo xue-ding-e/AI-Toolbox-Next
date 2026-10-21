@@ -2,8 +2,9 @@ import {mockIPC} from '@tauri-apps/api/mocks';
 // Restrict this synthetic fixture before dynamically importing the application page.
 const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'";document.head.append(policy);
 const scenario=new URLSearchParams(location.search).get('scenario')||'auto-empty';
+const caseToken=new URLSearchParams(location.search).get('caseToken');
 let stored=scenario==='explicit-custom'?'custom':scenario==='explicit-source'||scenario==='save-failure'?'source':'auto';
-const calls=[],writes=[],listeners=new Map();let forbidden=0,readCount=0,initialResolve;
+const calls=[],writes=[],listeners=new Map();let forbidden=0,readCount=0,initialResolve;const pendingWrites=new Map(),writeOutcomes=[];
 const skill={id:'synthetic-skill',name:'Synthetic Skill',source_type:'local',source_ref:'/synthetic/source-fixture',central_path:'/synthetic/skills/item',created_at:1,updated_at:1,last_sync_at:null,status:'active',sort_index:0,user_group:null,group_id:null,user_note:null,management_enabled:true,disabled_previous_tools:[],tags:[],description:'Synthetic fixture only',content_hash:null,source_health:'ok',source_error:null,enabled_tools:[],targets:[]};
 const groups=scenario==='auto-group'||scenario==='explicit-source'?[{id:'synthetic-group',name:'Synthetic Group',note:null,sort_index:0,created_at:1,updated_at:1}]:[];
 if(groups.length)skill.group_id=groups[0].id;
@@ -32,8 +33,9 @@ mockIPC(async(command,args)=>{
   case 'skills_set_group_mode':
    if(!exactKeys(['mode'])||!['custom','source'].includes(args.mode))return deny(command);
    writes.push(args.mode);
-   if(scenario==='save-failure')throw Error('Synthetic preference save failure');
-   stored=args.mode;return null;
+   if(scenario==='deferred-save')return new Promise((resolve,reject)=>{pendingWrites.set(writes.length,{mode:args.mode,resolve,reject});});
+   if(scenario==='save-failure'){writeOutcomes.push({id:writes.length,mode:args.mode,ok:false});throw Error('Synthetic preference save failure');}
+   writeOutcomes.push({id:writes.length,mode:args.mode,ok:true});stored=args.mode;return null;
   case 'skills_get_tool_status':return {tools:[],installed:[],newly_installed:[]};
   case 'skills_get_managed_skills':return [structuredClone(skill)];
   case 'skills_get_groups':return structuredClone(groups);
@@ -43,4 +45,4 @@ mockIPC(async(command,args)=>{
   default:return deny(command);
  }
 });
-export const boundary={snapshot:()=>({scenario,stored,calls:[...calls],writes:[...writes],forbidden,readCount,listeners:listeners.size,pendingInitial:!!initialResolve}),resolveInitial(){if(!initialResolve)throw Error('No pending initial read');const resolve=initialResolve;initialResolve=undefined;resolve();}};
+export const boundary={snapshot:()=>({scenario,caseToken,stored,calls:[...calls],writes:[...writes],forbidden,readCount,listeners:listeners.size,pendingInitial:!!initialResolve,pendingWrites:[...pendingWrites.keys()],writeOutcomes:structuredClone(writeOutcomes)}),settleWrite(id,ok){const item=pendingWrites.get(id);if(!item)throw Error('Unknown pending write');pendingWrites.delete(id);writeOutcomes.push({id,mode:item.mode,ok});if(ok){stored=item.mode;item.resolve(null);}else item.reject(Error('Synthetic deferred save failure'));},resolveInitial(){if(!initialResolve)throw Error('No pending initial read');const resolve=initialResolve;initialResolve=undefined;resolve();}};

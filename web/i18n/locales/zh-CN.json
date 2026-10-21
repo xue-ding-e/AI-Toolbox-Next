@@ -3827,6 +3827,7 @@
     "groupBySource": "来源",
     "groupControls": {
       "groupingLabel": "分组方式",
+      "saveFailed": "分组选择未保存，仅在当前视图生效；重新进入时可能恢复原设置。",
       "selectionModeLabel": "批量管理",
       "groupToolsLabel": "工具展示粒度",
       "browseMode": "浏览",
