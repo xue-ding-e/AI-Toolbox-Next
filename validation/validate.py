@@ -14,6 +14,7 @@ import traceback
 from pathlib import Path
 
 BASE = 'f3a84498b5e192f1e78cb2a5312be012095de76c'
+PREVIOUS_HARNESS = '939db77845e62e4a1a628a243094e095d2178518'
 REPOSITORY = 'xue-ding-e/AI-Toolbox-Next'
 REF = 'refs/heads/validation/claude-desktop-official-edit'
 VALIDATION_FILES = {
@@ -155,7 +156,11 @@ def run(name, args, seconds, extra_env=None):
 
 def check_harness():
     assert git('rev-parse', 'HEAD', cwd=validation).decode().strip() == os.environ['GITHUB_SHA']
-    assert git('show', '-s', '--format=%P', 'HEAD', cwd=validation).decode().strip() == BASE, 'Exactly one parent at the fixed base'
+    assert git('show', '-s', '--format=%P', 'HEAD', cwd=validation).decode().strip() == PREVIOUS_HARNESS, 'Exactly one parent at the reviewed run-1 harness'
+    assert git('show', '-s', '--format=%P', PREVIOUS_HARNESS, cwd=validation).decode().strip() == BASE, 'Run-1 harness must have exactly the fixed base as parent'
+    assert git('rev-list', '--count', BASE + '..HEAD', cwd=validation).decode().strip() == '2', 'Only the two explicitly reviewed harness commits are allowed'
+    assert set(git('diff', '--name-only', BASE, PREVIOUS_HARNESS, cwd=validation).decode().splitlines()) == VALIDATION_FILES
+    assert set(git('diff', '--name-only', PREVIOUS_HARNESS, 'HEAD', cwd=validation).decode().splitlines()) == VALIDATION_FILES
     assert set(git('diff', '--name-only', BASE, 'HEAD', cwd=validation).decode().splitlines()) == VALIDATION_FILES
     assert git('status', '--porcelain', cwd=validation) == b''
     if harness_hashes is not None:
@@ -369,6 +374,7 @@ def main():
     global harness_hashes, source_applied
     assert not sys.flags.optimize, 'Assertions must remain enabled'
     assert manifest['base'] == BASE and manifest['repository'] == REPOSITORY and manifest['ref'] == REF
+    assert manifest['harnessHistory'] == {'base': BASE, 'previousCommit': PREVIOUS_HARNESS, 'commitCountAboveBase': 2}
     assert set(manifest['validationFiles']) == VALIDATION_FILES and len(manifest['validationFiles']) == 4
     assert len(manifest['identities']) == 13
     assert os.environ['GITHUB_REPOSITORY'] == REPOSITORY
@@ -382,6 +388,7 @@ def main():
     harness_hashes = {p: sha(validation / p) for p in VALIDATION_FILES}
     save('harness-identities.json', {
         'base': BASE, 'validationCommit': os.environ['GITHUB_SHA'], 'files': harness_hashes,
+        'harnessHistory': manifest['harnessHistory'],
         'hashChain': 'Workflow pins patch, manifest and validator; manifest pins patch, validator, all 13 candidate files and both locks. Workflow is recorded, not self-pinned.',
     })
     assert {p: sha(source / p) for p in manifest['lockfiles']} == manifest['lockfiles']

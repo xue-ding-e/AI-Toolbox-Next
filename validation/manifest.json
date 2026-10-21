@@ -8,8 +8,8 @@
     "validation/manifest.json",
     "validation/validate.py"
   ],
-  "patchSha256": "3d3273a86c0f9fd68eb15694916a0a919da9dc5170b5f2648fca5c2ba53174a4",
-  "validatorSha256": "df2cc1aa113d3c17e4d72847717ab4774ddf55d0fac0095a4914d6d9b68df630",
+  "patchSha256": "541bf5444c5ce417087dc686ddfce3d3dd2f4becdc7993bc11ef3df39fd8e08f",
+  "validatorSha256": "df6319e572977face7afd238c0748c926471d569e4a66cd4cddaf2c10744d90c",
   "identities": {
     "package.json": {
       "sha256": "968b8d855a989cde1c43e7586ff20656db449dbddb9172e0117a80bf60b4fcf4",
@@ -72,8 +72,8 @@
       "baseSha256": null
     },
     "web/test/features/coding/claudedesktop/officialEdit/verify.mjs": {
-      "sha256": "ff0225081e83ec0720e8126df798296f11ecdf28b112e765b56362bc06f7c12d",
-      "bytes": 12099,
+      "sha256": "d3458e5a18cb0be2dd813c8c8f82d7a85aa413ca345d77f76163d85ee2197aec",
+      "bytes": 15594,
       "baseBlob": null,
       "baseSha256": null
     },
@@ -311,5 +311,10 @@
     "logSoftLimitBytes": 33554432,
     "artifactLimitBytes": 268435456
   },
-  "scope": "Real form and import modal; freshly extracted Page callbacks/builders, not full Page or app/Rust/DB/SSH/real credentials."
+  "scope": "Real form and import modal; freshly extracted Page callbacks/builders, not full Page or app/Rust/DB/SSH/real credentials.",
+  "harnessHistory": {
+    "base": "f3a84498b5e192f1e78cb2a5312be012095de76c",
+    "previousCommit": "939db77845e62e4a1a628a243094e095d2178518",
+    "commitCountAboveBase": 2
+  }
 }

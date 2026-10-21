@@ -687,7 +687,7 @@
 +});
 --- /dev/null
 +++ b/web/test/features/coding/claudedesktop/officialEdit/verify.mjs
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,180 @@
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
 +import path from 'node:path';
@@ -697,9 +697,9 @@
 +const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 +export function makeVerifier(variant,expectedIdentity){
 + return async({send,evaluate,baseUrl,artifactRoot,exceptions})=>{
-+  const results=[],screenshots=[],diagnosticErrors=[],runDeadline=Date.now()+480000;
++  const results=[],screenshots=[],diagnosticErrors=[],interactions=[],runDeadline=Date.now()+480000;
 +  const matrix=scenarios.filter(x=>variant==='green'||!x.greenOnly);
-+  let caseDeadline=0;
++  let caseDeadline=0,currentCase=null;
 +  const bounded=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Fixture operation deadline exceeded')),Math.max(1,Math.min(caseDeadline,runDeadline)-Date.now()));})]);}finally{clearTimeout(timer);}};
 +  const ev=expression=>bounded(evaluate(expression));
 +  const cmd=(method,args)=>bounded(send(method,args));
@@ -710,8 +710,12 @@
 +  // Capture only an open, real form. Closed-modal blank pages are not visual evidence.
 +  // Diagnostics may fail the evidence gate, but must never replace a product failure.
 +  const capture=async(item,moment,anchor)=>{
++   const expression=`document.getElementById(${JSON.stringify(anchor)})`;
++   const trace={case:item.id,kind:'screenshot',moment,phase:'observing',samples:[]};interactions.push(trace);
 +   try{
 +    await ev(`(()=>{const d=${dialog};const e=document.getElementById(${JSON.stringify(anchor)});if(!d||!e||!d.getBoundingClientRect().width)throw new Error('Screenshot form is not open');e.scrollIntoView({block:'center'});})()`);
++    // A disabled official-name input may be photographed, never interacted with.
++    trace.before=await waitForStableTarget(expression,trace,false);trace.phase='capture-requested';
 +    const {data}=await cmd('Page.captureScreenshot',{format:'png'});
 +    const bytes=Buffer.from(data,'base64');
 +    assert(bytes.length>0,'Empty screenshot');
@@ -719,12 +723,50 @@
 +    fs.mkdirSync(path.join(artifactRoot,'screenshots'),{recursive:true});
 +    fs.writeFileSync(path.join(artifactRoot,file),bytes);
 +    screenshots.push({case:item.id,moment,file,bytes:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')});
-+   }catch(error){diagnosticErrors.push({case:item.id,moment,error:String(error)});}
++    trace.phase='captured';trace.after=await observeTarget(expression);
++   }catch(error){trace.error=String(error);diagnosticErrors.push({case:item.id,moment,error:String(error)});}
++  };
++  const observeTarget=expression=>ev(`(()=>{
++   const e=${expression};if(!e)return{ready:false,reason:'missing-target'};
++   const describe=n=>n?{tag:n.tagName,id:n.id||'',className:n.getAttribute('class')||''}:null;
++   const rect=n=>{const r=n.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};};
++   const r=rect(e),point={x:r.x+r.width/2,y:r.y+r.height/2},hit=document.elementFromPoint(point.x,point.y);
++   const ancestors=[];for(let n=e;n;n=n.parentElement)ancestors.push(n);
++   const hidden=ancestors.some(n=>{const s=getComputedStyle(n);return s.display==='none'||s.visibility!=='visible';});
++   const animations=ancestors.flatMap(n=>n.getAnimations().filter(a=>a.pending||a.playState==='running'||a.playState==='paused').map(a=>({element:describe(n),state:a.playState,pending:a.pending})));
++   const d=e.closest('[role="dialog"]'),ds=d?getComputedStyle(d):null;
++   const disabled=Boolean(e.disabled||e.matches(':disabled')||e.getAttribute('aria-disabled')==='true');
++   const hitTarget=hit===e||e.contains(hit);
++   const dialog=d?{...describe(d),style:d.getAttribute('style')||'',rect:rect(d),opacity:ds.opacity,
++    buttons:[...d.querySelectorAll('button')].map(b=>({text:b.textContent.trim(),disabled:b.disabled})),
++    checkboxes:[...d.querySelectorAll('input[type="checkbox"]')].map(c=>({checked:c.checked,disabled:c.disabled}))}:null;
++   // Native checkbox inputs may intentionally have opacity:0. Hit-testing the
++   // real input is authoritative; only the whole dialog must be fully visible.
++   const visualReady=e.isConnected&&!hidden&&r.width>0&&r.height>0&&point.x>=0&&point.y>=0&&point.x<innerWidth&&point.y<innerHeight&&hitTarget&&animations.length===0&&Boolean(d&&Number(ds.opacity)>=0.999);
++   return{ready:visualReady&&!disabled,visualReady,target:describe(e),disabled,rect:r,point,hit:describe(hit),hitTarget,hidden,animations,dialog};
++  })()`);
++  const waitForStableTarget=async(expression,trace,interactive=true)=>{
++   let previous=null,stable=0;
++   return wait('stable unobstructed '+(interactive?'interaction target':'screenshot form'),async()=>{
++    const state=await observeTarget(expression);trace.samples.push(state);if(trace.samples.length>4)trace.samples.shift();
++    const key=interactive?'ready':'visualReady';
++    const same=state[key]&&previous?.[key]&&['x','y','width','height'].every(k=>Math.abs(state.rect[k]-previous.rect[k])<0.25&&Math.abs(state.dialog.rect[k]-previous.dialog.rect[k])<0.25);
++    stable=state[key]?(same?stable+1:1):0;previous=state;return stable>=3?state:false;
++   });
 +  };
 +  const click=async expression=>{
-+   const box=await ev(`(()=>{const e=${expression};if(!e||e.disabled)throw new Error('Missing/disabled interaction target');e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();if(!r.width||!r.height||getComputedStyle(e).visibility==='hidden')throw new Error('Hidden interaction target');return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
-+   await cmd('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...box});
-+   await cmd('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...box});
++   const trace={case:currentCase,kind:'click',expression,phase:'observing',samples:[]};interactions.push(trace);
++   try{
++    await ev(`(()=>{const e=${expression};if(!e||e.disabled)throw new Error('Missing/disabled interaction target');e.scrollIntoView({block:'center'});})()`);
++    // Read-only polling after one scroll. Never click until motion has ended,
++    // geometry is stable for three samples and the exact target wins hit-testing.
++    const before=await waitForStableTarget(expression,trace);
++    trace.before=before;trace.phase='press-requested';
++    await cmd('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...before.point});
++    trace.phase='release-requested';
++    await cmd('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...before.point});
++    trace.phase='released';trace.after=await observeTarget(expression);
++   }catch(error){trace.error=String(error);throw error;}
 +  };
 +  const fill=async(id,value)=>{
 +   await click(`document.getElementById(${JSON.stringify(id)})`);
@@ -750,6 +792,7 @@
 +  };
 +  try{
 +   for(const item of matrix){
++    currentCase=item.id;
 +    caseDeadline=Date.now()+30000;
 +    await cmd('Page.navigate',{url:baseUrl+'/?case='+encodeURIComponent(item.id)});
 +    await wait('fixture mounted',async()=>{const s=await snap();return s?.committed?s:false;});
@@ -814,12 +857,12 @@
 +   }
 +   assert.equal(results.length,matrix.length,'Missing scenario result');
 +   assert.equal(results.filter(x=>x.verdict==='expected-product-red').length,variant==='red'?matrix.filter(x=>x.red).length:0,'RED count mismatch');
-+   fs.writeFileSync(path.join(artifactRoot,'strict-results.json'),JSON.stringify({variant,count:results.length,sourceIdentity:expectedIdentity,results,screenshots,diagnosticErrors},null,2)+'\n');
++   fs.writeFileSync(path.join(artifactRoot,'strict-results.json'),JSON.stringify({variant,count:results.length,sourceIdentity:expectedIdentity,results,screenshots,diagnosticErrors,interactions},null,2)+'\n');
 +   assert.deepEqual(diagnosticErrors,[],'Screenshot evidence is incomplete; no visual pass');
 +   assert.equal(screenshots.length,variant==='green'?3:1,'Required screenshot evidence is missing');
 +   return results.map(x=>({name:x.case,passed:true,verdict:x.verdict,screenshots:screenshots.filter(s=>s.case===x.case)}));
 +  }catch(error){
-+   try{fs.writeFileSync(path.join(artifactRoot,'strict-failure.json'),JSON.stringify({variant,status:'fixture-or-unexpected-product-failure',error:String(error),completed:results,screenshots,diagnosticErrors},null,2)+'\n');}
++   try{fs.writeFileSync(path.join(artifactRoot,'strict-failure.json'),JSON.stringify({variant,status:'fixture-or-unexpected-product-failure',error:String(error),completed:results,screenshots,diagnosticErrors,interactions},null,2)+'\n');}
 +   catch(diagnosticsError){console.error('Could not save failure diagnostics; original error retained:',String(diagnosticsError));}
 +   throw error;
 +  }
