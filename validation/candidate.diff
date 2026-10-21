@@ -84,7 +84,7 @@
 +};
 --- /dev/null
 +++ b/web/test/features/settings/sshRequest/sshRequestBrowserChecks.mjs
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,54 @@
 +import assert from 'node:assert/strict';
 +import {writeFile} from 'node:fs/promises';
 +import path from 'node:path';
@@ -104,7 +104,7 @@
 + const settle=async(indices,reject=false)=>{phase='settlement';await observe('before settlement '+indices.join(','));await evaluate(`sshRequestFixture.settle(${JSON.stringify(indices)},${reject})`);await observe('after settlement');};
 + const check=async fn=>{const state=await observe('invariant');phase='invariant';fn(state);phase='interaction';};
 + const chooseB=async()=>{
-+  await click('.ant-modal .ant-select-selector');
++  await click('.ant-modal .ant-select');
 +  await wait(()=>evaluate(`!![...document.querySelectorAll('.ant-select-item-option-content > div > span')].find(e=>e.textContent==='Connection B'&&e.getBoundingClientRect().height>0)`));
 +  // Product Option renders a name span followed by edit/delete buttons. Click
 +  // only the exact name, not the option center or an unguaranteed title attr.
@@ -121,7 +121,10 @@
 +   results.push({name,control,passed:true,observations,pageExceptions:[]});
 +  }catch(e){
 +   const pageExceptions=exceptions.slice(exceptionStart);let lastObservation;try{lastObservation=await snapshot();}catch{}
-+   results.push({name,control,passed:false,classification:phase==='invariant'&&!control&&!pageExceptions.length&&lastObservation?.forbidden===0?'product-invariant':'fixture-or-control-error',phase,error:String(e),observations,lastObservation,pageExceptions});
++   const diagnosticErrors=[];
++   try{await writeFile(path.join(artifactRoot,`case-${serial-1}-failure.html`),await evaluate('document.documentElement.outerHTML'));}catch(error){diagnosticErrors.push('DOM: '+String(error));}
++   try{const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(path.join(artifactRoot,`case-${serial-1}-failure.png`),Buffer.from(shot.data,'base64'));}catch(error){diagnosticErrors.push('screenshot: '+String(error));}
++   results.push({name,control,passed:false,classification:phase==='invariant'&&!control&&!pageExceptions.length&&lastObservation?.forbidden===0?'product-invariant':'fixture-or-control-error',phase,error:String(e),observations,lastObservation,pageExceptions,diagnosticErrors});
 +  }
 + }
 + await run('current success control',true,async()=>{const count=(await snapshot()).calls.length;await settle(await pending('A'));await check(s=>{assert.ok(s.text.includes('A-result'));assert.equal(s.spinners,0);assert.equal(s.calls.length,count,'stable config commit must not trigger another request');});});

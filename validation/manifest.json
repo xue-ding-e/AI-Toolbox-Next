@@ -1,6 +1,6 @@
 {
   "base": "7450fc2d19fcd1c50832f2674dc0841b5bc2c43b",
-  "patchSha256": "303ae61afdf7b5cd5c8122c85ac704928bbad23100517c600565e266d26ce47c",
+  "patchSha256": "9252074dd82874aee23a96e8dea251cb5beb517d146824db7f5584313c75a5a9",
   "validationFiles": [
     ".github/workflows/maintenance-validation.yml",
     "validation/candidate.diff",

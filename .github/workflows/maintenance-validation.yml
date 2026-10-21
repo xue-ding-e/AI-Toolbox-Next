@@ -16,7 +16,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
-          fetch-depth: 4
+          fetch-depth: 5
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -49,4 +49,6 @@ jobs:
             ${{ runner.temp }}/ssh-race-evidence/*/ssh-request-race-*/results.json
             ${{ runner.temp }}/ssh-race-evidence/*/ssh-request-race-*/failure.html
             ${{ runner.temp }}/ssh-race-evidence/*/ssh-request-race-*/failure.png
+            ${{ runner.temp }}/ssh-race-evidence/*/ssh-request-race-*/case-*-failure.html
+            ${{ runner.temp }}/ssh-race-evidence/*/ssh-request-race-*/case-*-failure.png
           retention-days: 7
