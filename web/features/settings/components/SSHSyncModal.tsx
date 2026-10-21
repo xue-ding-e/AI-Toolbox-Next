@@ -4,7 +4,7 @@
  * Modal for configuring SSH sync settings with connection management
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { Modal, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs, Tooltip, Progress, theme } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined, ApiOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
@@ -134,6 +134,16 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   const [activeModuleTab, setActiveModuleTab] = useState<string>(visibleModuleKeys[0] || 'all');
   const [testResult, setTestResult] = useState<SSHConnectionResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const testRequestGeneration = useRef(0);
+
+  // A late result belongs only to the connection and open modal that requested it.
+  // Invalidating UI results does not cancel the underlying SSH invocation.
+  useEffect(() => {
+    testRequestGeneration.current += 1;
+    setTestResult(null);
+    setTesting(false);
+    return () => { testRequestGeneration.current += 1; };
+  }, [open, activeConnectionId, enabled]);
 
   const moduleStatusMap = React.useMemo(() => {
     return new Map((config?.moduleStatuses || []).map((item) => [item.module, item] as const));
@@ -300,6 +310,7 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
 
   // Handle active connection change
   const handleActiveConnectionChange = async (value: string) => {
+    testRequestGeneration.current += 1;
     setActiveConnectionId(value);
     setTestResult(null);
     try {
@@ -313,22 +324,23 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   const handleTestConnection = useCallback(async (connId?: string) => {
     const targetId = connId || activeConnectionId;
     const conn = config?.connections.find(c => c.id === targetId);
-    if (!conn) return;
+    if (!conn || !open || !enabled) return;
+    const generation = ++testRequestGeneration.current;
 
     setTesting(true);
     setTestResult(null);
     try {
       const result = await sshTestConnection(conn);
-      setTestResult(result);
+      if (generation === testRequestGeneration.current) setTestResult(result);
     } catch (error) {
-      setTestResult({
+      if (generation === testRequestGeneration.current) setTestResult({
         connected: false,
         error: String(error),
       });
     } finally {
-      setTesting(false);
+      if (generation === testRequestGeneration.current) setTesting(false);
     }
-  }, [activeConnectionId, config?.connections]);
+  }, [activeConnectionId, config?.connections, open, enabled]);
 
   // Auto test connection when modal opens or active connection changes
   useEffect(() => {
