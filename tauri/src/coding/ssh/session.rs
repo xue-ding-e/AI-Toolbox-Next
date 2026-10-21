@@ -15,7 +15,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use super::key_file;
-use super::types::SSHConnection;
+use super::types::{ProbeReason, SSHConnection, SSHConnectionResult};
+
+#[path = "connection_probe.rs"]
+mod connection_probe;
 
 /// 加载私钥：优先从内容直接解析，否则从文件路径加载
 fn load_private_key(conn: &SSHConnection) -> Result<russh::keys::PrivateKey, String> {
@@ -94,8 +97,8 @@ impl client::Handler for SshHandler {
 }
 
 /// 对已建立的 SSH 连接进行用户认证（密码、公钥或 none）
-async fn authenticate(
-    session: &mut client::Handle<SshHandler>,
+async fn authenticate<H: client::Handler>(
+    session: &mut client::Handle<H>,
     conn: &SSHConnection,
 ) -> Result<(), String> {
     if conn.auth_method == "none" {
@@ -483,61 +486,94 @@ impl SshSession {
     }
 }
 
-/// 创建一个独立的临时 SSH 连接并执行命令（用于测试连接）
-/// 返回命令输出结果
-pub async fn test_connection_with_command(
-    conn: &SSHConnection,
-    cmd: &str,
-) -> Result<String, String> {
+/// russh 0.57 removes the channel sender before calling `channel_close`;
+/// `Channel::wait() == None` alone also occurs on a broken SSH transport.
+/// This temporary-only callback distinguishes a real SSH CHANNEL_CLOSE.
+struct TemporaryHandler {
+    closed: Option<tokio::sync::oneshot::Sender<u32>>,
+}
+
+impl client::Handler for TemporaryHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(&mut self, key: &ssh_key::PublicKey) -> Result<bool, Self::Error> {
+        // Preserve the existing host-key policy; this feature does not change it.
+        client::Handler::check_server_key(&mut SshHandler, key).await
+    }
+
+    async fn channel_close(&mut self, channel: russh::ChannelId, _session: &mut client::Session) -> Result<(), Self::Error> {
+        if let Some(closed) = self.closed.take() {
+            let _ = closed.send(channel.into());
+        }
+        Ok(())
+    }
+}
+
+struct TemporaryTransport<'a> {
+    handle: client::Handle<TemporaryHandler>,
+    conn: &'a SSHConnection,
+    closed: Option<tokio::sync::oneshot::Receiver<u32>>,
+}
+
+impl connection_probe::ChannelSource for russh::Channel<client::Msg> {
+    async fn next(&mut self) -> Option<ChannelMsg> {
+        self.wait().await
+    }
+}
+
+impl connection_probe::Transport for TemporaryTransport<'_> {
+    async fn authenticate(&mut self) -> Result<(), String> {
+        authenticate(&mut self.handle, self.conn).await
+    }
+
+    async fn probe(&mut self, command: &str) -> Result<connection_probe::ProbeOutput, ProbeReason> {
+        let mut channel = self.handle.channel_open_session().await
+            .map_err(|_| ProbeReason::ChannelOpenFailed)?;
+        channel.exec(true, command).await.map_err(|_| ProbeReason::ExecFailed)?;
+        let channel_id = channel.id().into();
+        let closed = self.closed.take().ok_or(ProbeReason::ChannelClosedEarly)?;
+        connection_probe::collect(&mut channel, closed, channel_id).await
+    }
+
+    async fn disconnect(&mut self) -> Result<(), ()> {
+        self.handle.disconnect(Disconnect::ByApplication, "", "").await.map_err(|_| ())
+    }
+}
+
+/// Read-only test of an independent connection, never the persistent session.
+/// `connected` records successful authentication during this test, NOT whether
+/// this temporary handle is still online. Disconnect is requested before return;
+/// successful enqueueing does not confirm remote connection shutdown.
+pub async fn test_connection_capability(conn: &SSHConnection) -> SSHConnectionResult {
     let config = client::Config {
         inactivity_timeout: Some(Duration::from_secs(10)),
         ..Default::default()
     };
-
-    let handler = SshHandler;
-    let mut session = tokio::time::timeout(
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+    let connection = tokio::time::timeout(
         Duration::from_secs(15),
-        client::connect(Arc::new(config), (conn.host.as_str(), conn.port), handler),
-    )
-    .await
-    .map_err(|_| format!("连接超时: {}:{}", conn.host, conn.port))?
-    .map_err(|e| format!("连接到 {}:{} 失败: {}", conn.host, conn.port, e))?;
-
-    authenticate(&mut session, conn).await?;
-
-    // 执行命令
-    let mut channel = session
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("打开 channel 失败: {}", e))?;
-
-    channel
-        .exec(true, cmd)
-        .await
-        .map_err(|e| format!("执行命令失败: {}", e))?;
-
-    let mut stdout_buf = Vec::new();
-    let mut stderr_buf = Vec::new();
-    loop {
-        let Some(msg) = channel.wait().await else {
-            break;
-        };
-        match msg {
-            ChannelMsg::Data { ref data } => {
-                stdout_buf.extend_from_slice(data);
-            }
-            ChannelMsg::ExtendedData { ref data, ext } => {
-                if ext == 1 {
-                    stderr_buf.extend_from_slice(data);
-                }
-            }
-            _ => {}
+        client::connect(Arc::new(config), (conn.host.as_str(), conn.port), TemporaryHandler { closed: Some(closed_tx) }),
+    ).await;
+    let handle = match connection {
+        Ok(Ok(handle)) => handle,
+        error => {
+            let error = match error {
+                Err(_) => format!("连接超时: {}:{}", conn.host, conn.port),
+                Ok(Err(error)) => format!("连接到 {}:{} 失败: {}", conn.host, conn.port, error),
+                Ok(Ok(_)) => unreachable!(),
+            };
+            return SSHConnectionResult {
+                connected: false, error: Some(error), server_info: None,
+                sync_capability: None, probe_reason: None, cleanup_warning: None,
+            };
         }
-    }
-
-    let _ = session.disconnect(Disconnect::ByApplication, "", "").await;
-
-    Ok(String::from_utf8_lossy(&stdout_buf).to_string())
+    };
+    let mut transport = TemporaryTransport { handle, conn, closed: Some(closed_rx) };
+    let outcome = connection_probe::run(
+        &mut transport, super::capabilities::POSIX_SYNC_PROBE,
+        connection_probe::Deadlines::default(),
+    ).await;
+    outcome.into_result()
 }
 
 /// 通过已有 SFTP 会话上传单个文件

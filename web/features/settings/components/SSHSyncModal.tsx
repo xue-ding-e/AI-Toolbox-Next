@@ -76,6 +76,13 @@ const AUTH_METHOD_TAG_COLORS: Record<SSHConnection['authMethod'], string> = {
   none: 'default',
 };
 
+// Only stable reason codes are translated; never expose raw probe diagnostics.
+const PROBE_REASONS = new Set<NonNullable<SSHConnectionResult['probeReason']>>([
+  'channelOpenFailed', 'execFailed', 'channelFailure', 'channelClosedEarly',
+  'outputLimitExceeded', 'probeTimeout', 'exitSignal', 'conflictingExitStatus',
+  'missingExitStatus', 'nonzeroExitStatus', 'unexpectedOutput',
+]);
+
 const CURRENT_FILE_TAIL_MAX_LENGTH = 72;
 
 const truncateTailPath = (path: string, maxLength = CURRENT_FILE_TAIL_MAX_LENGTH) => {
@@ -712,10 +719,38 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                 {testing && <Spin size="small" />}
                 {!testing && testResult && (
                   testResult.connected
-                    ? <Tag color="success">{t('settings.ssh.connected')}</Tag>
+                    ? <Tag color="success">{t('settings.ssh.authenticationSucceeded')}</Tag>
                     : <Tag color="error">{t('settings.ssh.connectionFailed')}</Tag>
                 )}
               </Space>
+              {!testing && testResult?.connected && (
+                <Alert
+                  style={{ marginTop: 8 }}
+                  showIcon
+                  data-testid="ssh-sync-capability"
+                  type={testResult.syncCapability === 'supported' ? 'success' : 'warning'}
+                  message={t(`settings.ssh.capability.${
+                    testResult.syncCapability === 'supported' ? 'supported'
+                      : testResult.syncCapability === 'missingHome' ? 'missingHome' : 'unknown'
+                  }`)}
+                  description={testResult.syncCapability !== 'supported'
+                    && testResult.probeReason && PROBE_REASONS.has(testResult.probeReason)
+                    ? t(`settings.ssh.probeReason.${testResult.probeReason}`) : undefined}
+                />
+              )}
+              {!testing && testResult?.cleanupWarning && (
+                <Alert
+                  style={{ marginTop: 8 }}
+                  showIcon
+                  type="warning"
+                  data-testid="ssh-test-cleanup-warning"
+                  message={t('settings.ssh.cleanupWarning.title')}
+                  description={t(`settings.ssh.cleanupWarning.${
+                    testResult.cleanupWarning === 'disconnectTimeout' ? 'disconnectTimeout'
+                      : testResult.cleanupWarning === 'disconnectFailed' ? 'disconnectFailed' : 'unknown'
+                  }`)}
+                />
+              )}
               {testResult?.serverInfo && (
                 <div style={{ marginTop: 4 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>{testResult.serverInfo}</Text>

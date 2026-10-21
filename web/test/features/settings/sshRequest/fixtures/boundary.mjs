@@ -14,5 +14,5 @@ export const sshGetDefaultMappings=deny,sshSync=deny,sshDeleteFileMapping=deny,s
 export const invoke=deny;
 export const boundary={
  snapshot:()=>({revision,reads,calls:calls.map(({id,settled})=>({id,settled})),forbidden}),
- settle(indices,reject=false){const pending=indices.map(i=>calls[i]);if(!pending.length||pending.some(c=>!c||c.settled))throw Error('Invalid pending call indices');for(const c of pending){c.settled=true;if(reject)c.reject(new Error('synthetic-'+c.id+'-error'));else c.resolve({connected:true,serverInfo:c.id+'-result'});}return Promise.resolve();},
+ settle(indices,reject=false,result){const pending=indices.map(i=>calls[i]);if(!pending.length||pending.some(c=>!c||c.settled))throw Error('Invalid pending call indices');for(const c of pending){c.settled=true;if(reject)c.reject(new Error('synthetic-'+c.id+'-error'));else c.resolve(result ?? {connected:true,serverInfo:c.id+'-result'});}return Promise.resolve();},
 };

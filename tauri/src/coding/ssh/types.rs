@@ -205,6 +205,23 @@ mod tests {
 // SSH Result Types
 // ============================================================================
 
+/// Read-only POSIX sync probe result, not an OS identity or persistent status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SSHSyncCapability { Supported, MissingHome, Unknown }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProbeReason {
+    ChannelOpenFailed, ExecFailed, ChannelFailure, ChannelClosedEarly,
+    OutputLimitExceeded, ProbeTimeout, ExitSignal, ConflictingExitStatus,
+    MissingExitStatus, NonzeroExitStatus, UnexpectedOutput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CleanupWarning { DisconnectFailed, DisconnectTimeout }
+
 /// SSH connection test result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,6 +229,12 @@ pub struct SSHConnectionResult {
     pub connected: bool,
     pub error: Option<String>,
     pub server_info: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_capability: Option<SSHSyncCapability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_reason: Option<ProbeReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_warning: Option<CleanupWarning>,
 }
 
 /// SSH status result
@@ -225,4 +248,37 @@ pub struct SSHStatusResult {
     pub last_sync_error: Option<String>,
     #[serde(default)]
     pub last_sync_warnings: Vec<String>,
+}
+
+#[cfg(test)]
+mod connection_result_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_result_deserializes_without_capability_fields() {
+        let result: SSHConnectionResult = serde_json::from_str(
+            r#"{"connected":true,"error":null,"serverInfo":"legacy banner"}"#,
+        ).unwrap();
+        assert_eq!(result.sync_capability, None);
+        assert_eq!(result.probe_reason, None);
+        assert_eq!(result.cleanup_warning, None);
+    }
+
+    #[test]
+    fn result_serializes_stable_optional_enum_strings() {
+        let result = SSHConnectionResult {
+            connected: true,
+            error: None,
+            server_info: None,
+            sync_capability: Some(SSHSyncCapability::Unknown),
+            probe_reason: Some(ProbeReason::MissingExitStatus),
+            cleanup_warning: Some(CleanupWarning::DisconnectTimeout),
+        };
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["syncCapability"], "unknown");
+        assert_eq!(value["probeReason"], "missingExitStatus");
+        assert_eq!(value["cleanupWarning"], "disconnectTimeout");
+        assert_eq!(value["connected"], true);
+        assert!(value["error"].is_null());
+    }
 }

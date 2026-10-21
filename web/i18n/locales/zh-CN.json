@@ -1358,6 +1358,32 @@
       "password": "密码",
       "passwordRequired": "请输入密码",
       "connected": "已连接",
+      "authenticationSucceeded": "本次测试认证成功",
+      "authenticationTimeout": "SSH 认证超时。",
+      "capability": {
+        "supported": "已核验 POSIX shell 语法和 HOME；尚未检查同步所需工具及写入权限。",
+        "missingHome": "认证成功，但 HOME 为空，不满足 SSH 同步前提。",
+        "unknown": "尚未核验 SSH 同步前提；仅认证成功不代表支持同步。"
+      },
+      "probeReason": {
+        "channelOpenFailed": "无法打开探测通道。",
+        "execFailed": "无法启动探测命令。",
+        "channelFailure": "探测通道失败。",
+        "channelClosedEarly": "探测完成前通道已关闭。",
+        "outputLimitExceeded": "探测输出超过安全上限。",
+        "probeTimeout": "探测超时。",
+        "exitSignal": "探测因退出信号而结束。",
+        "conflictingExitStatus": "探测返回了冲突的退出状态。",
+        "missingExitStatus": "探测未返回退出状态。",
+        "nonzeroExitStatus": "探测返回了非零退出状态。",
+        "unexpectedOutput": "探测响应不符合预期协议。"
+      },
+      "cleanupWarning": {
+        "title": "测试连接清理警告",
+        "disconnectFailed": "断开连接失败；不影响本次认证或探测结果。",
+        "disconnectTimeout": "断开连接超时；不影响本次认证或探测结果。",
+        "unknown": "无法确认连接清理结果。"
+      },
       "connectionFailed": "连接失败",
       "deleteConnectionConfirm": "确认删除连接",
       "deleteConnectionConfirmMessage": "确定要删除连接「{{name}}」吗？此操作无法撤销。",

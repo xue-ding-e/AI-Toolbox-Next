@@ -1358,6 +1358,32 @@
       "password": "Password",
       "passwordRequired": "Please enter password",
       "connected": "Connected",
+      "authenticationSucceeded": "Authentication succeeded for this test",
+      "authenticationTimeout": "SSH authentication timed out.",
+      "capability": {
+        "supported": "POSIX shell syntax and HOME verified. Required sync tools and write permissions have not been checked.",
+        "missingHome": "Authentication succeeded, but HOME is empty. SSH sync prerequisites are not met.",
+        "unknown": "SSH sync prerequisites have not been verified. Authentication alone does not confirm sync support."
+      },
+      "probeReason": {
+        "channelOpenFailed": "The probe channel could not be opened.",
+        "execFailed": "The probe command could not be started.",
+        "channelFailure": "The probe channel failed.",
+        "channelClosedEarly": "The probe channel closed before completion.",
+        "outputLimitExceeded": "The probe output exceeded the safe limit.",
+        "probeTimeout": "The probe timed out.",
+        "exitSignal": "The probe ended with an exit signal.",
+        "conflictingExitStatus": "The probe returned conflicting exit statuses.",
+        "missingExitStatus": "The probe did not return an exit status.",
+        "nonzeroExitStatus": "The probe returned a nonzero exit status.",
+        "unexpectedOutput": "The probe response did not match the expected protocol."
+      },
+      "cleanupWarning": {
+        "title": "Test connection cleanup warning",
+        "disconnectFailed": "Disconnect failed. This does not change the authentication or probe result.",
+        "disconnectTimeout": "Disconnect timed out. This does not change the authentication or probe result.",
+        "unknown": "Connection cleanup could not be confirmed."
+      },
       "connectionFailed": "Connection Failed",
       "deleteConnectionConfirm": "Confirm Delete Connection",
       "deleteConnectionConfirmMessage": "Are you sure you want to delete the connection \"{{name}}\"? This action cannot be undone.",
