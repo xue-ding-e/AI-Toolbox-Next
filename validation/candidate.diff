@@ -1,0 +1,826 @@
+--- a/tauri/src/coding/claude_desktop/commands.rs
++++ b/tauri/src/coding/claude_desktop/commands.rs
+@@ -8,7 +8,8 @@
+ use super::types::*;
+ use crate::coding::db_id::db_new_id;
+ use crate::coding::proxy_gateway::{
+-    cli_proxy, paths::ProxyGatewayPaths, settings as gateway_settings, types::GatewayCliKey,
++    cli_proxy, paths::ProxyGatewayPaths, provider_protocol, settings as gateway_settings,
++    types::GatewayCliKey,
+ };
+ use crate::db::helpers::{db_delete, db_get, db_list, db_put};
+ use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
+@@ -470,8 +471,32 @@
+     !has_credential
+ }
+ 
++/// The gateway orchestrator prepares a profile before it establishes takeover.
++/// Ordinary apply and best-effort reapply must never perform that preparation.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum ProfileApplyPurpose {
++    Direct,
++    GatewayPreparation,
++}
++
+ /// Write a provider's config to the on-disk profile (no DB changes).
+ fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> Result<(), String> {
++    apply_provider_profile_with_paths(
++        db,
++        provider_id,
++        ProfileApplyPurpose::Direct,
++        config_writer::current_platform_paths,
++    )
++}
++
++/// Resolve platform paths only after rejecting an unsafe direct write. The
++/// resolver also lets tests exercise this production dispatch on private paths.
++fn apply_provider_profile_with_paths(
++    db: &SqliteDbState,
++    provider_id: &str,
++    purpose: ProfileApplyPurpose,
++    resolve_paths: impl FnOnce() -> Result<config_writer::ClaudeDesktopPaths, String>,
++) -> Result<(), String> {
+     let provider = get_provider_from_sqlite(db, provider_id)?
+         .ok_or_else(|| format!("Provider not found: {provider_id}"))?;
+ 
+@@ -481,8 +506,6 @@
+             provider.name
+         ));
+     }
+-
+-    let paths = config_writer::current_platform_paths()?;
+ 
+     // Official restore is driven by the stable provider id, or by a provider
+     // created through the form's official channel (category=official with empty
+@@ -492,7 +515,7 @@
+     if provider.id == OFFICIAL_PROVIDER_ID
+         || (provider.category == "official" && official_restore_settings(&provider.settings_config))
+     {
+-        return config_writer::restore_official(&paths);
++        return config_writer::restore_official(&resolve_paths()?);
+     }
+ 
+     // Parse once up-front: routing decisions and direct apply both read the
+@@ -500,10 +523,19 @@
+     let parsed_settings = serde_json::from_str::<Value>(&provider.settings_config);
+     let settings_ref = parsed_settings.as_ref().ok();
+     let needs_routing = config_writer::has_routing_models(provider.meta.as_ref(), settings_ref);
++    if purpose == ProfileApplyPurpose::Direct
++        && (needs_routing || provider_protocol::provider_needs_gateway_proxy(
++            GatewayCliKey::ClaudeDesktop, &provider.category, provider.meta.as_ref(),
++            &provider.settings_config,
++        ))
++    {
++        return Err("该渠道的模型映射或协议需要本地网关，请使用「应用并代理」或先开启网关接管".to_string());
++    }
++    let paths = resolve_paths()?;
+     if needs_routing {
+-        // Route the 3P profile at the local gateway: the provider's model names
+-        // are not claude-safe, so Direct mode cannot be written and the gateway
+-        // performs the upstream mapping. Menu models are surfaced via
++        // Route the 3P profile at the local gateway: upstream model names
++        // differ from route IDs (even when both are Claude-safe), so the
++        // gateway performs the upstream mapping. Menu models are surfaced via
+         // inferenceModels.
+         let origin = gateway_origin_from_settings(db)?;
+         let gateway_endpoint = format!("{origin}/claude-desktop");
+@@ -573,16 +605,21 @@
+     from_tray: bool,
+     _emit_sync_request: bool,
+ ) -> Result<(), String> {
+-    apply_config_internal_with_events(db, app, provider_id, from_tray, true, _emit_sync_request)
+-        .await
+-}
+-
+-pub async fn apply_config_internal_without_events<R: Runtime>(
++    apply_config_internal_with_events(
++        db, app, provider_id, from_tray, true, _emit_sync_request, ProfileApplyPurpose::Direct,
++    ).await
++}
++
++/// Only the gateway provider-switch orchestrator may use this pre-engage path.
++/// Its existing restore/preparation/engage ordering and failure handling remain unchanged.
++pub(crate) async fn prepare_gateway_provider_without_events<R: Runtime>(
+     db: &SqliteDbState,
+     app: &tauri::AppHandle<R>,
+     provider_id: &str,
+ ) -> Result<(), String> {
+-    apply_config_internal_with_events(db, app, provider_id, false, false, false).await
++    apply_config_internal_with_events(
++        db, app, provider_id, false, false, false, ProfileApplyPurpose::GatewayPreparation,
++    ).await
+ }
+ 
+ async fn apply_config_internal_with_events<R: Runtime>(
+@@ -592,9 +629,12 @@
+     from_tray: bool,
+     emit_config_changed: bool,
+     _emit_sync_request: bool,
++    purpose: ProfileApplyPurpose,
+ ) -> Result<(), String> {
+     ensure_claude_desktop_gateway_direct(app)?;
+-    apply_provider_to_sqlite_provider(db, provider_id)?;
++    apply_provider_profile_with_paths(
++        db, provider_id, purpose, config_writer::current_platform_paths,
++    )?;
+ 
+     // Update provider is_applied status.
+     let now = Local::now().to_rfc3339();
+@@ -916,4 +956,140 @@
+     fn official_restore_settings_handles_invalid_json() {
+         assert!(!official_restore_settings("not json"));
+     }
+-}
++
++    mod profile_apply_purpose {
++        use super::super::*;
++        use serde_json::json;
++        use std::fs;
++
++        fn fixture(model: &str) -> (SqliteDbState, tempfile::TempDir, config_writer::ClaudeDesktopPaths) {
++            let db = SqliteDbState::in_memory_for_test().expect("private sqlite");
++            let root = tempfile::tempdir().expect("private files");
++            let paths = config_writer::ClaudeDesktopPaths {
++                normal_config_path: root.path().join("normal/config.json"),
++                threep_config_path: root.path().join("threep/config.json"),
++                config_library_path: root.path().join("threep/library"),
++                profile_path: root.path().join("threep/library/profile.json"),
++                meta_path: root.path().join("threep/library/_meta.json"),
++            };
++            for path in [&paths.normal_config_path, &paths.threep_config_path, &paths.profile_path, &paths.meta_path] {
++                fs::create_dir_all(path.parent().unwrap()).expect("private directory");
++                fs::write(path, br#"{"unrelatedMarker":"retain"}"#).expect("fixture marker");
++            }
++            put_provider_to_sqlite(&db, "synthetic", &row(model)).expect("synthetic row");
++            (db, root, paths)
++        }
++
++        fn row(model: &str) -> ClaudeDesktopProviderContent {
++            ClaudeDesktopProviderContent {
++                name: "Synthetic mapping".into(), category: "custom".into(),
++                settings_config: json!({"env":{"ANTHROPIC_BASE_URL":"https://synthetic.invalid","ANTHROPIC_AUTH_TOKEN":"synthetic-not-a-secret"}}).to_string(),
++                source_provider_id: None, website_url: None, notes: None, icon: None,
++                icon_color: None, sort_index: Some(0),
++                meta: Some(json!({"claudeDesktopModelRoutes":{"claude-sonnet-5":{"model":model,"labelOverride":"Synthetic route","supports1m":true}}})),
++                is_applied: true, is_disabled: false,
++                created_at: "2026-10-21T00:00:00Z".into(), updated_at: "2026-10-21T00:00:00Z".into(),
++            }
++        }
++
++        fn snapshot(paths: &config_writer::ClaudeDesktopPaths) -> Vec<Option<Vec<u8>>> {
++            [&paths.normal_config_path, &paths.threep_config_path, &paths.profile_path, &paths.meta_path]
++                .into_iter().map(|p| if p.exists() { Some(fs::read(p).expect("read private file")) } else { None }).collect()
++        }
++
++        #[test]
++        fn direct_remap_rejected_before_path_resolution_or_file_changes() {
++            let (db, _root, paths) = fixture("claude-opus-5");
++            let before = snapshot(&paths);
++            let error = apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
++                || panic!("direct rejection must precede platform-path resolution")).unwrap_err();
++            assert!(error.contains("应用并代理"));
++            assert_eq!(snapshot(&paths), before);
++        }
++
++        #[test]
++        fn direct_non_native_protocol_rejected_without_model_remap() {
++            let (db, _root, paths) = fixture("claude-sonnet-5");
++            let mut non_native = row("claude-sonnet-5");
++            non_native.meta.as_mut().unwrap()["apiFormat"] = json!("openai_chat");
++            put_provider_to_sqlite(&db, "synthetic", &non_native).unwrap();
++            let before = snapshot(&paths);
++            assert!(apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
++                || panic!("non-native protocol must not resolve paths")).is_err());
++            assert_eq!(snapshot(&paths), before);
++        }
++
++        #[test]
++        fn credentialed_official_mapping_is_not_a_restore_bypass() {
++            let (db, _root, paths) = fixture("claude-opus-5");
++            let mut imported = row("claude-opus-5");
++            imported.category = "official".into();
++            put_provider_to_sqlite(&db, "synthetic", &imported).unwrap();
++            let before = snapshot(&paths);
++            assert!(apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
++                || panic!("credentialed mapping must not restore or resolve paths")).is_err());
++            assert_eq!(snapshot(&paths), before);
++        }
++
++        #[test]
++        fn direct_identity_keeps_normal_profile_write() {
++            let (db, _root, paths) = fixture("claude-sonnet-5");
++            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct, || Ok(paths.clone())).unwrap();
++            let profile: Value = serde_json::from_slice(&fs::read(&paths.profile_path).unwrap()).unwrap();
++            assert_eq!(profile["inferenceGatewayBaseUrl"], "https://synthetic.invalid");
++            let config: Value = serde_json::from_slice(&fs::read(&paths.normal_config_path).unwrap()).unwrap();
++            assert_eq!(config["unrelatedMarker"], "retain");
++        }
++
++        #[test]
++        fn preparation_allows_mapping_and_preserves_model_menu() {
++            let (db, _root, paths) = fixture("claude-opus-5");
++            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::GatewayPreparation, || Ok(paths.clone())).unwrap();
++            let profile: Value = serde_json::from_slice(&fs::read(&paths.profile_path).unwrap()).unwrap();
++            assert!(profile["inferenceGatewayBaseUrl"].as_str().unwrap().ends_with("/claude-desktop"));
++            assert_eq!(profile["inferenceModels"][0]["name"], "claude-sonnet-5");
++            assert_eq!(profile["inferenceModels"][0]["labelOverride"], "Synthetic route");
++            assert_eq!(profile["inferenceModels"][0]["supports1m"], true);
++        }
++
++        #[test]
++        fn official_restore_remains_available_in_direct_purpose() {
++            let (db, _root, paths) = fixture("claude-opus-5");
++            let mut official = row("claude-opus-5");
++            official.category = "official".into(); official.settings_config = "{\"env\":{}}".into();
++            put_provider_to_sqlite(&db, "synthetic", &official).unwrap();
++            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct, || Ok(paths.clone())).unwrap();
++            assert!(!paths.profile_path.exists());
++            let config: Value = serde_json::from_slice(&fs::read(&paths.normal_config_path).unwrap()).unwrap();
++            assert_eq!(config["deploymentMode"], "1p");
++            assert_eq!(config["unrelatedMarker"], "retain");
++        }
++
++        #[test]
++        fn saved_mapping_survives_skipped_reapply_then_gateway_writer_reads_it() {
++            let (db, _root, paths) = fixture("claude-sonnet-5");
++            apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct, || Ok(paths.clone())).unwrap();
++            let old_files = snapshot(&paths);
++            // Mirrors existing best-effort save ordering, not a Tauri-command integration test.
++            let mut updated = row("claude-opus-5");
++            updated.meta.as_mut().unwrap()["claudeDesktopModelRoutes"]["claude-sonnet-5"]["labelOverride"] = json!("Updated route");
++            updated.meta.as_mut().unwrap()["claudeDesktopModelRoutes"]["claude-sonnet-5"]["supports1m"] = json!(false);
++            put_provider_to_sqlite(&db, "synthetic", &updated).unwrap();
++            assert!(apply_provider_profile_with_paths(&db, "synthetic", ProfileApplyPurpose::Direct,
++                || panic!("no intermediate write")).is_err());
++            assert_eq!(snapshot(&paths), old_files);
++            let saved = get_provider_from_sqlite(&db, "synthetic").unwrap().unwrap();
++            assert!(saved.is_applied); // Existing saved-but-not-reapplied semantics are not repaired here.
++            assert_eq!(saved.meta.as_ref().unwrap()["claudeDesktopModelRoutes"]["claude-sonnet-5"]["model"], "claude-opus-5");
++            let settings: Value = serde_json::from_str(&saved.settings_config).unwrap();
++            let specs = config_writer::desktop_proxy_model_specs(saved.meta.as_ref(), Some(&settings));
++            config_writer::apply_gateway_proxy_profile(&paths, "http://127.0.0.1:37123/claude-desktop",
++                "synthetic-gateway-sentinel", Some(&specs)).unwrap();
++            let profile: Value = serde_json::from_slice(&fs::read(&paths.profile_path).unwrap()).unwrap();
++            assert_eq!(profile["inferenceGatewayBaseUrl"], "http://127.0.0.1:37123/claude-desktop");
++            assert_eq!(profile["inferenceModels"][0]["name"], "claude-sonnet-5");
++            assert_eq!(profile["inferenceModels"][0]["labelOverride"], "Updated route");
++            assert!(profile["inferenceModels"][0].get("supports1m").is_none());
++        }
++    }
++}
+--- a/tauri/src/coding/claude_desktop/tray_support.rs
++++ b/tauri/src/coding/claude_desktop/tray_support.rs
+@@ -1,10 +1,17 @@
+ //! Claude Desktop Tray Support Module.
+ //!
+-//! Provides the standardized API for tray menu integration. Unlike Claude Code,
+-//! this module does not integrate with the gateway yet — `apply_claude_desktop_provider`
+-//! applies the direct path via the commands internal apply.
++//! Provides the standardized API for tray menu integration. Applying from the
++//! tray goes through `provider_switch`, the same entry point every other CLI
++//! uses: it engages the gateway when the selected provider needs it and applies
++//! directly otherwise. Calling the direct apply internal here would let a
++//! tray click write a gateway profile without the gateway being engaged.
+ 
+ use tauri::{AppHandle, Manager, Runtime};
++
++use crate::coding::proxy_gateway::{
++    cli_proxy, paths::ProxyGatewayPaths, provider_protocol, provider_switch, types::GatewayCliKey,
++    ProxyGatewayState,
++};
+ 
+ use super::constants::COMMON_CONFIG_ID;
+ 
+@@ -34,21 +41,52 @@
+         .unwrap_or_default()
+ }
+ 
++fn gateway_running<R: Runtime>(app: &AppHandle<R>) -> bool {
++    app.state::<ProxyGatewayState>()
++        .manager
++        .lock()
++        .map(|manager| manager.status().running)
++        .unwrap_or(false)
++}
++
+ /// Get tray provider data for Claude Desktop.
+ pub async fn get_claude_desktop_tray_data<R: Runtime>(
+     app: &AppHandle<R>,
+ ) -> Result<TrayProviderData, String> {
+     let providers = super::commands::list_claude_desktop_providers(app.state()).await?;
++    // Which tray clicks would fail, mirroring the Claude Code tray's rule:
++    //
++    // - a provider whose model routes need the gateway cannot engage it while
++    //   the gateway is stopped;
++    // - while the gateway is taking this CLI over, the already-applied row is
++    //   a no-op, an official row cannot be engaged at all, and nothing can be
++    //   switched if the gateway stopped meanwhile.
++    let gateway_running = gateway_running(app);
++    let gateway_paths = ProxyGatewayPaths::new(crate::app_paths::resolved_data_dir());
++    let gateway_takeover_active =
++        cli_proxy::provider_switch_locked_by_manifest(&gateway_paths, GatewayCliKey::ClaudeDesktop);
+ 
+     let mut items: Vec<TrayProviderItem> = providers
+         .into_iter()
+         .filter(|provider| provider.id != COMMON_CONFIG_ID)
+-        .map(|provider| TrayProviderItem {
+-            id: provider.id,
+-            display_name: provider.name,
+-            is_selected: provider.is_applied,
+-            is_disabled: provider.is_disabled,
+-            sort_index: provider.sort_index.unwrap_or(0) as i64,
++        .map(|provider| {
++            let needs_gateway = provider_protocol::provider_needs_gateway_proxy(
++                GatewayCliKey::ClaudeDesktop,
++                &provider.category,
++                provider.meta.as_ref(),
++                &provider.settings_config,
++            );
++            let disabled_while_taken_over = gateway_takeover_active
++                && (!gateway_running || provider.is_applied || provider.category == "official");
++            TrayProviderItem {
++                id: provider.id,
++                display_name: provider.name,
++                is_selected: provider.is_applied,
++                is_disabled: provider.is_disabled
++                    || (needs_gateway && !gateway_running)
++                    || disabled_while_taken_over,
++                sort_index: provider.sort_index.unwrap_or(0) as i64,
++            }
+         })
+         .collect();
+ 
+@@ -61,14 +99,19 @@
+     })
+ }
+ 
+-/// Apply provider selection from the tray menu (direct path).
++/// Apply provider selection from the tray menu.
++///
++/// `apply_or_switch_provider` decides between a direct apply and gateway
++/// takeover from the provider's own protocol/model mapping — the same decision
++/// the page's 应用 / 应用并代理 buttons make, so the tray cannot leave a
++/// mapping provider applied without a gateway.
+ pub async fn apply_claude_desktop_provider<R: Runtime>(
+     app: &AppHandle<R>,
+     provider_id: &str,
+ ) -> Result<(), String> {
+-    let state = app.state::<crate::db::SqliteDbState>();
+-    super::commands::apply_config_internal_with_sync(state.inner(), app, provider_id, true, true)
++    provider_switch::apply_or_switch_provider(app, GatewayCliKey::ClaudeDesktop, provider_id, true)
+         .await
++        .map(|_| ())
+ }
+ 
+ /// Check if Claude Desktop should be shown in the tray menu.
+--- a/tauri/src/coding/proxy_gateway/provider_switch.rs
++++ b/tauri/src/coding/proxy_gateway/provider_switch.rs
+@@ -312,7 +312,7 @@
+             .await
+         }
+         GatewayCliKey::ClaudeDesktop => {
+-            crate::coding::claude_desktop::commands::apply_config_internal_without_events(
++            crate::coding::claude_desktop::commands::prepare_gateway_provider_without_events(
+                 &db,
+                 app,
+                 provider_id,
+--- a/web/features/coding/claudedesktop/components/ClaudeDesktopProviderCard.tsx
++++ b/web/features/coding/claudedesktop/components/ClaudeDesktopProviderCard.tsx
+@@ -23,6 +23,7 @@
+   firstGatewayApiFormat,
+   getGatewayProviderApiFormatFromMeta,
+   getGatewayProviderProfilesVersion,
++  hasClaudeDesktopRoutingModels,
+   hasNonClaudeModelIds,
+   isGatewayAggregateMode,
+   isGatewayFailoverMode,
+@@ -212,7 +213,8 @@
+   const needsGatewayProxy =
+     !isOfficialProvider &&
+     (providerNeedsGatewayProxy(providerApiFormat, 'anthropic') ||
+-      hasNonClaudeModelIds(configuredModelIds));
++      hasNonClaudeModelIds(configuredModelIds) ||
++      hasClaudeDesktopRoutingModels(effectiveRoutes));
+   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
+   const gatewayMode = gatewayStatus?.mode ?? null;
+   const gatewayFailoverActive = isGatewayFailoverMode(gatewayMode);
+--- a/web/features/coding/shared/gateway/index.ts
++++ b/web/features/coding/shared/gateway/index.ts
+@@ -9,6 +9,7 @@
+   gatewayProxyReason,
+   grokProviderNeedsGatewayProxy,
+   grokWireApiFormatFromConfig,
++  hasClaudeDesktopRoutingModels,
+   hasNonClaudeModelIds,
+   firstGatewayApiFormat,
+   isClaudeSafeModelId,
+--- a/web/features/coding/shared/gateway/providerProtocol.ts
++++ b/web/features/coding/shared/gateway/providerProtocol.ts
+@@ -228,6 +228,15 @@
+ export const hasNonClaudeModelIds = (modelIds: string[]): boolean =>
+   modelIds.some((modelId) => !isClaudeSafeModelId(modelId));
+ 
++/** A Claude-safe upstream still needs routing when it differs from its route ID.
++ * Adapted from upstream 7f486ef; existing non-Claude-ID checks remain separate. */
++export const hasClaudeDesktopRoutingModels = (
++  routes: Record<string, { model?: string }> | null | undefined,
++): boolean => Object.entries(routes ?? {}).some(([routeId, route]) => {
++  const model = route?.model?.trim() ?? '';
++  return model !== '' && model !== routeId.trim();
++});
++
+ export type GatewayProxyReason = 'protocol' | 'model' | 'both' | null;
+ 
+ /** Classify why a provider needs the local gateway: a protocol mismatch, an
+--- a/web/test/features/coding/shared/gateway/providerProtocol.test.ts
++++ b/web/test/features/coding/shared/gateway/providerProtocol.test.ts
+@@ -4,6 +4,7 @@
+ import {
+   codexWireApiFormatFromConfig,
+   grokProviderNeedsGatewayProxy,
++  hasClaudeDesktopRoutingModels,
+   isGatewayConfigFlagEnabled,
+   providerNeedsGatewayProxy,
+ } from '../../../../../features/coding/shared/gateway/providerProtocol.ts';
+@@ -44,3 +45,20 @@
+   // Contrast: single-native compare would wrongly force proxy for chat.
+   assert.equal(providerNeedsGatewayProxy('openai_chat', 'openai_responses'), true);
+ });
++
++
++test('claude desktop safe-ID remapping needs the gateway independently of protocol', () => {
++  assert.equal(hasClaudeDesktopRoutingModels({ 'claude-sonnet-5': { model: 'claude-opus-5' } }), true);
++  assert.equal(hasClaudeDesktopRoutingModels({ 'claude-sonnet-5': { model: 'claude-sonnet-5' } }), false);
++  assert.equal(hasClaudeDesktopRoutingModels({ 'claude-sonnet-5': { model: 'deepseek-v4-pro' } }), true);
++});
++
++test('claude desktop route helper handles absent and whitespace values conservatively', () => {
++  assert.equal(hasClaudeDesktopRoutingModels(undefined), false);
++  assert.equal(hasClaudeDesktopRoutingModels(null), false);
++  assert.equal(hasClaudeDesktopRoutingModels({}), false);
++  assert.equal(hasClaudeDesktopRoutingModels({ 'claude-sonnet-5': {} }), false);
++  assert.equal(hasClaudeDesktopRoutingModels({ 'claude-sonnet-5': { model: '  ' } }), false);
++  assert.equal(hasClaudeDesktopRoutingModels({ ' claude-sonnet-5 ': { model: ' claude-sonnet-5 ' } }), false);
++  // This frontend helper does not claim parity with malformed/blank Rust routes.
++});
+--- a/web/test/features/coding/shared/providerCardVariants/fixtures/MigratedProviderCardsFixture.jsx
++++ b/web/test/features/coding/shared/providerCardVariants/fixtures/MigratedProviderCardsFixture.jsx
+@@ -40,6 +40,7 @@
+ import '@/App.css';
+ 
+ const parameters = new URLSearchParams(location.search);
++const desktopGatewayCase = parameters.get('desktopGateway');
+ const language = parameters.get('language') || 'zh-CN';
+ const themeMode = parameters.get('theme') || 'light';
+ const resolvedTheme = themeMode === 'system'
+@@ -99,6 +100,58 @@
+   gatewayStatus: null,
+   gatewayTakeoverActive: false,
+ };
++
++// Separate navigation keeps the existing migration matrix and its geometry
++// untouched. These are input props, not replicas of the card's proxy decision.
++function ClaudeDesktopGatewayFixture() {
++  const viewMode = parameters.get('view');
++  if (!['identity', 'takeover', 'mapped', 'stopped'].includes(desktopGatewayCase)
++    || !['list', 'card'].includes(viewMode)) {
++    throw new Error('Invalid Claude Desktop gateway fixture scenario');
++  }
++  const isApplied = desktopGatewayCase === 'takeover';
++  const provider = {
++    ...claudeDesktopProvider,
++    id: 'desktop-gateway-' + desktopGatewayCase + '-' + viewMode,
++    name: 'Synthetic Desktop Gateway',
++    settingsConfig: JSON.stringify({ env: {
++      ANTHROPIC_BASE_URL: 'https://desktop-gateway.example.test',
++      ANTHROPIC_AUTH_TOKEN: 'synthetic-not-a-real-credential',
++    } }),
++    meta: {
++      apiFormat: 'anthropic',
++      claudeDesktopModelRoutes: {
++        // Stopped is a legacy non-Claude control, not safe-remap coverage.
++        'claude-sonnet-5': { model: desktopGatewayCase === 'identity' ? 'claude-sonnet-5'
++          : desktopGatewayCase === 'stopped' ? 'deepseek-chat' : 'claude-opus-5' },
++      },
++    },
++    notes: '',
++    isApplied,
++  };
++  const gatewayStatus = {
++    cli_key: 'claude_desktop',
++    state: isApplied ? 'takeover_applied' : desktopGatewayCase === 'stopped' ? 'gateway_stopped' : 'direct',
++    dot: isApplied ? 'green' : 'gray',
++    can_takeover: !isApplied && desktopGatewayCase !== 'stopped',
++    can_restore_direct: isApplied,
++    gateway_origin: null,
++    runtime_root: null,
++    managed_targets: [],
++    mode: isApplied ? 'single' : null,
++    primary_provider_id: isApplied ? provider.id : null,
++    provider_priorities: [],
++    message: null,
++  };
++  return (
++    <div data-fixture="desktop-gateway" style={{ padding: 16 }}>
++      <ClaudeDesktopProviderCard {...claudeDesktopProps} provider={provider} viewMode={viewMode}
++        isApplied={isApplied} gatewayStatus={gatewayStatus} gatewayTakeoverActive={isApplied}
++        onSelect={selected => state.callbacks.push({ action: 'direct', viewMode, providerId: selected.id })}
++      />
++    </div>
++  );
++}
+ 
+ /* ------------------------------------------------------------------ Gemini CLI */
+ 
+@@ -303,8 +356,47 @@
+ /* ------------------------------------------------------------------ fixture API */
+ 
+ const cards = (name) => [...document.querySelectorAll(`[data-fixture="${name}"]`)];
++const desktopGatewayActionKeys = {
++  direct: 'claudecode.provider.apply',
++  proxy: 'gateway.proxy.applyWithProxyButton',
++  restore: 'gateway.proxy.restoreDirectButton',
++};
++const desktopGatewayButtons = action => {
++  const label = i18n.t(desktopGatewayActionKeys[action]).replace(/\s+/g, '');
++  return [...(cards('desktop-gateway')[0]?.querySelectorAll('button') ?? [])]
++    .filter(button => button.textContent.replace(/\s+/g, '') === label);
++};
++const desktopGatewayButton = action => {
++  const buttons = desktopGatewayButtons(action);
++  if (buttons.length !== 1) throw new Error('Expected exactly one real Desktop action: ' + action);
++  return buttons[0];
++};
++const isVisible = node => {
++  const rect = node.getBoundingClientRect();
++  if (!rect.width || !rect.height || !node.getClientRects().length) return false;
++  for (let ancestor = node; ancestor; ancestor = ancestor.parentElement) {
++    const style = getComputedStyle(ancestor);
++    if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) === 0) return false;
++  }
++  return true;
++};
+ 
+ window.migratedProviderCardsFixture = {
++  desktopGatewayActions() {
++    return Object.fromEntries(Object.keys(desktopGatewayActionKeys).map(action => [action,
++      desktopGatewayButtons(action).map(button => ({ visible: isVisible(button), disabled: button.disabled })),
++    ]));
++  },
++  desktopGatewayTarget(action) {
++    const button = desktopGatewayButton(action);
++    const rect = button.getBoundingClientRect();
++    const x = rect.left + rect.width / 2;
++    const y = rect.top + rect.height / 2;
++    const hit = document.elementFromPoint(x, y);
++    return { x, y, width: rect.width, height: rect.height, visible: isVisible(button),
++      inViewport: x > 0 && x < innerWidth && y > 0 && y < innerHeight,
++      hit: Boolean(hit && button.contains(hit)), hitTag: hit?.tagName ?? null };
++  },
+   /** The rendered text of one fixture block, whitespace-normalised. */
+   text(name) {
+     const node = cards(name)[0];
+@@ -474,6 +566,7 @@
+     <ConfigProvider theme={{ algorithm: resolvedTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
+       <ThemeTokenProbe />
+       <MemoryRouter>
++        {desktopGatewayCase ? <ClaudeDesktopGatewayFixture /> : <>
+         <button data-fixture-finish-refresh onClick={() => setPending(null)}>Finish synthetic refresh</button>
+         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+           {['list', 'card'].map(viewMode => (
+@@ -511,6 +604,7 @@
+             </React.Fragment>
+           ))}
+         </div>
++        </>}
+       </MemoryRouter>
+     </ConfigProvider>
+   );
+--- a/web/test/features/coding/shared/providerCardVariants/migratedProviderCardsBrowserChecks.mjs
++++ b/web/test/features/coding/shared/providerCardVariants/migratedProviderCardsBrowserChecks.mjs
+@@ -476,5 +476,225 @@
+     completed, assertionCounts: SCENARIO_COUNTS, checks, browserExceptions: exceptions,
+   }, null, 2));
+   console.log(`Passed ${completed.length} migrated-provider-card scenarios (${checks.length} assertions).`);
++  const routingChecks = await verifyClaudeDesktopRouting({ send, evaluate, baseUrl, artifactRoot, exceptions });
++  assert.equal(checks.length + routingChecks.length, 114, 'Complete migration and Desktop routing coverage');
++  return [...checks, ...routingChecks];
++}
++
++const DESKTOP_ROUTING_COUNTS = {
++  'desktop-identity-list': 4,
++  'desktop-identity-card': 4,
++  'desktop-takeover-list': 3,
++  'desktop-takeover-card': 3,
++  'desktop-mapped-list': 3,
++  'desktop-mapped-card': 3,
++  'desktop-stopped-list': 4,
++  'desktop-stopped-card': 4,
++};
++
++/**
++ * Independently runnable against the same real fixture for strict RED/GREEN.
++ * Every case records its phase and observations, even after another fails.
++ * Only safe-remap exposing a live, hit-testable direct action instead of proxy
++ * is the expected defect; setup/IPC/browser/pointer failures are never RED.
++ */
++export async function verifyClaudeDesktopRouting({ send, evaluate, baseUrl, artifactRoot, exceptions }) {
++  const checks = [];
++  const cases = [];
++  const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
++  const fixture = expression => evaluate('migratedProviderCardsFixture.' + expression);
++  const check = (name, actual, expected = true) => {
++    assert.deepEqual(actual, expected, name);
++    checks.push(name);
++    console.log('PASS ' + name);
++  };
++  const waitFor = async (expression, label) => {
++    for (let attempt = 0; attempt < 200; attempt++) {
++      if (await evaluate(expression)) return;
++      await delay(50);
++    }
++    throw new Error('Timed out waiting for: ' + label);
++  };
++  const mouse = async (type, x, y) => send('Input.dispatchMouseEvent', {
++    type, x, y, ...(type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }),
++  });
++  const assertClean = async observations => {
++    observations.unexpectedIPC = await fixture('state.unexpectedIPC');
++    observations.browserExceptions = [...exceptions];
++    assert.deepEqual(observations.unexpectedIPC, [], 'Mapping fixture must not call a backend');
++    assert.deepEqual(observations.browserExceptions, [], 'Browser exceptions remain failures');
++  };
++  const stableTarget = async (action, observations) => {
++    const argument = JSON.stringify(action);
++    let previous;
++    let stableSamples = 0;
++    let hovered = false;
++    for (let attempt = 0; attempt < 200; attempt++) {
++      const target = await fixture('desktopGatewayTarget(' + argument + ')');
++      observations.pointer = { action, ...target };
++      const stationary = previous && ['x', 'y', 'width', 'height']
++        .every(key => Math.abs(target[key] - previous[key]) < 0.25);
++      stableSamples = stationary && target.visible && target.inViewport && target.hit
++        ? stableSamples + 1 : 0;
++      if (stableSamples >= 5) {
++        if (hovered) return target;
++        await mouse('mouseMoved', target.x, target.y);
++        hovered = true;
++        stableSamples = 0;
++      }
++      previous = target;
++      await delay(50);
++    }
++    throw new Error('Desktop action never settled or was not hit-testable: ' + JSON.stringify(observations.pointer));
++  };
++  const captureDiagnostics = async (report, failure) => {
++    const basename = failure ? 'case-' + report.name + '-failure' : 'desktop-routing-' + report.name;
++    try {
++      const { data } = await send('Page.captureScreenshot', { format: 'png' });
++      await writeFile(path.join(artifactRoot, basename + '.png'), Buffer.from(data, 'base64'));
++      report.screenshot = basename + '.png';
++    } catch (error) {
++      report.diagnosticError = { screenshot: error instanceof Error ? error.message : String(error) };
++    }
++    if (failure) {
++      try {
++        await writeFile(path.join(artifactRoot, basename + '.html'), await evaluate('document.documentElement.outerHTML'));
++        report.html = basename + '.html';
++      } catch (error) {
++        report.diagnosticError = { ...report.diagnosticError, html: error instanceof Error ? error.message : String(error) };
++      }
++    }
++  };
++  const legacyRemapActions = { direct: [{ visible: true, disabled: false }], proxy: [], restore: [] };
++  for (const scenarioCase of ['identity', 'takeover', 'mapped', 'stopped']) {
++    for (const viewMode of ['list', 'card']) {
++      const name = 'desktop-' + scenarioCase + '-' + viewMode;
++      const report = { name, role: scenarioCase === 'mapped' ? 'regression' : 'control', phase: 'navigation', observations: {} };
++      const observations = report.observations;
++      const assertionStart = checks.length;
++      let expectedDefect = false;
++      let fixtureMounted = false;
++      try {
++        const runId = randomUUID();
++        await send('Page.navigate', { url: `${baseUrl}/?theme=light&desktopGateway=${scenarioCase}&view=${viewMode}&runId=${encodeURIComponent(runId)}` });
++        await waitFor('window.migratedProviderCardsFixture?.state.runId === ' + JSON.stringify(runId)
++          + ' && Boolean(document.querySelector("[data-fixture=desktop-gateway]"))', name + ': fresh fixture');
++        fixtureMounted = true;
++        report.phase = 'mount';
++        const providerId = 'desktop-gateway-' + scenarioCase + '-' + viewMode;
++        const surface = viewMode === 'list' ? '.ant-card' : '[data-provider-card-clickable]';
++        observations.surfaces = await evaluate('document.querySelectorAll(' + JSON.stringify(
++          '[data-fixture="desktop-gateway"] [data-provider-id="' + providerId + '"] ' + surface,
++        ) + ').length');
++        assert.equal(observations.surfaces, 1, name + ': actual shared view must mount');
++        await delay(300);
++        await assertClean(observations);
++        observations.actions = await fixture('desktopGatewayActions()');
++        observations.callbacks = await fixture('state.callbacks');
++        const action = scenarioCase === 'identity' ? 'direct' : scenarioCase === 'takeover' ? 'restore' : 'proxy';
++        const expected = { direct: [], proxy: [], restore: [] };
++        expected[action] = [{ visible: true, disabled: scenarioCase === 'stopped' }];
++        observations.expectedActions = expected;
++
++        // Establish that the erroneous direct button is really reachable before
++        // identifying this particular mismatch as a baseline regression.
++        if (scenarioCase === 'mapped' && JSON.stringify(observations.actions) === JSON.stringify(legacyRemapActions)) {
++          report.phase = 'baseline-direct-pointer';
++          await stableTarget('direct', observations);
++          await assertClean(observations);
++          observations.actions = await fixture('desktopGatewayActions()');
++          observations.callbacks = await fixture('state.callbacks');
++          assert.deepEqual(observations.callbacks, [], 'Inspection must not dispatch callbacks');
++          expectedDefect = JSON.stringify(observations.actions) === JSON.stringify(legacyRemapActions);
++        }
++        report.phase = 'action-availability';
++        check(name + ': only the correct real action is visible with the correct enabled state', observations.actions, expected);
++        report.phase = 'pointer';
++        const target = await stableTarget(action, observations);
++        observations.actions = await fixture('desktopGatewayActions()');
++        assert.deepEqual(observations.actions, expected, 'Action state must remain correct after hover');
++        check(name + ': real action is visible and hit-testable after hover settles', target.visible && target.inViewport && target.hit);
++
++        // The real mapping layer owns gateway service calls. Availability only
++        // for enabled proxy/restore; no IPC allowlist or substitute component.
++        // Stopped uses a legacy non-Claude model, not safe-remap while stopped.
++        report.phase = 'callback';
++        if (scenarioCase === 'identity' || scenarioCase === 'stopped') {
++          await mouse('mouseMoved', target.x, target.y);
++          await mouse('mousePressed', target.x, target.y);
++          await mouse('mouseReleased', target.x, target.y);
++          if (scenarioCase === 'identity') {
++            await waitFor('migratedProviderCardsFixture.state.callbacks.length === 1', name + ': direct callback');
++          } else {
++            await delay(100);
++          }
++          observations.callbacks = await fixture('state.callbacks');
++          check(name + ': pointer click dispatches only the permitted direct callback', observations.callbacks,
++            scenarioCase === 'identity' ? [{ action: 'direct', viewMode, providerId }] : []);
++          observations.detailOpened = await evaluate('Boolean(document.querySelector("[data-provider-detail-panel]"))');
++          check(name + ': action click does not open the compact detail panel', observations.detailOpened, false);
++        } else {
++          observations.callbacks = await fixture('state.callbacks');
++          check(name + ': inspecting gateway availability invokes no callback', observations.callbacks, []);
++        }
++        report.phase = 'final-guards';
++        await assertClean(observations);
++        assert.equal(checks.length - assertionStart, DESKTOP_ROUTING_COUNTS[name], 'Incomplete assertions: ' + name);
++        report.phase = 'complete';
++        report.status = 'passed';
++        if (scenarioCase === 'mapped' || scenarioCase === 'takeover') await captureDiagnostics(report, false);
++      } catch (error) {
++        report.status = 'failed';
++        report.failureKind = expectedDefect && report.phase === 'action-availability'
++          ? 'missing-proxy-for-safe-remap' : 'unexpected-failure';
++        report.error = error instanceof Error ? error.message : String(error);
++        if (fixtureMounted) {
++          try {
++            await assertClean(observations);
++          } catch (guardError) {
++            report.failureKind = 'unexpected-failure';
++            report.guardError = guardError instanceof Error ? guardError.message : String(guardError);
++          }
++        }
++        await captureDiagnostics(report, true);
++        console.error('FAIL ' + name + ' [' + report.phase + '/' + report.failureKind + ']: ' + report.error);
++      }
++      report.passedAssertions = checks.length - assertionStart;
++      cases.push(report);
++    }
++  }
++  const failures = cases.filter(item => item.status === 'failed');
++  const summary = {
++    attempted: cases.length,
++    passed: cases.length - failures.length,
++    failed: failures.length,
++    passedControls: cases.filter(item => item.role === 'control' && item.status === 'passed').length,
++    failedControls: failures.filter(item => item.role === 'control').length,
++    expectedDefectFailures: failures.filter(item => item.failureKind === 'missing-proxy-for-safe-remap').length,
++    unexpectedFailures: failures.filter(item => item.failureKind !== 'missing-proxy-for-safe-remap').length,
++  };
++  const validRed = summary.attempted === 8 && summary.passedControls === 6
++    && summary.failedControls === 0 && summary.unexpectedFailures === 0
++    && checks.length === 22 && exceptions.length === 0
++    && JSON.stringify(failures.map(item => item.name)) === JSON.stringify(['desktop-mapped-list', 'desktop-mapped-card']);
++  await writeFile(path.join(artifactRoot, 'desktop-routing-cases.json'), JSON.stringify({
++    validRed, summary,
++    coverageBoundary: {
++      enabledProxyAndRestore: 'visibility, enabled state and hit-test only; not clicked',
++      identity: 'standard pointer click reaches supplied direct callback',
++      stopped: 'legacy non-Claude model with can_takeover=false; standard disabled click',
++      notCovered: ['safe-remap-stopped', 'Tauri IPC', 'tray interaction', 'native app', 'gateway engage', 'gateway failure recovery'],
++    },
++    passed: cases.filter(item => item.status === 'passed').map(item => item.name),
++    failed: failures.map(item => item.name),
++    fixtureErrors: failures.filter(item => item.failureKind !== 'missing-proxy-for-safe-remap'),
++    assertionCounts: DESKTOP_ROUTING_COUNTS, cases, checks, browserExceptions: exceptions,
++  }, null, 2));
++  assert.deepEqual(cases.map(item => item.name), Object.keys(DESKTOP_ROUTING_COUNTS), 'Every Desktop routing case must execute');
++  assert.equal(cases.length, 8, 'Fixed Desktop routing scenario count prevents zero-test success');
++  assert.equal(failures.length, 0, 'Desktop routing failures: ' + JSON.stringify(summary));
++  assert.equal(exceptions.length, 0, 'Unhandled browser exceptions remain failures');
++  assert.equal(checks.length, 28, 'Fixed Desktop routing assertion count prevents partial success');
++  console.log(`Passed ${cases.length} Desktop routing scenarios (${checks.length} assertions).`);
+   return checks;
+ }
