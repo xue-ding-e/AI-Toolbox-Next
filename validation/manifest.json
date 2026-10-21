@@ -1,0 +1,79 @@
+{
+  "base": "c9bcc6c0334503a76aeb5ce2733fdad11d673dd5",
+  "repository": "xue-ding-e/AI-Toolbox-Next",
+  "ref": "refs/heads/validation/reasoning-item-ids-upstream",
+  "patchSha256": "635f3c597d8959b6fde4ef839d21f6db47aaf218334812857a907744e31203a8",
+  "validatorSha256": "0e32805c3d746e5d0bd5fea37ca982c820040c56b583761bce209939a7921d67",
+  "toolchain": "1.99.1",
+  "validationFiles": [
+    ".github/workflows/maintenance-validation.yml",
+    "validation/candidate.diff",
+    "validation/manifest.json",
+    "validation/validate.py"
+  ],
+  "productFiles": [
+    "tauri/src/coding/proxy_gateway/transformer/kernel_tests.rs",
+    "tauri/src/coding/proxy_gateway/transformer/reasoning_item_id_tests.rs",
+    "tauri/src/coding/proxy_gateway/transformer/stream.rs"
+  ],
+  "identities": {
+    "tauri/src/coding/proxy_gateway/transformer/kernel_tests.rs": {
+      "baseBlob": "2344976074c46ead727b902726b1e879bd932ba9",
+      "baseSha256": "d312454bcbb77f71481a0705f433f4dd75c5afce3911a54e621ce24e0247b9d8",
+      "sha256": "a533485a215113d55e74c29d71e8c09a22ef778e443025f0f590c4b2d999a07d"
+    },
+    "tauri/src/coding/proxy_gateway/transformer/reasoning_item_id_tests.rs": {
+      "baseBlob": null,
+      "baseSha256": null,
+      "sha256": "c38352acdd80f7b20a696dc03b9451e88c241b0f4edaf9c5c4b5541528ef263e"
+    },
+    "tauri/src/coding/proxy_gateway/transformer/stream.rs": {
+      "baseBlob": "7698811c784323fbc349074f25b93492b4570799",
+      "baseSha256": "91fe4a79279bbfc97899c3eebc201de2412609779ee4d26e1822c7d9f9ce2aea",
+      "sha256": "2adae2e3029ac0c5fabe5d3a7e970ce749527da28bd945e2e31c26d2c9f43066"
+    }
+  },
+  "locks": {
+    "pnpm-lock.yaml": "a71feeda32c8cfee44d686dc21d5707239b8a2bb4e368c19d5c3d23c22bf6730",
+    "tauri/Cargo.lock": "06081bc7b2baedc6d9f0886c43075f2d8c8c77f661a854994ac92ec06a6d58f7"
+  },
+  "rustTests": [
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::chat_to_responses_reasoning_id_uses_rs_prefix",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::anthropic_to_responses_reasoning_id_uses_rs_prefix",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::gemini_to_responses_reasoning_id_uses_rs_prefix",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::chat_to_responses_reasoning_ids_are_unique_with_reused_upstream_id",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::anthropic_to_responses_reasoning_ids_are_unique_with_reused_upstream_id",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::gemini_to_responses_reasoning_ids_are_unique_with_reused_upstream_id",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::converted_reasoning_identity_summary_and_tool_call_survive_the_full_lifecycle",
+    "coding::proxy_gateway::transformer::kernel::tests::reasoning_item_id_tests::responses_identity_preserves_native_reasoning_id_and_ciphertext_bytes"
+  ],
+  "budgetsSeconds": {
+    "exactCase": 45,
+    "transformerModule": 300,
+    "overallFromWorkflowStart": 1860,
+    "finallyReserve": 120,
+    "upstreamCompile": 900
+  },
+  "assertionContract": "One real upstream libtest compilation; exactly eight named GREEN tests plus the actual nonzero 304-name transformer inventory, whose canonical sorted-newline SHA-256 matches prior evidence because the entire unpatched transformer tree is identical. No ignored tests, setup failures, zero tests or partial suites count as success.",
+  "scope": "Synthetic protocol fixtures and real existing StreamKernel only. No application launch, external API calls, listeners, personal configuration or credential reads. Official build dependency downloads are separate prerequisite commands.",
+  "generatedDirectories": [
+    "tauri/gen/schemas"
+  ],
+  "harnessBase": "861aa4f05c83d0927128292276bd59bfeb54a2da",
+  "sourceRepository": "coulsontl/ai-toolbox",
+  "baseTransformerTree": "2280e65ed548b97a99c90257d772b9c133acaabf",
+  "buildManifestBlob": "fa489b82782bf3f23f2d2b279233e9ac8930f0c4",
+  "expectedTransformerCount": 304,
+  "expectedTransformerInventorySha256": "879b56850c435b0318009a42d43bf490cda29f3c04996acf5c833daffa9c942c",
+  "priorProductEvidence": {
+    "repository": "xue-ding-e/AI-Toolbox-Next",
+    "runId": 39619190599,
+    "testedDiffSha256": "635f3c597d8959b6fde4ef839d21f6db47aaf218334812857a907744e31203a8",
+    "baseline": "861aa4f05c83d0927128292276bd59bfeb54a2da",
+    "expectedProductRed": 6,
+    "baselineControlsPassed": 2,
+    "fixedExactPassed": 8,
+    "transformerPassed": 304,
+    "note": "Prior Next result is provenance, not an upstream execution result."
+  }
+}
