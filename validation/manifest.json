@@ -1,6 +1,6 @@
 {
   "base": "268a567b93fecfd4c5f889a13b6d1c56f86e3c92",
-  "patchSha256": "c72918d5333950f9b2d0af92ce66c71da0eaf650e7ab3c31cadcb0757427997e",
+  "patchSha256": "2f88a5156b22f1046db157f93ebd0522b181102cf5436f6c592ff942c3c2ec0b",
   "productFiles": [
     "package.json",
     "scripts/verify-skills-group-mode.mjs",
