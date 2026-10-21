@@ -470,7 +470,7 @@
 +}
 --- /dev/null
 +++ b/web/test/features/coding/grok/fetchedModels/fixtures/GrokFetchModelsFixture.jsx
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,46 @@
 +import { boundary } from './boundary.mjs';
 +import React from 'react';
 +import { createRoot } from 'react-dom/client';
@@ -506,7 +506,10 @@
 +};
 +window.grokFetchFixture = {
 +  translate: (key, params) => i18n.t(key, params),
-+  isReady: () => committed && Boolean(document.querySelector('#grok-page')?.textContent.includes('Synthetic Grok Fixture')),
++  isReady: () => committed
++    && boundary.snapshot().calls.includes('list_grok_official_accounts')
++    && ![...document.querySelectorAll('.ant-spin-spinning')].some(visible)
++    && Boolean(document.querySelector('#grok-page')?.textContent.includes('Synthetic Grok Fixture')),
 +  snapshot: () => ({ ...boundary.snapshot(), committed,
 +    text: document.querySelector('#grok-page')?.textContent || '',
 +    dialogs: [...document.querySelectorAll('[role="dialog"]')].filter(visible).map(element => element.textContent),
@@ -516,7 +519,7 @@
 +createRoot(document.getElementById('root')).render(<Fixture />);
 --- /dev/null
 +++ b/web/test/features/coding/grok/fetchedModels/fixtures/boundary.mjs
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,111 @@
 +import { mockIPC } from '@tauri-apps/api/mocks';
 +
 +// Installed before importing any application module. All data is synthetic.
@@ -570,7 +573,7 @@
 +  calls.push(command);
 +  const exactKeys = keys => args && typeof args === 'object' && !Array.isArray(args)
 +    && JSON.stringify(Object.keys(args).sort()) === JSON.stringify([...keys].sort());
-+  if (noArgsCommands.has(command) && args !== undefined && !(args && Object.keys(args).length === 0)) return deny(command + ':args');
++  if (noArgsCommands.has(command) && args !== undefined && !(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length === 0)) return deny(command + ':args');
 +  if (command === 'plugin:event|listen') {
 +    if (!exactKeys(['event', 'target', 'handler']) || args.event !== 'gateway-running-changed'
 +      || args.target?.kind !== 'Any' || Object.keys(args.target).length !== 1 || !Number.isInteger(args.handler)) return deny(command);
@@ -593,6 +596,9 @@
 +    case 'proxy_gateway_cli_status':
 +      if (!exactKeys(['cliKey']) || args.cliKey !== 'grok') return deny(command + ':args');
 +      return clone(status);
++    case 'list_grok_official_accounts':
++      if (!exactKeys(['providerId']) || args.providerId !== 'fixture-grok') return deny(command + ':args');
++      return [];
 +    case 'fetch_provider_models': {
 +      if (!exactKeys(['request'])) return deny(command + ':args');
 +      const r = args.request;

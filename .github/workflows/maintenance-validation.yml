@@ -16,7 +16,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: harness
-          fetch-depth: 5
+          fetch-depth: 6
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -34,8 +34,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = '${{ github.sha }}'
-          echo 'd8f3e770f597e09146c042dee06a91901a4b8b4064bd5ffa6a45e665b79f781e  validation/candidate.diff' | sha256sum -c -
-          echo '5ee02946055233ab56a288eafdfdc95565bce955d3711ff670b4b8cdfa85a54b  validation/manifest.json' | sha256sum -c -
+          echo 'd234fecb1da2dfac825ae43f62260a41e4d81fa4db30aa2d3ee4207ed37048fa  validation/candidate.diff' | sha256sum -c -
+          echo '90dd7a648b7bbac502506711bca9f40c8fcac4864da5977aee8586a7dd5b89eb  validation/manifest.json' | sha256sum -c -
           echo 'b91437078950dfe0cacb8c3eaecd0287e973f5a2527d6a76e98ba7cee50d3750  validation/validate.py' | sha256sum -c -
       - name: Record existing official browser and fixed JS tools
         run: |
