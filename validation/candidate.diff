@@ -687,7 +687,7 @@
 +});
 --- /dev/null
 +++ b/web/test/features/coding/claudedesktop/officialEdit/verify.mjs
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,222 @@
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
 +import path from 'node:path';
@@ -700,22 +700,25 @@
 +  const results=[],screenshots=[],diagnosticErrors=[],interactions=[],runDeadline=Date.now()+480000;
 +  const matrix=scenarios.filter(x=>variant==='green'||!x.greenOnly);
 +  let caseDeadline=0,currentCase=null;
-+  const bounded=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Fixture operation deadline exceeded')),Math.max(1,Math.min(caseDeadline,runDeadline)-Date.now()));})]);}finally{clearTimeout(timer);}};
++  const bounded=async(promise,maxMs=Infinity)=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Fixture operation deadline exceeded')),Math.max(1,Math.min(caseDeadline,runDeadline,Date.now()+maxMs)-Date.now()));})]);}finally{clearTimeout(timer);}};
 +  const ev=expression=>bounded(evaluate(expression));
 +  const cmd=(method,args)=>bounded(send(method,args));
 +  const snap=()=>ev('window.officialEditFixture?.snapshot()');
 +  const healthy=s=>{assert(s,'Fixture not initialized');assert.deepEqual(s.denied,[],'Forbidden IPC/network action');assert.deepEqual(s.runtimeErrors,[],'Browser runtime/setup failure');assert.deepEqual(s.page.errors,[],'Page callback/setup failure');assert.equal(exceptions.length,0,'Browser exception is not product RED');};
-+  const wait=async(label,predicate)=>{while(Date.now()<Math.min(caseDeadline,runDeadline)){const value=await predicate();if(value)return value;await sleep(50);}throw new Error('Fixture wait timed out: '+label);};
++  const wait=async(label,predicate,maxMs=Infinity)=>{const deadline=Math.min(caseDeadline,runDeadline,Date.now()+maxMs);while(Date.now()<deadline){const value=await predicate();if(value)return value;await sleep(50);}throw new Error('Fixture wait timed out: '+label);};
 +  const dialog=`document.getElementById('name')?.closest('[role="dialog"]')`;
 +  // Capture only an open, real form. Closed-modal blank pages are not visual evidence.
 +  // Diagnostics may fail the evidence gate, but must never replace a product failure.
 +  const capture=async(item,moment,anchor)=>{
 +   const expression=`document.getElementById(${JSON.stringify(anchor)})`;
 +   const trace={case:item.id,kind:'screenshot',moment,phase:'observing',samples:[]};interactions.push(trace);
++   // Preparation may send bounded wheel input. Its failure must stop all later
++   // interaction, unlike a diagnostic-only screenshot capture/write failure.
++   try{trace.before=await prepareTarget(expression,trace,false);}
++   catch(error){trace.error=String(error);diagnosticErrors.push({case:item.id,moment,stage:'prepare-target',error:String(error)});throw error;}
 +   try{
-+    await ev(`(()=>{const d=${dialog};const e=document.getElementById(${JSON.stringify(anchor)});if(!d||!e||!d.getBoundingClientRect().width)throw new Error('Screenshot form is not open');e.scrollIntoView({block:'center'});})()`);
 +    // A disabled official-name input may be photographed, never interacted with.
-+    trace.before=await waitForStableTarget(expression,trace,false);trace.phase='capture-requested';
++    trace.phase='capture-requested';
 +    const {data}=await cmd('Page.captureScreenshot',{format:'png'});
 +    const bytes=Buffer.from(data,'base64');
 +    assert(bytes.length>0,'Empty screenshot');
@@ -740,27 +743,66 @@
 +   const dialog=d?{...describe(d),style:d.getAttribute('style')||'',rect:rect(d),opacity:ds.opacity,
 +    buttons:[...d.querySelectorAll('button')].map(b=>({text:b.textContent.trim(),disabled:b.disabled})),
 +    checkboxes:[...d.querySelectorAll('input[type="checkbox"]')].map(c=>({checked:c.checked,disabled:c.disabled}))}:null;
++   const w=d?.closest('.ant-modal-wrap'),ws=w?getComputedStyle(w):null;
++   const wr=w?rect(w):null;
++   // This actual modal scrollport, not the locked body, receives normal wheel input.
++   const origin=w?{x:Math.max(8,Math.min(innerWidth-8,wr.x+8)),y:Math.max(8,Math.min(innerHeight-8,(Math.max(0,wr.y)+Math.min(innerHeight,wr.y+wr.height))/2))}:null;
++   const wheelHit=origin?document.elementFromPoint(origin.x,origin.y):null;
++   const scrollport=w?{...describe(w),rect:wr,overflowY:ws.overflowY,scrollTop:w.scrollTop,clientHeight:w.clientHeight,scrollHeight:w.scrollHeight,
++    origin,originHit:describe(wheelHit),originHitsScrollport:wheelHit===w||w.contains(wheelHit)}:null;
 +   // Native checkbox inputs may intentionally have opacity:0. Hit-testing the
 +   // real input is authoritative; only the whole dialog must be fully visible.
-+   const visualReady=e.isConnected&&!hidden&&r.width>0&&r.height>0&&point.x>=0&&point.y>=0&&point.x<innerWidth&&point.y<innerHeight&&hitTarget&&animations.length===0&&Boolean(d&&Number(ds.opacity)>=0.999);
-+   return{ready:visualReady&&!disabled,visualReady,target:describe(e),disabled,rect:r,point,hit:describe(hit),hitTarget,hidden,animations,dialog};
++   const layoutReady=e.isConnected&&!hidden&&r.width>0&&r.height>0&&animations.length===0&&Boolean(d&&Number(ds.opacity)>=0.999);
++   const visualReady=layoutReady&&point.x>=0&&point.y>=0&&point.x<innerWidth&&point.y<innerHeight&&hitTarget;
++   return{ready:visualReady&&!disabled,visualReady,layoutReady,target:describe(e),disabled,rect:r,point,hit:describe(hit),hitTarget,hidden,animations,dialog,scrollport,viewport:{width:innerWidth,height:innerHeight},activeElement:describe(document.activeElement)};
 +  })()`);
-+  const waitForStableTarget=async(expression,trace,interactive=true)=>{
++  const waitForStableTarget=async(expression,trace,interactive=true,layoutOnly=false)=>{
 +   let previous=null,stable=0;
 +   return wait('stable unobstructed '+(interactive?'interaction target':'screenshot form'),async()=>{
 +    const state=await observeTarget(expression);trace.samples.push(state);if(trace.samples.length>4)trace.samples.shift();
-+    const key=interactive?'ready':'visualReady';
++    const key=layoutOnly?'layoutReady':interactive?'ready':'visualReady';
 +    const same=state[key]&&previous?.[key]&&['x','y','width','height'].every(k=>Math.abs(state.rect[k]-previous.rect[k])<0.25&&Math.abs(state.dialog.rect[k]-previous.dialog.rect[k])<0.25);
 +    stable=state[key]?(same?stable+1:1):0;previous=state;return stable>=3?state:false;
 +   });
 +  };
++  const prepareTarget=async(expression,trace,interactive=true)=>{
++   // First let opening motion/focus settle, even if the target is below the viewport.
++   // Never assign scrollTop or call scrollIntoView during entrance animation.
++   let state=await waitForStableTarget(expression,trace,interactive,true);
++   if(interactive)assert.equal(state.disabled,false,'Disabled interaction target');
++   trace.wheels=[];
++   for(let step=0;step<=2;step++){
++    assert(state.point.x>=0&&state.point.x<state.viewport.width,'Target is horizontally outside the viewport');
++    if(state.point.y>=0&&state.point.y<state.viewport.height)return waitForStableTarget(expression,trace,interactive);
++    assert(step<2,'Target remains outside the viewport after two bounded wheel actions');
++    const port=state.scrollport;
++    assert(port&&/^(auto|scroll)$/.test(port.overflowY)&&port.scrollHeight>port.clientHeight,'Target has no scrollable modal wrap');
++    assert(port.originHitsScrollport,'Wheel origin does not hit the actual modal scrollport');
++    const wanted=Math.max(-600,Math.min(600,state.point.y-state.viewport.height/2));
++    const deltaY=wanted>0?Math.min(wanted,port.scrollHeight-port.clientHeight-port.scrollTop):Math.max(wanted,-port.scrollTop);
++    assert(Math.abs(deltaY)>=1,'Modal scrollport has no remaining range toward the target');
++    const wheel={step:step+1,before:state,origin:port.origin,deltaY};trace.wheels.push(wheel);trace.phase='wheel-requested';
++    // Each native wheel plus observed scroll progress has a 3s budget, inside
++    // the unchanged per-case/run deadline. No click is retried or forced.
++    const deadline=Math.min(caseDeadline,runDeadline,Date.now()+3000);
++    const withinWheel=operation=>{assert(Date.now()<deadline,'Wheel deadline exceeded');return bounded(operation(),deadline-Date.now());};
++    await withinWheel(()=>send('Input.dispatchMouseEvent',{type:'mouseMoved',...port.origin}));
++    await withinWheel(()=>send('Input.dispatchMouseEvent',{type:'mouseWheel',...port.origin,deltaX:0,deltaY}));
++    trace.phase='wheel-dispatched';
++    wheel.afterProgress=await wait('native wheel changed modal scrollTop',async()=>{
++     const observed=await withinWheel(()=>observeTarget(expression));
++     const moved=observed.scrollport&&observed.scrollport.scrollTop-port.scrollTop;
++     return typeof moved==='number'&&Math.abs(moved)>0.25&&Math.sign(moved)===Math.sign(deltaY)?observed:false;
++    },deadline-Date.now());
++    state=await waitForStableTarget(expression,trace,interactive,true);wheel.afterSettled=state;trace.phase='observing';
++   }
++  };
 +  const click=async expression=>{
 +   const trace={case:currentCase,kind:'click',expression,phase:'observing',samples:[]};interactions.push(trace);
 +   try{
-+    await ev(`(()=>{const e=${expression};if(!e||e.disabled)throw new Error('Missing/disabled interaction target');e.scrollIntoView({block:'center'});})()`);
-+    // Read-only polling after one scroll. Never click until motion has ended,
-+    // geometry is stable for three samples and the exact target wins hit-testing.
-+    const before=await waitForStableTarget(expression,trace);
++    // Normal bounded wheel input may reveal the target; the original strict
++    // stable geometry, hit-test and disabled gates still precede the only click.
++    const before=await prepareTarget(expression,trace);
 +    trace.before=before;trace.phase='press-requested';
 +    await cmd('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...before.point});
 +    trace.phase='release-requested';
