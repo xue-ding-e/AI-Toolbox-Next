@@ -1831,6 +1831,7 @@ struct TargetStreamState {
     responses_reasoning_started: bool,
     responses_reasoning_done: bool,
     responses_reasoning_output_index: Option<usize>,
+    responses_reasoning_id: Option<String>,
     responses_reasoning_summary_part_started: bool,
     responses_reasoning_summary: String,
     responses_reasoning_encrypted_content: Option<String>,
@@ -2081,10 +2082,10 @@ impl TargetStreamState {
     }
 
     fn responses_reasoning_item_id(&self) -> String {
-        format!(
-            "reasoning_{}",
-            self.responses_reasoning_output_index.unwrap_or_default()
-        )
+        self.responses_reasoning_id
+            .as_ref()
+            .expect("reasoning item id is allocated before emitting its events")
+            .clone()
     }
 
     fn responses_message_item_id(&self) -> String {
@@ -2103,6 +2104,9 @@ impl TargetStreamState {
         }
         let output_index = self.next_responses_output_index();
         self.responses_reasoning_output_index = Some(output_index);
+        // Item identity belongs to this stream, not the output position or a
+        // provider envelope ID, which may be absent or reused across requests.
+        self.responses_reasoning_id = Some(format!("rs_{}", uuid::Uuid::new_v4().simple()));
         self.responses_reasoning_started = true;
         let item_id = self.responses_reasoning_item_id();
         out.push(sse_event(

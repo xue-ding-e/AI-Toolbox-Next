@@ -7706,3 +7706,6 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-5","st
         "a default echo is not a premium confirmation; output={output}"
     );
 }
+
+#[path = "reasoning_item_id_tests.rs"]
+mod reasoning_item_id_tests;
