@@ -198,7 +198,19 @@ impl OpenClawConfigDocument {
 
         for (key, new_section) in new_obj {
             let changed = match old_obj.and_then(|obj| obj.get(key)) {
-                Some(old_section) => old_section != new_section,
+                Some(old_section) => {
+                    // Provider display order is persisted in models.providers. Other
+                    // object key orders (including typed HashMap extras) are not changes.
+                    old_section != new_section
+                        || (key == "models"
+                            && match (
+                                old_section.get("providers").and_then(Value::as_object),
+                                new_section.get("providers").and_then(Value::as_object),
+                            ) {
+                                (Some(old), Some(new)) => !old.keys().eq(new.keys()),
+                                _ => false,
+                            })
+                },
                 None => true,
             };
             if changed {
@@ -822,5 +834,173 @@ mod tests {
         assert!(written.contains("tools"));
         assert!(!written.contains("env"));
         json5::from_str::<Value>(&written).expect("valid after diff");
+    }
+
+    const REORDER_SOURCE: &str = "{\n  // untouched root comment\n  models: { mode: 'merge', providers: { a: { models: [] }, b: { models: [] } } },\n  env: { SYNTHETIC: 'only' },\n}\n";
+
+    fn reordered_value(keys: &[&str]) -> Value {
+        let mut value: Value = json5::from_str(REORDER_SOURCE).unwrap();
+        let mut providers = serde_json::Map::new();
+        for key in keys {
+            providers.insert((*key).to_string(), json!({ "models": [] }));
+        }
+        value["models"]["providers"] = Value::Object(providers);
+        value
+    }
+
+    fn reorder_document(path: &Path, keys: &[&str]) -> OpenClawConfigDocument {
+        let old: Value = json5::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let mut doc = OpenClawConfigDocument::load(path).unwrap();
+        doc.apply_root_section_diff(&old, &reordered_value(keys)).unwrap();
+        doc
+    }
+
+    fn assert_provider_order(source: &str, keys: &[&str]) {
+        let value: Value = json5::from_str(source).unwrap();
+        let actual: Vec<&str> = value["models"]["providers"]
+            .as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(actual, keys);
+        assert_eq!(value["env"]["SYNTHETIC"], "only");
+    }
+
+    #[test]
+    fn provider_reorder_changes_document_despite_value_equality() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        let old: Value = json5::from_str(REORDER_SOURCE).unwrap();
+        assert_eq!(old, reordered_value(&["b", "a"]));
+        let doc = reorder_document(&path, &["b", "a"]);
+        assert_provider_order(&doc.text.to_string(), &["b", "a"]);
+    }
+
+    #[test]
+    fn provider_reorder_saves_reloads_and_backs_up_original_bytes() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        let outcome = reorder_document(&path, &["b", "a"])
+            .save(&dir.path().join("backups"), 5).unwrap();
+        assert_eq!(fs::read(outcome.backup_path.unwrap()).unwrap(), REORDER_SOURCE.as_bytes());
+        let loaded = OpenClawConfigDocument::load(&path).unwrap();
+        assert_provider_order(loaded.original_source.as_deref().unwrap(), &["b", "a"]);
+        assert!(loaded.original_source.unwrap().contains("// untouched root comment"));
+    }
+
+    #[test]
+    fn provider_reorder_repeated_order_skips_write_and_backup() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        let backups = dir.path().join("backups");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        reorder_document(&path, &["b", "a"]).save(&backups, 5).unwrap();
+        let before = fs::read(&path).unwrap();
+        let count = fs::read_dir(&backups).unwrap().count();
+        let result = reorder_document(&path, &["b", "a"]).save(&backups, 5).unwrap();
+        assert!(result.backup_path.is_none());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read_dir(&backups).unwrap().count(), count);
+        assert_provider_order(std::str::from_utf8(&before).unwrap(), &["b", "a"]);
+    }
+
+    #[test]
+    fn provider_reorder_can_move_back_and_reload() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        let backups = dir.path().join("backups");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        reorder_document(&path, &["b", "a"]).save(&backups, 5).unwrap();
+        assert_provider_order(&fs::read_to_string(&path).unwrap(), &["b", "a"]);
+        reorder_document(&path, &["a", "b"]).save(&backups, 5).unwrap();
+        let loaded = OpenClawConfigDocument::load(&path).unwrap();
+        assert_provider_order(loaded.original_source.as_deref().unwrap(), &["a", "b"]);
+    }
+
+    #[test]
+    fn provider_reorder_conflict_keeps_external_bytes() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        let backups = dir.path().join("backups");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        let doc = reorder_document(&path, &["b", "a"]);
+        let external = "{ changedExternally: true }\n";
+        fs::write(&path, external).unwrap();
+        assert!(doc.save(&backups, 5).unwrap_err().contains("changed on disk"));
+        assert_eq!(fs::read(&path).unwrap(), external.as_bytes());
+        assert!(!backups.exists());
+    }
+
+    #[test]
+    fn provider_reorder_backup_failure_keeps_original_bytes() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        let backups = dir.path().join("backups");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        fs::write(&backups, "synthetic blocking file").unwrap();
+        let err = reorder_document(&path, &["b", "a"]).save(&backups, 5).unwrap_err();
+        assert!(err.contains("Failed to create backup dir"));
+        assert_eq!(fs::read(&path).unwrap(), REORDER_SOURCE.as_bytes());
+        assert_eq!(fs::read_to_string(&backups).unwrap(), "synthetic blocking file");
+    }
+
+    #[test]
+    fn provider_reorder_ignores_non_provider_object_key_order() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        let backups = dir.path().join("backups");
+        let source = "{ models: { mode: 'merge', providers: { a: { headers: { X: 'x', Y: 'y' }, models: [] }, b: { models: [] } } }, env: { vars: { A: 'a', B: 'b' } } }\n";
+        fs::write(&path, source).unwrap();
+        let old: Value = json5::from_str(source).unwrap();
+        let new: Value = serde_json::from_str(r#"{"env":{"vars":{"B":"b","A":"a"}},"models":{"providers":{"a":{"models":[],"headers":{"Y":"y","X":"x"}},"b":{"models":[]}},"mode":"merge"}}"#).unwrap();
+        assert_eq!(old, new);
+        assert_ne!(serde_json::to_string(&old).unwrap(), serde_json::to_string(&new).unwrap());
+        let mut doc = OpenClawConfigDocument::load(&path).unwrap();
+        doc.apply_root_section_diff(&old, &new).unwrap();
+        let result = doc.save(&backups, 5).unwrap();
+        assert!(result.backup_path.is_none());
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+        assert!(!backups.exists());
+    }
+
+    #[test]
+    fn provider_reorder_still_persists_semantic_non_models_changes() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        let old: Value = json5::from_str(REORDER_SOURCE).unwrap();
+        let mut new = old.clone();
+        new["env"]["SYNTHETIC"] = json!("changed");
+        let mut doc = OpenClawConfigDocument::load(&path).unwrap();
+        doc.apply_root_section_diff(&old, &new).unwrap();
+        assert!(doc.save(&dir.path().join("backups"), 5).unwrap().backup_path.is_some());
+        let loaded: Value = json5::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(loaded["env"]["SYNTHETIC"], "changed");
+        assert_eq!(loaded["models"], old["models"]);
+    }
+
+    #[test]
+    fn provider_reorder_still_persists_nested_provider_changes() {
+        let _guard = test_guard();
+        let dir = temp_dir();
+        let path = dir.path().join("openclaw.json");
+        fs::write(&path, REORDER_SOURCE).unwrap();
+        let old: Value = json5::from_str(REORDER_SOURCE).unwrap();
+        let mut new = old.clone();
+        new["models"]["providers"]["a"]["models"] = json!([{ "id": "synthetic-model" }]);
+        let mut doc = OpenClawConfigDocument::load(&path).unwrap();
+        doc.apply_root_section_diff(&old, &new).unwrap();
+        assert!(doc.save(&dir.path().join("backups"), 5).unwrap().backup_path.is_some());
+        let written = fs::read_to_string(&path).unwrap();
+        assert_provider_order(&written, &["a", "b"]);
+        let loaded: Value = json5::from_str(&written).unwrap();
+        assert_eq!(loaded["models"]["providers"]["a"]["models"][0]["id"], "synthetic-model");
     }
 }
