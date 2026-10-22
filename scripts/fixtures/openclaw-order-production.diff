@@ -1,0 +1,23 @@
+--- a/tauri/src/coding/open_claw/roundtrip.rs
++++ b/tauri/src/coding/open_claw/roundtrip.rs
+@@ -198,7 +198,19 @@
+ 
+         for (key, new_section) in new_obj {
+             let changed = match old_obj.and_then(|obj| obj.get(key)) {
+-                Some(old_section) => old_section != new_section,
++                Some(old_section) => {
++                    // Provider display order is persisted in models.providers. Other
++                    // object key orders (including typed HashMap extras) are not changes.
++                    old_section != new_section
++                        || (key == "models"
++                            && match (
++                                old_section.get("providers").and_then(Value::as_object),
++                                new_section.get("providers").and_then(Value::as_object),
++                            ) {
++                                (Some(old), Some(new)) => !old.keys().eq(new.keys()),
++                                _ => false,
++                            })
++                },
+                 None => true,
+             };
+             if changed {
