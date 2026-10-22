@@ -36,7 +36,7 @@ jobs:
         working-directory: validation
         run: |
           set -euo pipefail
-          echo '9c25e7580dbd34dbfa87b7c46fbc3e47f40a18f8cee87f5db7a8878bf923ec8c  payload.sha256' | sha256sum -c -
+          echo 'e40a7c91bb8572d2ada335babb6cb8019ca9028d16e944d627552ecefa8aabf0  payload.sha256' | sha256sum -c -
           sha256sum -c payload.sha256
           cp payload.sha256 "$RUNNER_TEMP/magpie-evidence/"
           sha256sum .github/workflows/maintenance-validation.yml > "$RUNNER_TEMP/magpie-evidence/workflow.sha256"

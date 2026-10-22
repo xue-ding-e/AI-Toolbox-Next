@@ -31,10 +31,20 @@ prepare)
     command -v go > "$out/go-path.txt"
     command -v gofmt > "$out/gofmt-path.txt"
     python3 --version > "$out/python-version.txt"
+    # Open outside the status-1 exception: log-open failures must remain fatal.
+    exec {gofmt_diff_fd}>> "$out/gofmt.diff"
     for source in capsule.go capsule_test.go; do
         gofmt "$work/go/$source" > "$out/formatted/$source"
-        gofmt -d "$work/go/$source" >> "$out/gofmt.diff"
+        # Go 1.27 reports formatting-only differences with status 1; parser or
+        # other formatter errors use 2. Formatting is evidence, not a test gate.
+        if gofmt -d "$work/go/$source" >&"$gofmt_diff_fd"; then
+            :
+        else
+            format_status=$?
+            test "$format_status" -eq 1
+        fi
     done
+    exec {gofmt_diff_fd}>&-
     # Evidence only: no gofmt -w and no replacement of frozen input bytes.
     sha256sum "$work/go/capsule.go" "$work/go/capsule_test.go" "$work/go/corpus_test.go" \
         "$work/oracle/Cargo.toml" "$work/oracle/src/main.rs" > "$out/tested-source.sha256"
