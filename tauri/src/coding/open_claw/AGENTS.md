@@ -38,6 +38,8 @@ sequenceDiagram
 - 页面保存时修改的是整份配置对象；改某个子 section 时要小心不要把其它 section 顺手丢掉。
 - `openclaw-config-changed` 是专有事件，做跨模块抽象时不要误以为它会自动被通用 `config-changed` 监听逻辑覆盖。
 
+- `models.providers` 的对象键顺序就是自定义排序模式下的页面 provider 顺序；`serde_json::Value` 的相等比较忽略对象键序，因此 roundtrip 差异检测须额外比较该目录的键序。仅对此目录增加顺序敏感性，其他对象沿用语义比较，避免 `HashMap` 无语义重排导致额外重写和备份。相关回归在合成临时文件中检查保存重载、重复 no-op、回拖、外部冲突与备份失败保留原字节；不替代原生页面与同步事件验收。
+
 ## 跨模块依赖
 
 - 依赖 `runtime_location`：提供 WSL 目标路径和 WSL Direct 统一诊断。
