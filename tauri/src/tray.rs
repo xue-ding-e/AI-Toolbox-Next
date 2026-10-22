@@ -35,6 +35,7 @@ use crate::coding::pi::tray_support as pi_tray;
 use crate::coding::skills::tray_support as skills_tray;
 use crate::coding::zcode::tray_support as zcode_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
@@ -216,6 +217,11 @@ fn tray_texts(language: &str) -> TrayTexts {
 static TRAY_REFRESHING: AtomicBool = AtomicBool::new(false);
 /// Signals that another refresh was requested during the current one
 static TRAY_REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
+/// Text of the usage line currently attached to the tray menu. The periodic
+/// refresh only rebuilds the whole menu when this changes: rebuilding is what
+/// replaces the native popup menu (and its click subclass) on Windows, so doing
+/// it unconditionally every minute races clicks on "Quit".
+static LAST_USAGE_TEXT: Mutex<Option<String>> = Mutex::new(None);
 const TRAY_SHOW_MENU_ID: &str = "show";
 const TRAY_QUIT_MENU_ID: &str = "app_quit";
 const TRAY_LIGHTWEIGHT_MENU_ID: &str = "lightweight_mode";
@@ -226,9 +232,47 @@ const GATEWAY_STATISTICS_OPEN_EVENT: &str = "gateway-open-statistics";
 /// listener is mounted (same cold-start race as deep-link import).
 static PENDING_GATEWAY_STATISTICS_NAVIGATION: AtomicBool = AtomicBool::new(false);
 
+/// How long the event loop gets to act on `app.exit` before the watchdog
+/// concludes it was dropped.
+const EXIT_WATCHDOG_GRACE: std::time::Duration = std::time::Duration::from_millis(2000);
+/// Set on every quit request and cleared once the event loop commits to
+/// exiting. Still set after the grace period means nothing ever acted on the
+/// request.
+static PENDING_EXIT_REQUEST: AtomicBool = AtomicBool::new(false);
+
+/// Mark the exit as serviced. Called from the run loop once the event loop
+/// commits to exiting, so the watchdog stands down instead of truncating a
+/// shutdown that is merely slow.
+pub(crate) fn note_exit_committed() {
+    PENDING_EXIT_REQUEST.store(false, Ordering::SeqCst);
+}
+
 fn request_app_exit<R: Runtime>(app: &AppHandle<R>) {
     crate::APP_EXIT_REQUESTED.store(true, Ordering::SeqCst);
+    PENDING_EXIT_REQUEST.store(true, Ordering::SeqCst);
     app.exit(0);
+
+    // `app.exit` only asks the event loop to exit; a menu swap or a blocked
+    // main-thread task can leave that request unserviced, which reads to the
+    // user as "Quit does nothing". Only force the process down when the exit
+    // was never picked up — a shutdown that did start is left to finish.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(EXIT_WATCHDOG_GRACE).await;
+        if !exit_watchdog_due(PENDING_EXIT_REQUEST.load(Ordering::SeqCst)) {
+            return;
+        }
+        log::warn!("Exit request was never serviced; forcing process exit");
+        app.cleanup_before_exit();
+        std::process::exit(0);
+    });
+}
+
+/// Whether the watchdog should take over: the request is still unserviced.
+///
+/// Kept as a pure function so the rule is testable without a live app.
+fn exit_watchdog_due(request_still_pending: bool) -> bool {
+    request_still_pending
 }
 
 /// Bring the main window forward, rebuilding it first when lightweight mode
@@ -810,6 +854,86 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// Refresh the tray menu only when the usage line actually changed.
+///
+/// This is the periodic path: it exists solely to keep the usage number
+/// current, and rebuilding the whole native menu is what makes Windows swap
+/// the popup menu (and its click subclass) out from under the user. Every
+/// other reason to refresh goes through [`refresh_tray_menus`] directly.
+pub async fn refresh_tray_usage_if_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let Ok(settings) = crate::settings::commands::get_settings(app.state()).await else {
+        return Ok(());
+    };
+    let language = effective_language(&settings.language);
+    let Some(text) = load_usage_text(app, language).await else {
+        return Ok(());
+    };
+
+    if usage_text_is_unchanged(&text) {
+        return Ok(());
+    }
+
+    if tray_menu_is_open(app).await {
+        // Rebuilding now would pull the native popup menu out from under the
+        // click. Leave the old text in place; the next tick retries.
+        return Ok(());
+    }
+
+    refresh_tray_menus(app).await
+}
+
+/// Whether `text` matches the usage line last written to the menu.
+fn usage_text_is_unchanged(text: &str) -> bool {
+    LAST_USAGE_TEXT
+        .lock()
+        .map(|last| last.as_deref() == Some(text))
+        .unwrap_or(false)
+}
+
+/// Whether the tray popup menu is currently open, so a rebuild would race the
+/// user's click. Windows reports this through the GUI thread state; other
+/// platforms have no equivalent cheap probe and always answer `false`.
+#[cfg(windows)]
+async fn tray_menu_is_open<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let Some(tray) = app.try_state::<tauri::tray::TrayIcon>() else {
+        return false;
+    };
+    // `HWND` is `!Send`, so resolve it and query the thread state inside the
+    // same main-thread closure and only ship the `bool` back.
+    let Ok(is_open) = tray.with_inner_tray_icon(|inner| {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO, GUI_POPUPMENUMODE,
+        };
+
+        let hwnd = inner.window_handle();
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: `hwnd` belongs to the live tray icon and stays valid for the
+        // duration of the call; `info` is a correctly sized output struct.
+        let result = unsafe {
+            GetGUIThreadInfo(
+                GetWindowThreadProcessId(hwnd, std::ptr::null_mut()),
+                &mut info,
+            )
+        };
+        // `GUI_POPUPMENUMODE` is the flag a `TrackPopupMenu` loop sets; the
+        // tray menu here is a popup, not a window menu bar
+        // (`GUI_INMENUMODE` alone would miss it).
+        result != 0 && info.flags & GUI_POPUPMENUMODE != 0
+    }) else {
+        return false;
+    };
+
+    is_open
+}
+
+#[cfg(not(windows))]
+async fn tray_menu_is_open<R: Runtime>(_app: &AppHandle<R>) -> bool {
+    false
+}
+
 /// Refresh tray menus with deduplication (coalescing pattern)
 pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     // If already refreshing, mark pending and return
@@ -875,7 +999,20 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     // Built first: it awaits the database, and every menu handle created below
     // is `!Send`. Holding one across this await would make the whole menu
     // future `!Send` and break every `spawn(refresh_tray_menus)` caller.
-    let usage_item = build_usage_item(app, language).await?;
+    let usage_text = load_usage_text(app, language).await;
+    let usage_item = match usage_text.as_deref() {
+        Some(text) => Some(
+            MenuItem::with_id(
+                app,
+                crate::tray_usage::TRAY_GATEWAY_USAGE_MENU_ID,
+                text,
+                true,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        ),
+        None => None,
+    };
 
     // Check if modules are enabled
     let opencode_enabled =
@@ -2261,18 +2398,22 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let tray = app.state::<tauri::tray::TrayIcon>();
     tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
 
+    // Remember what the periodic refresh last wrote so it can skip no-op
+    // rebuilds. Recorded after `set_menu` succeeds: on failure the next tick
+    // must still see a difference and retry.
+    if let Ok(mut last) = LAST_USAGE_TEXT.lock() {
+        *last = usage_text;
+    }
+
     Ok(())
 }
 
-/// Build the "current usage" menu line: the statistics page's selected range,
-/// all CLIs combined, rendered as `{title}  {tokens} ({cost})`.
+/// Render the "current usage" menu line: the statistics page's selected range,
+/// all CLIs combined, as `{title}  {tokens} ({cost})`.
 ///
 /// Returns `None` when the range or the summary cannot be read — a failed read
 /// must not render as "0M", which would read as a real zero-usage day.
-async fn build_usage_item<R: Runtime>(
-    app: &AppHandle<R>,
-    language: &str,
-) -> Result<Option<MenuItem<R>>, String> {
+async fn load_usage_text<R: Runtime>(app: &AppHandle<R>, language: &str) -> Option<String> {
     let sqlite_state = (*app.state::<crate::SqliteDbState>()).clone();
     let texts = crate::tray_usage::usage_texts(language);
     let loaded = tauri::async_runtime::spawn_blocking(move || {
@@ -2292,32 +2433,26 @@ async fn build_usage_item<R: Runtime>(
         )?;
         Ok::<_, String>((settings.gateway_usage_range, summary, start_date, end_date))
     })
-    .await
-    .map_err(|error| format!("Failed to build tray usage item: {error}"))?;
+    .await;
     let (selection, summary, start_date, end_date) = match loaded {
-        Ok(value) => value,
-        Err(error) => {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => {
             log::warn!("Failed to load tray usage summary: {error}");
-            return Ok(None);
+            return None;
+        }
+        Err(error) => {
+            log::warn!("Failed to build tray usage item: {error}");
+            return None;
         }
     };
-    let text = crate::tray_usage::format_usage_menu_text(
+    Some(crate::tray_usage::format_usage_menu_text(
         texts,
         &selection,
         summary.total_tokens,
         &summary.total_cost_usd,
         start_date,
         end_date,
-    );
-    MenuItem::with_id(
-        app,
-        crate::tray_usage::TRAY_GATEWAY_USAGE_MENU_ID,
-        text,
-        true,
-        None::<&str>,
-    )
-    .map(Some)
-    .map_err(|e| e.to_string())
+    ))
 }
 
 /// Build a model selection submenu from tray data
@@ -4034,6 +4169,36 @@ fn build_openclaw_model_submenu<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_watchdog_only_fires_for_an_unserviced_request() {
+        // The event loop picked the request up (even if shutdown is slow): the
+        // watchdog must not truncate it.
+        assert!(!exit_watchdog_due(false));
+        // Nothing ever acted on the request: force the process down.
+        assert!(exit_watchdog_due(true));
+    }
+
+    #[test]
+    fn exit_commit_clears_the_pending_request() {
+        PENDING_EXIT_REQUEST.store(true, Ordering::SeqCst);
+        note_exit_committed();
+        assert!(!PENDING_EXIT_REQUEST.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn usage_text_is_only_unchanged_after_a_matching_write() {
+        // The periodic refresh keys off this: a missing cache, or a different
+        // number, must still rebuild the menu.
+        *LAST_USAGE_TEXT.lock().unwrap() = None;
+        assert!(!usage_text_is_unchanged("今日  1.2M ($0.34)"));
+
+        *LAST_USAGE_TEXT.lock().unwrap() = Some("今日  1.2M ($0.34)".to_string());
+        assert!(usage_text_is_unchanged("今日  1.2M ($0.34)"));
+        assert!(!usage_text_is_unchanged("今日  1.5M ($0.41)"));
+
+        *LAST_USAGE_TEXT.lock().unwrap() = None;
+    }
 
     #[test]
     fn normalize_language_folds_chinese_tags_to_zh_cn_and_the_rest_to_en_us() {
