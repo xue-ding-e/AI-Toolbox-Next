@@ -762,6 +762,33 @@ function FixtureHost() {
             viewMode="list"
           />
         </div>
+        {/* Selection mode: an eligible row gets a live checkbox, an ineligible
+            one a disabled checkbox that explains itself on hover. */}
+        <div data-fixture="hermes-selection-list">
+          <HermesProviderCard
+            {...hermesProps}
+            provider={hermesProvider}
+            defaultModelId="claude-opus-4-8"
+            viewMode="list"
+            selectable
+          />
+        </div>
+        <div data-fixture="hermes-selection-disabled-list">
+          <HermesProviderCard
+            {...hermesProps}
+            provider={hermesProvider}
+            defaultModelId="claude-opus-4-8"
+            viewMode="list"
+            selectDisabledReason="该渠道已设为默认，不可多选"
+          />
+        </div>
+        <div data-fixture="hermes-readonly-selection-list">
+          <HermesProviderCard
+            provider={hermesReadOnlyProvider}
+            viewMode="list"
+            selectDisabledReason="引擎内置渠道，不可编辑"
+          />
+        </div>
 
         </div>
         </>}

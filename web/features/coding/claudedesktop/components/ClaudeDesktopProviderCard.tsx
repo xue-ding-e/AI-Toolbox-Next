@@ -92,6 +92,8 @@ interface ClaudeDesktopProviderCardProps {
   selectable?: boolean;
   selected?: boolean;
   onSelectChange?: (checked: boolean) => void;
+  /** Why this row cannot be picked in selection mode (disabled checkbox tooltip). */
+  selectDisabledReason?: string;
 }
 
 /**
@@ -125,6 +127,7 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
   selectable = false,
   selected = false,
   onSelectChange,
+  selectDisabledReason,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -562,6 +565,7 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
       selectable,
       selected,
       onSelectChange,
+      selectDisabledReason,
       dimmed: provider.isDisabled,
       accent: isGatewayPrimary
         ? 'gatewayPrimary'
