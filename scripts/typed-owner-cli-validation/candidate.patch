@@ -1,0 +1,1898 @@
+diff --git a/crates/ai-toolbox-automation/AGENTS.md b/crates/ai-toolbox-automation/AGENTS.md
+index 83e770134ab1fa026b25eff7122f3a51e9db3c9c..763606738adc8fc946233e04d4bf153eac832383 100644
+--- a/crates/ai-toolbox-automation/AGENTS.md
++++ b/crates/ai-toolbox-automation/AGENTS.md
+@@ -2,22 +2,26 @@
+ 
+ ## Source of Truth
+ 
+-The closed `Operation` enum and `execute` in `src/lib.rs` define the supported contract. `src/cli.rs` only parses arguments. This crate is deliberately independent of Tauri and has no dependencies, build scripts, state bootstrap, network, or GUI initialization. Keep the Windows console subsystem in release builds.
++The closed `Command`/`Operation` enums and `execute` in `src/lib.rs` define the supported contract. `src/cli.rs` parses arguments and dispatches only after complete validation. This crate is deliberately independent of Tauri and has no build scripts, state bootstrap, or GUI initialization. Linux owner inspection reuses the management client, linking its storage dependencies without calling any storage initializer. Keep the Windows console subsystem in release builds.
+ 
+ ## Why and boundaries
+ 
+-This is an issue #41 console foundation, not P0 or business coverage. `codex status` is a reserved typed operation returning `NOT_SUPPORTED`; it must not be counted as an implemented business operation. Capabilities explicitly reports no business coverage and no MCP support. There is no daemon, owner locking, profile/path resolution, Codex configuration workflow, or desktop adapter yet.
++This is an issue #41 console foundation, not P0 or business coverage. `codex status` is a reserved typed operation returning `NOT_SUPPORTED`; it must not be counted as an implemented business operation. Capabilities explicitly reports no business coverage and no MCP support. `daemon status` requires explicit absolute existing profile and private endpoint directories and is Linux-only. It uses `ProfileIdentity::existing`, `RuntimeDirectory::existing`, and the normal `OwnerClient` handshake; it never creates a path/lease, opens a DB, acquires ownership, starts a daemon/GUI, or falls back to standalone storage. Only the held profile lease is reported, not database readiness or complete writer admission. There is no Codex configuration workflow or desktop adapter yet.
+ 
+ Future business implementations must extract and reuse existing service semantics, including path resolution and merge/application behavior. Do not add a second configuration merger, direct SQL bypass, arbitrary string invoke endpoint, or mocked `AppHandle` as a production headless adapter.
+ 
+ ## Wire and process boundaries
+ 
+-Schema version 1 is separate from the automation package and desktop versions. Breaking wire changes require a new schema version. `request_id` is explicitly null: the foundation has no request correlation, persistence, idempotency, or job semantics. Do not describe it as providing those guarantees.
++Schema version 1 is separate from the automation package and desktop versions. Breaking wire changes require a new schema version. Envelope `request_id` is explicitly null: there is no persistent request identity, idempotency, or job semantics. The owner wire uses a nonzero identifier only within its single-request connection; reusing it on another connection has no replay or deduplication guarantee.
+ 
+ Result success determines both `ok` and exit status. JSON mode writes exactly one result to stdout, including errors; text errors use stderr. Parse diagnostics never echo raw arguments. The output-only JSON string encoder must escape every control character, quote and backslash while preserving Unicode. No input JSON parser is provided.
+ 
++Keep existing default text output and `--format text|json` behavior. Discovery, invalid inputs, duplicate options and relative owner paths finish without filesystem inspection. Owner failures map to static diagnostics, never raw paths, tokens, protocol payloads, or operating-system error strings. The synchronous console owns an I/O-and-time-enabled runtime only for owner-status dispatch; do not call this adapter inside an async GUI chain.
++
+ ## Minimum validation
+ 
+ Run `cargo test --offline --manifest-path crates/ai-toolbox-automation/Cargo.toml --jobs 1` from repository root, with an isolated target directory. Integration tests launch the real binary with a cleared environment, no display variables, isolated empty HOME and non-existent data/cache/tool paths. Each child has a five-second observation deadline, with kill/reap on timeout or observation failure. This harness is limited to the foundation’s short output and absence of descendants: it is not a general process-tree watchdog, and draining inherited pipes after exit is not independently bounded. Fixture cleanup removes only empty directories, retaining unexpected state for diagnosis.
+ 
+ Linux process tests do not establish Windows console behavior, macOS behavior, installed artifact distribution, GUI coexistence, filesystem-read isolation at the OS boundary, or network syscall tracing. Those remain separate acceptance work.
++
++`tests/owner_console.rs` is the Linux actual-console-to-actual-OwnerServer slice. It uses only synthetic 0700 temporary roots on a filesystem admitted by management; an unsuitable TMPDIR must fail rather than silently select a real profile. Its regular-file child output avoids inherited-pipe drains; every child has a deadline and bounded kill/reap cleanup. The DB inotify watch observes only the fixture DB, not arbitrary filesystem reads. Missing paths, rejected protocol/profile identity, unavailable owners, existing lease identity, discovery and parse errors must remain fail-closed. Do not enable business writes based on these read-only checks.
+diff --git a/crates/ai-toolbox-automation/Cargo.toml b/crates/ai-toolbox-automation/Cargo.toml
+index 493092b5ee35e77b7327b1341f7c76c2271bceb1..99f9303b65cb06c80a45e2e39342849d7c3c1221 100644
+--- a/crates/ai-toolbox-automation/Cargo.toml
++++ b/crates/ai-toolbox-automation/Cargo.toml
+@@ -13,5 +13,17 @@ name = "ai_toolbox_automation"
+ name = "ai-toolbox-cli"
+ path = "src/main.rs"
+ 
+-# Intentionally independent of the desktop graph: discovery must not initialize Tauri.
++# The client is Linux-only and independent of the desktop graph. Linking shared
++# management/storage does not authorize database or owner initialization.
++[target.'cfg(target_os = "linux")'.dependencies]
++ai-toolbox-management = { path = "../ai-toolbox-management" }
++tokio = { version = "=1.49.0", default-features = false, features = ["io-util", "net", "rt", "sync", "time"] }
++
++[dev-dependencies]
++serde_json = "=1.0.149"
++
++[target.'cfg(target_os = "linux")'.dev-dependencies]
++libc = "=0.2.180"
++
++# Discovery must not initialize Tauri or any application state.
+ [workspace]
+diff --git a/crates/ai-toolbox-automation/src/cli.rs b/crates/ai-toolbox-automation/src/cli.rs
+index b2e17522f82dda73e0821a57d47f3dd26e1d0cba..5c11f50947350ae203daae8b11a999eac34f019d 100644
+--- a/crates/ai-toolbox-automation/src/cli.rs
++++ b/crates/ai-toolbox-automation/src/cli.rs
+@@ -1,6 +1,7 @@
+ //! Pure argument adapter. Even parsing failures do not initialize application state.
+-use crate::{execute, Envelope, Operation, OperationError};
++use crate::{execute, Command, Envelope, OperationError, OwnerStatusInput};
+ use std::ffi::OsString;
++use std::path::PathBuf;
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Format {
+@@ -34,6 +35,8 @@ pub fn run(args: &[OsString]) -> Response {
+             .ok_or_else(OperationError::invalid_input)?;
+         let mut command = Vec::new();
+         let mut format_seen = false;
++        let mut profile = None;
++        let mut endpoint_dir = None;
+         let mut index = 0;
+         while index < args.len() {
+             if args[index] == "--format" {
+@@ -47,16 +50,36 @@ pub fn run(args: &[OsString]) -> Response {
+                     Some(&"json") => Format::Json,
+                     _ => return Err(OperationError::invalid_input()),
+                 };
++            } else if matches!(args[index], "--profile" | "--endpoint-dir") {
++                let destination = if args[index] == "--profile" {
++                    &mut profile
++                } else {
++                    &mut endpoint_dir
++                };
++                if destination.is_some() {
++                    return Err(OperationError::invalid_input());
++                }
++                index += 1;
++                *destination = Some(PathBuf::from(
++                    *args.get(index).ok_or_else(OperationError::invalid_input)?,
++                ));
+             } else {
+                 command.push(args[index]);
+             }
+             index += 1;
+         }
++        // Parsing and absolute-path checks finish before any directory inspection.
++        // Discovery does not accept or inspect owner paths, even when supplied.
++        let no_owner_paths = profile.is_none() && endpoint_dir.is_none();
+         match command.as_slice() {
+-            ["--help" | "-h"] => Ok(Operation::Help),
+-            ["--version" | "-V"] => Ok(Operation::Version),
+-            ["capabilities"] => Ok(Operation::Capabilities),
+-            ["codex", "status"] => Ok(Operation::CodexStatus),
++            ["--help" | "-h"] if no_owner_paths => Ok(Command::Help),
++            ["--version" | "-V"] if no_owner_paths => Ok(Command::Version),
++            ["capabilities"] if no_owner_paths => Ok(Command::Capabilities),
++            ["codex", "status"] if no_owner_paths => Ok(Command::CodexStatus),
++            ["daemon", "status"] => OwnerStatusInput::new(
++                profile.ok_or_else(OperationError::invalid_input)?,
++                endpoint_dir.ok_or_else(OperationError::invalid_input)?,
++            ).map(Command::DaemonStatus),
+             _ => Err(OperationError::invalid_input()),
+         }
+     })();
+diff --git a/crates/ai-toolbox-automation/src/lib.rs b/crates/ai-toolbox-automation/src/lib.rs
+index e096d50ef68b822a42b2f11f0eeff00c9dcb5a91..eecd60c8042451cea6658b331cf317c156170681 100644
+--- a/crates/ai-toolbox-automation/src/lib.rs
++++ b/crates/ai-toolbox-automation/src/lib.rs
+@@ -2,9 +2,12 @@
+ //!
+ //! Schema version 1 is independent of desktop/package versions. Breaking wire
+ //! changes require a new schema version; consumers must reject unknown versions.
+-//! No paths, credentials, database, GUI, network, or service owner are initialized.
++//! Discovery never resolves paths or initializes application state. The explicit
++//! Linux owner-status client only inspects existing paths and connects to an owner;
++//! it never creates paths/leases, opens a database, or starts a GUI/service owner.
+ 
+ use std::fmt::Write;
++use std::path::PathBuf;
+ 
+ pub mod cli;
+ 
+@@ -17,9 +20,15 @@ Commands:\n\
+   --version, -V    Show automation package version\n\
+   capabilities    Discover this foundation's static contract\n\
+   codex status    Reserved typed operation; returns NOT_SUPPORTED\n\
+-Exit codes: 0 success, 2 INVALID_INPUT, 3 NOT_SUPPORTED, 74 output I/O failure.\n\
++  daemon status --profile <absolute-dir> --endpoint-dir <absolute-private-dir>\n\
++                  Linux only; partial, lease-only owner status\n\
++Exit codes: 0 success, 2 INVALID_INPUT, 3 NOT_SUPPORTED, 4 invalid owner paths,\n\
++5 OWNER_UNAVAILABLE, 6 owner protocol/identity rejection, 7 OWNER_TIMEOUT,\n\
++70 owner client failure, 74 output I/O failure.\n\
+ JSON results go to stdout, including errors; text errors go to stderr.\n\
+-No business services, profiles, daemon, MCP server, or P0 workflow are implemented.\n";
++Status does not prove DB readiness or complete writer admission. No daemon is started.\n\
++PID, start time, and full daemon lifecycle status are not implemented.\n\
++No business services, MCP server, or P0 workflow are implemented.\n";
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Operation {
+@@ -27,14 +36,16 @@ pub enum Operation {
+     Version,
+     Capabilities,
+     CodexStatus,
++    DaemonStatus,
+ }
+ 
+ impl Operation {
+-    pub const ALL: [Self; 4] = [
++    pub const ALL: [Self; 5] = [
+         Self::Help,
+         Self::Version,
+         Self::Capabilities,
+         Self::CodexStatus,
++        Self::DaemonStatus,
+     ];
+ 
+     pub fn id(self) -> &'static str {
+@@ -43,6 +54,7 @@ impl Operation {
+             Self::Version => "automation.version",
+             Self::Capabilities => "automation.capabilities",
+             Self::CodexStatus => "codex.status",
++            Self::DaemonStatus => "daemon.status",
+         }
+     }
+ 
+@@ -52,11 +64,54 @@ impl Operation {
+             Self::Version => "--version",
+             Self::Capabilities => "capabilities",
+             Self::CodexStatus => "codex status",
++            Self::DaemonStatus => "daemon status",
+         }
+     }
+ 
+     pub fn supported(self) -> bool {
+-        self != Self::CodexStatus
++        match self {
++            Self::CodexStatus => false,
++            Self::DaemonStatus => cfg!(target_os = "linux"),
++            _ => true,
++        }
++    }
++}
++
++/// Closed command input. Paths cannot be constructed without pure validation.
++/// There are no environment defaults, arbitrary invokes, or business-write DTOs.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum Command {
++    Help,
++    Version,
++    Capabilities,
++    CodexStatus,
++    DaemonStatus(OwnerStatusInput),
++}
++
++impl Command {
++    fn operation(&self) -> Operation {
++        match self {
++            Self::Help => Operation::Help,
++            Self::Version => Operation::Version,
++            Self::Capabilities => Operation::Capabilities,
++            Self::CodexStatus => Operation::CodexStatus,
++            Self::DaemonStatus(_) => Operation::DaemonStatus,
++        }
++    }
++}
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct OwnerStatusInput {
++    profile: PathBuf,
++    endpoint_dir: PathBuf,
++}
++
++impl OwnerStatusInput {
++    pub fn new(profile: PathBuf, endpoint_dir: PathBuf) -> Result<Self, OperationError> {
++        if !profile.is_absolute() || !endpoint_dir.is_absolute() {
++            return Err(OperationError::invalid_input());
++        }
++        Ok(Self { profile, endpoint_dir })
+     }
+ }
+ 
+@@ -64,6 +119,13 @@ impl Operation {
+ pub enum ErrorCode {
+     InvalidInput,
+     NotSupported,
++    InvalidProfile,
++    InvalidEndpoint,
++    OwnerUnavailable,
++    OwnerProtocolRejected,
++    OwnerIdentityRejected,
++    OwnerTimeout,
++    OwnerClientFailed,
+ }
+ 
+ impl ErrorCode {
+@@ -71,6 +133,13 @@ impl ErrorCode {
+         match self {
+             Self::InvalidInput => "INVALID_INPUT",
+             Self::NotSupported => "NOT_SUPPORTED",
++            Self::InvalidProfile => "INVALID_PROFILE",
++            Self::InvalidEndpoint => "INVALID_ENDPOINT",
++            Self::OwnerUnavailable => "OWNER_UNAVAILABLE",
++            Self::OwnerProtocolRejected => "OWNER_PROTOCOL_REJECTED",
++            Self::OwnerIdentityRejected => "OWNER_IDENTITY_REJECTED",
++            Self::OwnerTimeout => "OWNER_TIMEOUT",
++            Self::OwnerClientFailed => "OWNER_CLIENT_FAILED",
+         }
+     }
+ 
+@@ -78,6 +147,11 @@ impl ErrorCode {
+         match self {
+             Self::InvalidInput => 2,
+             Self::NotSupported => 3,
++            Self::InvalidProfile | Self::InvalidEndpoint => 4,
++            Self::OwnerUnavailable => 5,
++            Self::OwnerProtocolRejected | Self::OwnerIdentityRejected => 6,
++            Self::OwnerTimeout => 7,
++            Self::OwnerClientFailed => 70,
+         }
+     }
+ }
+@@ -86,6 +160,8 @@ impl ErrorCode {
+ pub enum Stage {
+     Parse,
+     Dispatch,
++    Inspect,
++    Connect,
+ }
+ 
+ impl Stage {
+@@ -93,6 +169,8 @@ impl Stage {
+         match self {
+             Self::Parse => "parse",
+             Self::Dispatch => "dispatch",
++            Self::Inspect => "inspect",
++            Self::Connect => "connect",
+         }
+     }
+ }
+@@ -122,6 +200,13 @@ pub enum Data {
+     Help,
+     Version,
+     Capabilities,
++    OwnerStatus(OwnerStatusData),
++}
++
++/// Deliberately not database readiness, writer coverage, or business status.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct OwnerStatusData {
++    pub profile_lease_held: bool,
+ }
+ 
+ /// The result discriminant is the source of truth for both `ok` and exit code.
+@@ -134,17 +219,19 @@ pub struct Envelope {
+ /// Closed, typed dispatch. There is intentionally no string-based invoke path.
+ /// Future business operations must use the existing extracted services, not
+ /// parallel SQL/config mergers or a mocked Tauri AppHandle.
+-pub fn execute(operation: Operation) -> Envelope {
+-    let result = match operation {
+-        Operation::Help => Ok(Data::Help),
+-        Operation::Version => Ok(Data::Version),
+-        Operation::Capabilities => Ok(Data::Capabilities),
+-        Operation::CodexStatus => Err(OperationError {
++pub fn execute(command: Command) -> Envelope {
++    let operation = command.operation();
++    let result = match command {
++        Command::Help => Ok(Data::Help),
++        Command::Version => Ok(Data::Version),
++        Command::Capabilities => Ok(Data::Capabilities),
++        Command::CodexStatus => Err(OperationError {
+             code: ErrorCode::NotSupported,
+             stage: Stage::Dispatch,
+             retryable: false,
+             message: "Codex business services are not connected in this foundation.",
+         }),
++        Command::DaemonStatus(input) => owner_status(input).map(Data::OwnerStatus),
+     };
+     Envelope {
+         operation: Some(operation),
+@@ -152,6 +239,78 @@ pub fn execute(operation: Operation) -> Envelope {
+     }
+ }
+ 
++#[cfg(not(target_os = "linux"))]
++fn owner_status(_input: OwnerStatusInput) -> Result<OwnerStatusData, OperationError> {
++    Err(OperationError {
++        code: ErrorCode::NotSupported,
++        stage: Stage::Dispatch,
++        retryable: false,
++        message: "Native owner-status isolation is supported only on Linux.",
++    })
++}
++
++#[cfg(target_os = "linux")]
++fn owner_status(input: OwnerStatusInput) -> Result<OwnerStatusData, OperationError> {
++    use ai_toolbox_management::owner::{ProfileIdentity, RuntimeDirectory};
++    use ai_toolbox_management::transport::OwnerClient;
++
++    // These existing-only helpers retain and recheck physical directory identity.
++    // Do not substitute owner acquisition, storage initialization, or a fallback.
++    let profile = ProfileIdentity::existing(&input.profile).map_err(|_| OperationError {
++        code: ErrorCode::InvalidProfile,
++        stage: Stage::Inspect,
++        retryable: false,
++        message: "The existing profile directory is unavailable, unsafe, or unsupported.",
++    })?;
++    let endpoint = RuntimeDirectory::existing(&input.endpoint_dir).map_err(|_| OperationError {
++        code: ErrorCode::InvalidEndpoint,
++        stage: Stage::Inspect,
++        retryable: false,
++        message: "The existing private endpoint directory is unavailable, unsafe, or unsupported.",
++    })?;
++    // This synchronous console boundary owns its runtime; never use this adapter
++    // inside an async GUI chain. I/O and time remain enabled until the client drops.
++    let runtime = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .build()
++        .map_err(|_| client_failure())?;
++    runtime.block_on(async {
++        // Exactly one request on a fresh connection: 1 is correlation within that
++        // connection, not a durable request ID or an idempotency key. The public
++        // envelope retains request_id=null; no persistent guarantee is invented.
++        let client = OwnerClient::connect(&profile, &endpoint, 1)
++            .await
++            .map_err(owner_error)?;
++        let status = client.owner_status().await.map_err(owner_error)?;
++        Ok(OwnerStatusData { profile_lease_held: status.profile_lease_held })
++    })
++}
++
++#[cfg(target_os = "linux")]
++fn client_failure() -> OperationError {
++    OperationError {
++        code: ErrorCode::OwnerClientFailed,
++        stage: Stage::Connect,
++        retryable: false,
++        message: "The local owner-status client failed.",
++    }
++}
++
++#[cfg(target_os = "linux")]
++fn owner_error(error: ai_toolbox_management::Error) -> OperationError {
++    use ai_toolbox_management::Error;
++    let (code, retryable, message) = match error {
++        Error::OwnerUnavailable => (ErrorCode::OwnerUnavailable, true, "The existing owner endpoint is unavailable; no owner was started."),
++        Error::ProtocolMismatch | Error::InvalidMessage | Error::FrameTooLarge => (ErrorCode::OwnerProtocolRejected, false, "The owner protocol response was incompatible or invalid."),
++        Error::PeerRejected | Error::StaleOwner | Error::IdentityChanged | Error::EndpointConflict
++            | Error::InvalidProfile | Error::UnsafeDirectory => (ErrorCode::OwnerIdentityRejected, false, "The owner, profile, or endpoint identity could not be verified."),
++        Error::TimedOut => (ErrorCode::OwnerTimeout, true, "The local owner-status request timed out."),
++        // Never format raw I/O or protocol errors into public diagnostics.
++        _ => return client_failure(),
++    };
++    OperationError { code, stage: Stage::Connect, retryable, message }
++}
++
+ impl Envelope {
+     pub fn exit_code(&self) -> u8 {
+         match &self.result {
+@@ -178,8 +337,8 @@ impl Envelope {
+                 ),
+             ),
+         };
+-        // No request identifier is invented: these synchronous, local discovery
+-        // calls have no persisted request/job identity. It is explicitly null.
++        // Neither discovery nor the one-connection status client has a persisted
++        // request/job identity. Transport correlation is not public idempotency.
+         format!("{{\"schema_version\":{SCHEMA_VERSION},\"operation\":{operation},\"request_id\":null,\"ok\":{},\"data\":{data},\"warnings\":[],\"error\":{error}}}", self.result.is_ok())
+     }
+ 
+@@ -206,8 +365,13 @@ impl Envelope {
+                         }
+                     );
+                 }
++                result.push_str("daemon.status is Linux-only, partial profile-lease inspection; full daemon lifecycle status is not implemented.\n");
+                 result
+             }
++            Ok(Data::OwnerStatus(status)) => format!(
++                "profile_lease_held: {}\nThis does not establish database readiness or complete writer admission.\n",
++                status.profile_lease_held
++            ),
+             Err(error) => format!(
+                 "{} [{}]: {}\n",
+                 error.code.as_str(),
+@@ -228,11 +392,14 @@ impl Data {
+             ),
+             Self::Capabilities => {
+                 let operations = Operation::ALL.map(|operation| format!(
+-                    "{{\"operation_id\":{},\"command\":{},\"supported\":{},\"side_effects\":false,\"input\":\"none\"}}",
+-                    json_string(operation.id()), json_string(operation.command()), operation.supported()
++                    "{{\"operation_id\":{},\"command\":{},\"supported\":{},\"side_effects\":false,\"input\":{}{}}}",
++                    json_string(operation.id()), json_string(operation.command()), operation.supported(),
++                    json_string(if operation == Operation::DaemonStatus { "explicit_absolute_profile_and_private_endpoint_dir" } else { "none" }),
++                    if operation == Operation::DaemonStatus { ",\"status_scope\":\"profile_lease_only\",\"daemon_lifecycle_complete\":false,\"platforms\":[\"linux\"]" } else { "" }
+                 )).join(",");
+                 format!("{{\"stage\":\"foundation\",\"business_coverage\":\"none\",\"mcp_supported\":false,\"operations\":[{operations}]}}")
+             }
++            Self::OwnerStatus(status) => format!("{{\"profile_lease_held\":{}}}", status.profile_lease_held),
+         }
+     }
+ }
+@@ -273,9 +440,10 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn declared_support_matches_dispatch() {
+-        for operation in Operation::ALL {
+-            let envelope = execute(operation);
++    fn static_declared_support_matches_dispatch() {
++        for command in [Command::Help, Command::Version, Command::Capabilities, Command::CodexStatus] {
++            let operation = command.operation();
++            let envelope = execute(command);
+             assert_eq!(operation.supported(), envelope.result.is_ok());
+             assert_eq!(operation.supported(), envelope.exit_code() == 0);
+         }
+diff --git a/crates/ai-toolbox-automation/tests/console.rs b/crates/ai-toolbox-automation/tests/console.rs
+index dfdcd280b28c0b9f21805998ad3c45f30bac55b9..156feac128c1087e06dd3c026f2b69a87b6568b7 100644
+--- a/crates/ai-toolbox-automation/tests/console.rs
++++ b/crates/ai-toolbox-automation/tests/console.rs
+@@ -145,6 +145,13 @@ fn malformed_and_unknown_arguments_have_stable_redacted_json_errors() {
+         vec!["capabilities", "extra"],
+         vec!["codex"],
+         vec!["codex", "status", "--repair"],
++        vec!["daemon", "status"],
++        vec!["daemon", "status", "--profile", "relative", "--endpoint-dir", "/missing"],
++        vec!["daemon", "status", "--profile", "/missing", "--endpoint-dir", "relative"],
++        vec!["daemon", "status", "--profile", "/missing", "--profile", "/missing", "--endpoint-dir", "/missing"],
++        vec!["daemon", "status", "--profile", "/missing", "--endpoint-dir", "/missing", "--endpoint-dir", "/missing"],
++        vec!["daemon", "status", "--profile", "/missing", "--endpoint-dir", "/missing", "--repair"],
++        vec!["--help", "--profile", "/never-inspected"],
+         vec!["secret=never-echo-我\n"],
+         vec!["--format", "text", "capabilities"],
+     ];
+@@ -196,12 +203,28 @@ fn discovery_does_not_claim_business_or_mcp_support() {
+         r#"{"operation_id":"automation.help","command":"--help","supported":true,"side_effects":false,"input":"none"},"#,
+         r#"{"operation_id":"automation.version","command":"--version","supported":true,"side_effects":false,"input":"none"},"#,
+         r#"{"operation_id":"automation.capabilities","command":"capabilities","supported":true,"side_effects":false,"input":"none"},"#,
+-        r#"{"operation_id":"codex.status","command":"codex status","supported":false,"side_effects":false,"input":"none"}]},"warnings":[],"error":null}"#,
+-        "\n"
++        r#"{"operation_id":"codex.status","command":"codex status","supported":false,"side_effects":false,"input":"none"},"#,
+     );
++    let expected = format!("{expected}{{\"operation_id\":\"daemon.status\",\"command\":\"daemon status\",\"supported\":{},\"side_effects\":false,\"input\":\"explicit_absolute_profile_and_private_endpoint_dir\",\"status_scope\":\"profile_lease_only\",\"daemon_lifecycle_complete\":false,\"platforms\":[\"linux\"]}}]}},\"warnings\":[],\"error\":null}}\n", cfg!(target_os = "linux"));
+     assert_eq!(text, expected);
+ }
+ 
++#[cfg(not(target_os = "linux"))]
++#[test]
++fn owner_status_is_explicitly_unsupported_without_path_inspection() {
++    let sandbox = Sandbox::new();
++    let mut command = args(&["--format", "json", "daemon", "status", "--profile"]);
++    command.push(sandbox.root.join("missing-profile").into_os_string());
++    command.push("--endpoint-dir".into());
++    command.push(sandbox.root.join("missing-endpoint").into_os_string());
++    let output = sandbox.run(&command);
++    assert_eq!(output.status.code(), Some(3));
++    assert!(output.stderr.is_empty());
++    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
++    assert_eq!(value["operation"], "daemon.status");
++    assert_eq!(value["error"]["code"], "NOT_SUPPORTED");
++}
++
+ #[cfg(unix)]
+ #[test]
+ fn non_unicode_arguments_are_rejected_without_panic_or_lossy_echo() {
+diff --git a/crates/ai-toolbox-automation/tests/owner_console.rs b/crates/ai-toolbox-automation/tests/owner_console.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..3a863c6c38715b3136adf3d9a4b3bf897f4bdb03
+--- /dev/null
++++ b/crates/ai-toolbox-automation/tests/owner_console.rs
+@@ -0,0 +1,464 @@
++//! Actual console processes, real OwnerServer, and synthetic fault peers only.
++//! No installed GUI, user profile, real credentials, or business writes are used.
++#![cfg(target_os = "linux")]
++
++use std::cell::RefCell;
++use std::ffi::{CString, OsString};
++use std::fs::{self, DirBuilder, File, OpenOptions};
++use std::io::Read;
++use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
++use std::os::unix::ffi::OsStrExt;
++use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
++use std::path::{Path, PathBuf};
++use std::process::{Child, Command, Output, Stdio};
++use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
++use std::sync::Arc;
++use std::time::{Duration, Instant};
++
++use ai_toolbox_management::owner::{
++    OwnerPermit, ProfileIdentity, ProfileOwner, RuntimeDirectory, PROFILE_LEASE_FILE,
++};
++use ai_toolbox_management::transport::{
++    endpoint_basename, OwnerOperation, OwnerServer, IO_TIMEOUT, MAX_FRAME_BYTES, PROTOCOL_MAJOR,
++};
++use serde_json::{json, Value};
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use tokio::net::{UnixListener, UnixStream};
++
++static SEQUENCE: AtomicU64 = AtomicU64::new(0);
++// Connect/hello and status each have a five-second protocol budget. Do not use
++// the discovery harness's five-second total as this command's observation limit.
++const CHILD_LIMIT: Duration = Duration::from_secs(13);
++const CLEANUP_LIMIT: Duration = Duration::from_secs(2);
++const OUTPUT_LIMIT: u64 = 64 * 1024;
++
++fn runtime() -> tokio::runtime::Runtime {
++    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
++}
++
++struct BoundedChild {
++    child: Child,
++    reaped: bool,
++    cleanup: Arc<CleanupState>,
++}
++
++struct CleanupState {
++    active_children: AtomicUsize,
++    safe_to_remove: AtomicBool,
++}
++
++impl BoundedChild {
++    fn mark_reaped(&mut self) {
++        if !self.reaped {
++            self.reaped = true;
++            self.cleanup.active_children.fetch_sub(1, Ordering::SeqCst);
++        }
++    }
++}
++
++impl Drop for BoundedChild {
++    fn drop(&mut self) {
++        if self.reaped { return; }
++        let _ = self.child.kill();
++        let deadline = Instant::now() + CLEANUP_LIMIT;
++        loop {
++            if matches!(self.child.try_wait(), Ok(Some(_))) {
++                self.mark_reaped();
++                return;
++            }
++            if Instant::now() >= deadline {
++                // A live or unobserved child may still use the lease and DB.
++                // Retain the entire fixture, including its output files.
++                self.cleanup.safe_to_remove.store(false, Ordering::SeqCst);
++                eprintln!("console child cleanup deadline exceeded; reap is unconfirmed, so its fixture must be retained");
++                return;
++            }
++            std::thread::sleep(Duration::from_millis(10));
++        }
++    }
++}
++
++struct Fixture {
++    root: PathBuf,
++    outputs: RefCell<Vec<PathBuf>>,
++    cleanup: Arc<CleanupState>,
++    retain: bool,
++}
++
++impl Fixture {
++    fn new() -> Self {
++        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
++        let root = std::env::temp_dir().join(format!("ac-{:x}-{nonce:x}-{:x}", std::process::id(), SEQUENCE.fetch_add(1, Ordering::Relaxed)));
++        DirBuilder::new().mode(0o700).create(&root).unwrap();
++        assert_eq!(fs::metadata(&root).unwrap().permissions().mode() & 0o7777, 0o700);
++        let fixture = Self {
++            root,
++            outputs: RefCell::new(Vec::new()),
++            cleanup: Arc::new(CleanupState {
++                active_children: AtomicUsize::new(0),
++                safe_to_remove: AtomicBool::new(true),
++            }),
++            retain: false,
++        };
++        for name in ["p", "r", "home"] {
++            DirBuilder::new().mode(0o700).create(fixture.path(name)).unwrap();
++        }
++        // Deliberately not a SQLite database. A hidden initializer cannot pass
++        // unnoticed; the inotify watch also detects open/read attempts, not just writes.
++        fs::write(fixture.path("p/ai-toolbox.db"), b"synthetic-not-a-database").unwrap();
++        RuntimeDirectory::existing(&fixture.root).expect("Use an isolated TMPDIR on a management-admitted local filesystem; never fall back to a user profile");
++        assert!(fixture.socket().as_os_str().as_bytes().len() < 108, "Use a shorter isolated TMPDIR for Unix socket fixtures");
++        fixture
++    }
++
++    fn path(&self, relative: &str) -> PathBuf { self.root.join(relative) }
++
++    fn profile(&self) -> ProfileIdentity { ProfileIdentity::existing(self.path("p")).unwrap() }
++
++    fn owner(&self) -> OwnerPermit { ProfileOwner::acquire(self.profile()).unwrap() }
++
++    fn socket(&self) -> PathBuf { self.path("r").join(endpoint_basename(self.profile().key())) }
++
++    fn status_args(&self, format: &str) -> Vec<OsString> {
++        vec!["--format".into(), format.into(), "daemon".into(), "status".into(),
++            "--profile".into(), self.path("p").into_os_string(),
++            "--endpoint-dir".into(), self.path("r").into_os_string()]
++    }
++
++    async fn run(&self, args: &[OsString]) -> Output {
++        let lease = self.path(&format!("p/{PROFILE_LEASE_FILE}"));
++        let lease_signature = || match fs::metadata(&lease) {
++            Ok(meta) => Some((meta.dev(), meta.ino(), meta.len(), meta.mode(), meta.mtime(), meta.mtime_nsec(), meta.ctime(), meta.ctime_nsec())),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
++            Err(error) => panic!("could not inspect fixture lease: {error}"),
++        };
++        let original_lease = lease_signature();
++        let index = self.outputs.borrow().len();
++        let stdout = self.path(&format!("run-{index}.stdout"));
++        let stderr = self.path(&format!("run-{index}.stderr"));
++        let out = OpenOptions::new().create_new(true).write(true).mode(0o600).open(&stdout).unwrap();
++        self.outputs.borrow_mut().push(stdout.clone());
++        let err = OpenOptions::new().create_new(true).write(true).mode(0o600).open(&stderr).unwrap();
++        self.outputs.borrow_mut().push(stderr.clone());
++        let mut command = Command::new(env!("CARGO_BIN_EXE_ai-toolbox-cli"));
++        command.args(args).env_clear().current_dir(&self.root).stdin(Stdio::null()).stdout(out).stderr(err);
++        for name in ["HOME", "USERPROFILE"] { command.env(name, self.path("home")); }
++        // Use hostile-but-synthetic environment defaults. Explicit arguments
++        // must win, and discovery must not inspect or bootstrap any of these.
++        command.env("AI_TOOLBOX_DATA_DIR", self.path("p"));
++        for name in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
++            "AI_TOOLBOX_CACHE_DIR", "APPDATA", "LOCALAPPDATA", "CODEX_HOME", "CLAUDE_CONFIG_DIR",
++            "TMPDIR", "TMP", "TEMP"] {
++            command.env(name, self.path(name));
++        }
++        let child = command.spawn().unwrap();
++        self.cleanup.active_children.fetch_add(1, Ordering::SeqCst);
++        let mut child = BoundedChild { child, reaped: false, cleanup: self.cleanup.clone() };
++        let deadline = Instant::now() + CHILD_LIMIT;
++        let status = loop {
++            // Check while the child runs, not only after it exits. Overflow of
++            // the combined output budget immediately invokes bounded kill/reap.
++            let output_bytes = fs::metadata(&stdout).unwrap().len()
++                .saturating_add(fs::metadata(&stderr).unwrap().len());
++            assert!(output_bytes <= OUTPUT_LIMIT, "console combined output budget exceeded");
++            match child.child.try_wait() {
++                Ok(Some(status)) => { child.mark_reaped(); break status; }
++                Ok(None) => {},
++                Err(error) => panic!("could not observe console process: {error}"),
++            }
++            assert!(Instant::now() < deadline, "owner console exceeded its 13-second observation deadline");
++            tokio::time::sleep(Duration::from_millis(10)).await;
++        };
++        assert!(fs::metadata(&stdout).unwrap().len()
++            .saturating_add(fs::metadata(&stderr).unwrap().len()) <= OUTPUT_LIMIT,
++            "console combined output budget exceeded at exit");
++        assert_eq!(lease_signature(), original_lease, "console created or changed the lease inode");
++        // Regular files avoid unbounded pipe drains after child termination.
++        let read_output = |path: &Path| {
++            let mut bytes = Vec::new();
++            File::open(path).unwrap().take(OUTPUT_LIMIT + 1).read_to_end(&mut bytes).unwrap();
++            assert!(bytes.len() <= OUTPUT_LIMIT as usize, "console output budget exceeded");
++            bytes
++        };
++        self.assert_no_implicit_state();
++        Output { status, stdout: read_output(&stdout), stderr: read_output(&stderr) }
++    }
++
++    fn assert_no_implicit_state(&self) {
++        let mut expected = vec![OsString::from("p"), "r".into(), "home".into()];
++        expected.extend(self.outputs.borrow().iter().map(|path| path.file_name().unwrap().to_owned()));
++        expected.sort();
++        let mut actual: Vec<_> = fs::read_dir(&self.root).unwrap().map(|entry| entry.unwrap().file_name()).collect();
++        actual.sort();
++        assert_eq!(actual, expected, "console created an implicit state path");
++        assert_eq!(fs::read_dir(self.path("home")).unwrap().count(), 0);
++        for entry in fs::read_dir(self.path("p")).unwrap() {
++            let name = entry.unwrap().file_name();
++            assert!(name == "ai-toolbox.db" || name == PROFILE_LEASE_FILE, "unexpected profile artifact");
++        }
++        for entry in fs::read_dir(self.path("r")).unwrap() {
++            assert_eq!(entry.unwrap().path(), self.socket(), "unexpected endpoint artifact");
++        }
++    }
++
++    fn cleanup_is_safe(&self) -> bool {
++        self.cleanup.safe_to_remove.load(Ordering::SeqCst)
++            && self.cleanup.active_children.load(Ordering::SeqCst) == 0
++    }
++
++    fn remove_owned_artifacts(&mut self) -> std::io::Result<()> {
++        // This is not recursive cleanup: an unexpected path causes directory
++        // removal to fail and remains available for diagnosis.
++        for path in self.outputs.get_mut().iter() { fs::remove_file(path)?; }
++        fs::remove_file(self.path("p/ai-toolbox.db"))?;
++        match fs::remove_file(self.path(&format!("p/{PROFILE_LEASE_FILE}"))) {
++            Ok(()) => {},
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
++            Err(error) => return Err(error),
++        }
++        for name in ["p", "r", "home"] { fs::remove_dir(self.path(name))?; }
++        fs::remove_dir(&self.root)
++    }
++
++    fn finish(mut self) {
++        // All success paths explicitly verify cleanup. Never downgrade a cleanup
++        // failure to a passing test or retry partial cleanup during Drop.
++        self.retain = true;
++        assert!(self.cleanup_is_safe(), "fixture retained because child exit/reap was not confirmed");
++        self.remove_owned_artifacts().expect("fixture cleanup failed; remaining owned artifacts retained");
++    }
++}
++
++impl Drop for Fixture {
++    fn drop(&mut self) {
++        // During failure unwinding, no cleanup is permitted until every spawned
++        // child was confirmed reaped. Unknown outcomes retain the whole root.
++        if self.retain || !self.cleanup_is_safe() { return; }
++        if let Err(error) = self.remove_owned_artifacts() {
++            eprintln!("fixture cleanup failed; remaining owned artifacts retained: {error}");
++        }
++    }
++}
++
++struct DatabaseWatch(OwnedFd);
++
++impl DatabaseWatch {
++    fn new(fixture: &Fixture) -> Self {
++        // SAFETY: inotify_init1 has no pointer arguments; successful FD ownership
++        // transfers immediately to OwnedFd, including add-watch failure paths.
++        let raw = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
++        assert!(raw >= 0);
++        let descriptor = unsafe { OwnedFd::from_raw_fd(raw) };
++        let path = CString::new(fixture.path("p/ai-toolbox.db").as_os_str().as_bytes()).unwrap();
++        // SAFETY: the CString and live FD remain valid for the syscall.
++        let watch = unsafe { libc::inotify_add_watch(descriptor.as_raw_fd(), path.as_ptr(),
++            libc::IN_OPEN | libc::IN_ACCESS | libc::IN_MODIFY | libc::IN_ATTRIB | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF) };
++        assert!(watch >= 0);
++        Self(descriptor)
++    }
++
++    fn assert_untouched(&self) {
++        let mut events = [0u8; 4096];
++        // SAFETY: events is writable for its full length and the FD is live.
++        let count = unsafe { libc::read(self.0.as_raw_fd(), events.as_mut_ptr().cast(), events.len()) };
++        assert_eq!(count, -1, "the synthetic DB was opened, read, or modified");
++        assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::WouldBlock);
++    }
++}
++
++fn json_result(output: &Output, exit: i32, error: Option<&str>) -> Value {
++    assert_eq!(output.status.code(), Some(exit));
++    assert!(output.stderr.is_empty());
++    assert_eq!(std::str::from_utf8(&output.stdout).unwrap().lines().count(), 1);
++    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
++    assert_eq!(value["schema_version"], 1);
++    assert!(value["request_id"].is_null());
++    assert_eq!(value["ok"], exit == 0);
++    match error {
++        Some(code) => {
++            assert_eq!(value["error"]["code"], code);
++            assert!(value["data"].is_null());
++        }
++        None => assert!(value["error"].is_null()),
++    }
++    value
++}
++
++#[test]
++fn actual_console_reads_real_owner_without_touching_database_or_lease() {
++    let fixture = Fixture::new();
++    let lease = fixture.path(&format!("p/{PROFILE_LEASE_FILE}"));
++    OpenOptions::new().create_new(true).write(true).mode(0o600).open(&lease).unwrap();
++    let before = fs::metadata(&lease).unwrap();
++    let watch = DatabaseWatch::new(&fixture);
++    runtime().block_on(async {
++        let server = Arc::new(OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap());
++        for format in ["json", "text"] {
++            let serving = server.clone();
++            let task = tokio::spawn(async move {
++                let request = serving.accept().await.unwrap();
++                assert_eq!(request.request().operation, OwnerOperation::OwnerStatus);
++                assert_eq!(request.request().request_id, 1);
++                request.respond_status().await.unwrap();
++            });
++            let output = fixture.run(&fixture.status_args(format)).await;
++            tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
++            if format == "json" {
++                let value = json_result(&output, 0, None);
++                assert_eq!(value["operation"], "daemon.status");
++                assert_eq!(value["data"], json!({ "profile_lease_held": true }));
++            } else {
++                assert_eq!(output.status.code(), Some(0));
++                assert!(output.stderr.is_empty());
++                assert_eq!(std::str::from_utf8(&output.stdout).unwrap(), "profile_lease_held: true\nThis does not establish database readiness or complete writer admission.\n");
++            }
++            watch.assert_untouched();
++        }
++        assert!(matches!(ProfileOwner::acquire(fixture.profile()), Err(ai_toolbox_management::Error::OwnerBusy)));
++        let after = fs::metadata(&lease).unwrap();
++        assert_eq!((before.dev(), before.ino(), before.len(), before.mode(), before.mtime(), before.mtime_nsec(), before.ctime(), before.ctime_nsec()),
++            (after.dev(), after.ino(), after.len(), after.mode(), after.mtime(), after.mtime_nsec(), after.ctime(), after.ctime_nsec()));
++    });
++    assert!(!fixture.socket().exists());
++    assert!(lease.exists(), "only the owner socket may be removed on shutdown");
++    fixture.finish();
++}
++
++#[test]
++fn discovery_and_parse_errors_never_open_the_synthetic_database() {
++    let fixture = Fixture::new();
++    let watch = DatabaseWatch::new(&fixture);
++    runtime().block_on(async {
++        for command in ["--help", "-h", "--version", "-V", "capabilities"] {
++            let output = fixture.run(&["--format".into(), "json".into(), command.into()]).await;
++            json_result(&output, 0, None);
++            watch.assert_untouched();
++        }
++        let mut invalid = fixture.status_args("json");
++        invalid.extend(["--secret=never-echo-token".into(), "--profile".into(), fixture.path("private-token").into_os_string()]);
++        let output = fixture.run(&invalid).await;
++        json_result(&output, 2, Some("INVALID_INPUT"));
++        let text = std::str::from_utf8(&output.stdout).unwrap();
++        assert!(!text.contains("private-token") && !text.contains("never-echo-token"));
++        watch.assert_untouched();
++        assert!(!fixture.path(&format!("p/{PROFILE_LEASE_FILE}")).exists());
++        assert_eq!(fs::read_dir(fixture.path("r")).unwrap().count(), 0);
++    });
++    fixture.finish();
++}
++
++#[test]
++fn missing_paths_and_owner_unavailability_never_bootstrap_or_fall_back() {
++    let fixture = Fixture::new();
++    let watch = DatabaseWatch::new(&fixture);
++    runtime().block_on(async {
++        let mut missing_profile = fixture.status_args("json");
++        missing_profile[5] = fixture.path("missing-profile/private-token").into_os_string();
++        let output = fixture.run(&missing_profile).await;
++        json_result(&output, 4, Some("INVALID_PROFILE"));
++        assert!(!std::str::from_utf8(&output.stdout).unwrap().contains("private-token"));
++        assert!(!fixture.path("missing-profile").exists());
++
++        let mut missing_endpoint = fixture.status_args("json");
++        missing_endpoint[7] = fixture.path("missing-endpoint").into_os_string();
++        json_result(&fixture.run(&missing_endpoint).await, 4, Some("INVALID_ENDPOINT"));
++        assert!(!fixture.path("missing-endpoint").exists());
++
++        json_result(&fixture.run(&fixture.status_args("json")).await, 5, Some("OWNER_UNAVAILABLE"));
++        let text = fixture.run(&fixture.status_args("text")).await;
++        assert_eq!(text.status.code(), Some(5));
++        assert!(text.stdout.is_empty());
++        assert_eq!(std::str::from_utf8(&text.stderr).unwrap(), "OWNER_UNAVAILABLE [connect]: The existing owner endpoint is unavailable; no owner was started.\n");
++        watch.assert_untouched();
++        assert!(!fixture.path(&format!("p/{PROFILE_LEASE_FILE}")).exists());
++        assert_eq!(fs::read_dir(fixture.path("r")).unwrap().count(), 0);
++    });
++    fixture.finish();
++}
++
++#[test]
++fn insecure_endpoint_directory_fails_without_repairing_permissions() {
++    let fixture = Fixture::new();
++    let watch = DatabaseWatch::new(&fixture);
++    fs::set_permissions(fixture.path("r"), fs::Permissions::from_mode(0o755)).unwrap();
++    runtime().block_on(async {
++        json_result(&fixture.run(&fixture.status_args("json")).await, 4, Some("INVALID_ENDPOINT"));
++    });
++    assert_eq!(fs::metadata(fixture.path("r")).unwrap().mode() & 0o7777, 0o755);
++    watch.assert_untouched();
++    fixture.finish();
++}
++
++async fn read_frame(stream: &mut UnixStream) -> Value {
++    let length = stream.read_u32().await.unwrap() as usize;
++    assert!(length > 0 && length <= MAX_FRAME_BYTES);
++    let mut bytes = vec![0; length];
++    stream.read_exact(&mut bytes).await.unwrap();
++    serde_json::from_slice(&bytes).unwrap()
++}
++
++async fn write_frame(stream: &mut UnixStream, value: &Value) {
++    let bytes = serde_json::to_vec(value).unwrap();
++    stream.write_u32(bytes.len() as u32).await.unwrap();
++    stream.write_all(&bytes).await.unwrap();
++}
++
++#[test]
++fn incompatible_protocol_profile_and_correlation_are_rejected_without_raw_echo() {
++    let fixture = Fixture::new();
++    let watch = DatabaseWatch::new(&fixture);
++    runtime().block_on(async {
++        let _owner = fixture.owner();
++        for fault in ["protocol", "profile", "correlation", "untrusted-field"] {
++            let listener = UnixListener::bind(fixture.socket()).unwrap();
++            let task = tokio::spawn(async move {
++                tokio::time::timeout(CHILD_LIMIT, async {
++                    let (mut stream, _) = listener.accept().await.unwrap();
++                    let hello = read_frame(&mut stream).await;
++                    let epoch = [0u8; 16];
++                    let mut ack = json!({ "protocol_major": PROTOCOL_MAJOR, "request_id": hello["request_id"],
++                        "profile": hello["profile"], "owner_epoch": epoch });
++                    match fault {
++                        "protocol" => ack["protocol_major"] = json!(PROTOCOL_MAJOR + 1),
++                        "profile" => ack["profile"] = json!({ "device": u64::MAX, "inode": u64::MAX }),
++                        "correlation" => ack["request_id"] = json!(2),
++                        _ => ack["untrusted"] = json!("never-echo-token"),
++                    }
++                    write_frame(&mut stream, &ack).await;
++                }).await.unwrap();
++            });
++            let output = fixture.run(&fixture.status_args("json")).await;
++            tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
++            let code = if fault == "profile" { "OWNER_IDENTITY_REJECTED" } else { "OWNER_PROTOCOL_REJECTED" };
++            json_result(&output, 6, Some(code));
++            assert!(!std::str::from_utf8(&output.stdout).unwrap().contains("never-echo-token"));
++            watch.assert_untouched();
++            fs::remove_file(fixture.socket()).unwrap();
++        }
++    });
++    fixture.finish();
++}
++
++#[test]
++fn stalled_owner_is_bounded_without_starting_a_replacement() {
++    let fixture = Fixture::new();
++    let watch = DatabaseWatch::new(&fixture);
++    runtime().block_on(async {
++        let _owner = fixture.owner();
++        let listener = UnixListener::bind(fixture.socket()).unwrap();
++        let task = tokio::spawn(async move {
++            tokio::time::timeout(CHILD_LIMIT, async {
++                let (mut stream, _) = listener.accept().await.unwrap();
++                let _hello = read_frame(&mut stream).await;
++                tokio::time::sleep(IO_TIMEOUT + Duration::from_secs(2)).await;
++                drop(stream);
++            }).await.unwrap();
++        });
++        json_result(&fixture.run(&fixture.status_args("json")).await, 7, Some("OWNER_TIMEOUT"));
++        task.abort();
++        assert!(task.await.unwrap_err().is_cancelled());
++        watch.assert_untouched();
++        fs::remove_file(fixture.socket()).unwrap();
++    });
++    fixture.finish();
++}
+diff --git a/crates/ai-toolbox-management/AGENTS.md b/crates/ai-toolbox-management/AGENTS.md
+index 85d24bb3aac3f8524695adda3aabcf65552ebef9..481123794e455ba16e8bb0ca20a9435fd928635a 100644
+--- a/crates/ai-toolbox-management/AGENTS.md
++++ b/crates/ai-toolbox-management/AGENTS.md
+@@ -29,6 +29,12 @@ The synthetic owner suite must create its runtime root with explicit 0700 permis
+ 
+ The internal service requires an existing database and an explicit stored absolute runtime root. Owner acquisition precedes shared database initialization, which may migrate or seed: this is writer initialization, never a zero-effect read command. Internal revision inspection also acquires runtime coordination leases and must not be advertised as a read-only CLI operation.
+ 
++Attaching the private service reuses the existing owner's allocation and the exact shared SQLite connection; it never reacquires a lease, opens a database, seeds or migrates. Attachment cannot retroactively establish owner-before-open. The caller must already satisfy that startup order, and attaching still does not connect the GUI or close the application writer admission map. The shared connection retains an opaque owner lease for all DB clones and closes before releasing it; the retained owner must never point back to the DB state.
++
++Owner, cached path, SQLite's actual main filename, main inode and Linux HAS_MOVED checks run under the same connection mutex as one-time owner retention. Failed validation installs no guard; the same owner allocation is idempotent and a different allocation cannot replace it. Recheck the actual connection inside each DB read/write and before the file effect, rather than trusting attachment forever. Sidecars require safe type, current UID, mode and single-link metadata plus stability within each validation, but their inodes are not pinned across operations: SQLite may legitimately create or remove them. These checks do not audit SQLite's internal sidecar FDs or isolate malicious code using the trusted Rust connection API; Windows remains unfinished.
++
++After owner retention, trusted with_conn_mut callers must not replace, swap or move out the Connection, or let the original connection escape the shared holder. Any future replacement requires a separately designed detach/reattach lifecycle. Reopening the same path and inode can pass file-identity checks without being the original connection or preserving its transaction/hooks; these checks do not prove connection identity, and raw-pointer equality is not an ABA-safe substitute.
++
+ Only the two typed context numbers are planned through the existing Codex planner. Master changes and SavedOnly journal insertion share one transaction. A committed ProjectionStarted transition is required before the fixed config.toml effect; replay never authorizes another write. Partial and uncertain outcomes are non-success and are not automatically retried. Explicit new requests require a fresh revision. This is not atomic database-plus-file commit or power-loss recovery.
+ 
+ The file effect uses the held runtime directory FD and fixed config.toml leaf, preserves ordinary mode/uid/gid and checks identity/content before publishing and on readback. It never opens auth.json. ACL/xattr preservation, hostile same-UID race containment and Windows remain unsupported. Failed staging can retain an owned temporary file, initially created as 0600 and later set to the original config mode: do not unlink a pathname after a race or claim zero residual effects. Tests clean only their own isolated directory after all permits and database references are dropped.
+diff --git a/crates/ai-toolbox-management/src/codex_service.rs b/crates/ai-toolbox-management/src/codex_service.rs
+index e7f40ceda32beab548ed2a0707970a273f1bfc88..df85f5351b1583398951d5d5c295d2f5f981b863 100644
+--- a/crates/ai-toolbox-management/src/codex_service.rs
++++ b/crates/ai-toolbox-management/src/codex_service.rs
+@@ -4,7 +4,7 @@ use std::{fs, path::Path, os::unix::fs::MetadataExt};
+ use ai_toolbox_codex_config::plan::{plan_context_projection, ContextPatch, Target};
+ use ai_toolbox_storage::{SqliteDbState, SQLITE_DATABASE_FILE, codex_context_journal as journal};
+ use journal::{AdvanceResult, FailureCode, InsertResult, JournalEntry, JournalInput, Lookup, Phase};
+-use rusqlite::Transaction;
++use rusqlite::{Connection, Transaction};
+ use sha2::{Digest, Sha256};
+ use crate::{
+     codex_master::{read_master, patch_master, MasterSnapshot, MasterError},
+@@ -99,7 +99,8 @@ enum Checkpoint {
+     ReplaceDrift,
+ }
+ 
+-// Declaration order closes SQLite before dropping the lifetime profile lease.
++// Declaration order drops this DB reference before this owner reference. The
++// shared connection also retains the owner, including for external DB clones.
+ pub(crate) struct ContextService {
+     db: SqliteDbState,
+     owner: OwnerPermit,
+@@ -170,6 +171,70 @@ fn database_identity(path: &Path) -> Result<(u64, u64), ServiceError> {
+     Ok((m.dev(), m.ino()))
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++struct DatabaseIdentity {
++    main: (u64, u64),
++    sidecars: [Option<(u64, u64)>; 3],
++}
++
++impl DatabaseIdentity {
++    fn existing(path: &Path) -> Result<Self, ServiceError> {
++        let main = database_identity(path)?;
++        let mut sidecars = [None; 3];
++        for (slot, suffix) in sidecars.iter_mut().zip(["-wal", "-shm", "-journal"]) {
++            let side = path.with_file_name(format!("{SQLITE_DATABASE_FILE}{suffix}"));
++            match fs::symlink_metadata(&side) {
++                Ok(_) => *slot = Some(database_identity(&side)?),
++                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
++                Err(_) => return Err(ServiceError::Storage),
++            }
++        }
++        Ok(Self { main, sidecars })
++    }
++
++    fn validate_connection(
++        owner: &OwnerPermit,
++        db: &SqliteDbState,
++        connection: &Connection,
++    ) -> Result<Self, ServiceError> {
++        owner.ensure_current().map_err(|_| ServiceError::Ownership)?;
++        let expected = owner.profile().canonical_path().join(SQLITE_DATABASE_FILE);
++        let before = Self::existing(&expected)?;
++        // db_path is cached input, not evidence of the connection's current
++        // main database. Validate both it and SQLite's own main filename.
++        let actual = Path::new(connection.path().ok_or(ServiceError::Storage)?);
++        for path in [db.db_path(), actual] {
++            if !path.is_absolute()
++                || fs::canonicalize(path).map_err(|_| ServiceError::Storage)? != expected
++                || database_identity(path)? != before.main
++            {
++                return Err(ServiceError::Storage);
++            }
++        }
++        let mut moved: std::ffi::c_int = 1;
++        // SAFETY: The storage callback holds its mutex for this entire
++        // validation. The live handle is borrowed, the fixed main name is NUL
++        // terminated, and HAS_MOVED writes exactly one c_int. No pointer or
++        // callback escapes. Unsupported VFS implementations fail closed.
++        let result = unsafe {
++            rusqlite::ffi::sqlite3_file_control(
++                connection.handle(),
++                b"main\0".as_ptr().cast(),
++                rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
++                (&mut moved as *mut std::ffi::c_int).cast(),
++            )
++        };
++        if result != rusqlite::ffi::SQLITE_OK || moved != 0 {
++            return Err(ServiceError::Storage);
++        }
++        owner.ensure_current().map_err(|_| ServiceError::Ownership)?;
++        if Self::existing(&expected)? != before {
++            return Err(ServiceError::Storage);
++        }
++        Ok(before)
++    }
++}
++
+ impl ContextService {
+     /// Writer initialization only, not a read-command implementation. Requires
+     /// an existing file database; shared storage initialization may seed/migrate.
+@@ -177,47 +242,58 @@ impl ContextService {
+         let identity = ProfileIdentity::existing(profile).map_err(|_| ServiceError::Ownership)?;
+         let owner = ProfileOwner::acquire(identity).map_err(|_| ServiceError::Ownership)?;
+         let path = owner.profile().canonical_path().join(SQLITE_DATABASE_FILE);
+-        let database_inode = database_identity(&path)?;
+-        for suffix in ["-wal", "-shm"] {
+-            let side = path.with_file_name(format!("{SQLITE_DATABASE_FILE}{suffix}"));
+-            match fs::symlink_metadata(&side) {
+-                Ok(_) => {
+-                    database_identity(&side)?;
+-                }
+-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+-                Err(_) => return Err(ServiceError::Storage),
+-            }
+-        }
++        let before = DatabaseIdentity::existing(&path)?;
+         owner
+             .ensure_current()
+             .map_err(|_| ServiceError::Ownership)?;
+         let db = SqliteDbState::open(path.clone()).map_err(|_| ServiceError::Storage)?;
+-        owner
+-            .ensure_current()
+-            .map_err(|_| ServiceError::Ownership)?;
+-        if database_identity(&path)? != database_inode {
++        if database_identity(&path)? != before.main {
+             return Err(ServiceError::Storage);
+         }
++        Self::attach(&owner, &db)
++    }
++
++    /// Attach only to an existing owner's already initialized shared state.
++    /// No owner acquisition, database open, schema work or seed is performed.
++    /// This cannot retroactively prove owner-before-open for the caller; that
++    /// startup ordering and the full writer admission map remain prerequisites.
++    /// Callers must honor storage's retained-connection no-replacement contract;
++    /// same-path/inode checks cannot identify a reopened connection as original.
++    pub(crate) fn attach(owner: &OwnerPermit, db: &SqliteDbState) -> Result<Self, ServiceError> {
++        let database_inode = db
++            .retain_lifetime_owner_checked(owner.lifetime_owner(), |connection| {
++                DatabaseIdentity::validate_connection(owner, db, connection).map(|identity| identity.main)
++            })
++            .map_err(|error| match error {
++                ai_toolbox_storage::sqlite_state::LifetimeOwnerError::Unavailable => ServiceError::Storage,
++                ai_toolbox_storage::sqlite_state::LifetimeOwnerError::DifferentOwner => ServiceError::Ownership,
++                ai_toolbox_storage::sqlite_state::LifetimeOwnerError::Validation(error) => error,
++            })?;
+         Ok(Self {
+-            db,
+-            owner,
++            db: db.clone(),
++            owner: owner.clone(),
+             database_inode,
+         })
+     }
+     fn ensure_current(&self) -> Result<(), ServiceError> {
+-        self.owner
+-            .ensure_current()
+-            .map_err(|_| ServiceError::Ownership)?;
+-        if database_identity(self.db.db_path())? != self.database_inode {
++        self.db.with_conn(|connection| Ok(self.validate_current_connection(connection)))
++            .map_err(|_| ServiceError::Storage)?
++    }
++    fn validate_current_connection(&self, connection: &Connection) -> Result<(), ServiceError> {
++        let current = DatabaseIdentity::validate_connection(&self.owner, &self.db, connection)?;
++        // SQLite may legitimately create/remove sidecars between operations.
++        // Their safety and single-validation stability are checked above;
++        // only the main DB inode is pinned for this service's lifetime.
++        if current.main != self.database_inode {
+             return Err(ServiceError::Storage);
+         }
+         Ok(())
+     }
+     fn master(&self) -> Result<MasterSnapshot, ServiceError> {
+         self.db
+-            .with_conn(|c| Ok(read_master(c)))
++            .with_conn(|c| Ok(self.validate_current_connection(c)
++                .and_then(|_| read_master(c).map_err(master_error))))
+             .map_err(|_| ServiceError::Storage)?
+-            .map_err(master_error)
+     }
+     fn runtime(master: &MasterSnapshot) -> Result<RuntimeResourceIdentity, ServiceError> {
+         RuntimeResourceIdentity::existing(
+@@ -291,9 +367,9 @@ impl ContextService {
+     }
+     fn lookup(&self, r: &ContextRequest, fingerprint: &str) -> Result<Lookup, ServiceError> {
+         self.db
+-            .with_conn(|c| Ok(journal::lookup(c, &r.request_id, fingerprint)))
++            .with_conn(|c| Ok(self.validate_current_connection(c)
++                .and_then(|_| journal::lookup(c, &r.request_id, fingerprint).map_err(journal_error))))
+             .map_err(|_| ServiceError::Storage)?
+-            .map_err(journal_error)
+     }
+     /// Only successful typed operations commit. In particular never pass
+     /// Ok(Err(..)) to helpers::db_transaction, whose Ok branch commits.
+@@ -304,6 +380,7 @@ impl ContextService {
+         self.db
+             .with_conn_mut(|c| {
+                 let outcome = (|| {
++                    self.validate_current_connection(c)?;
+                     let tx = c.transaction().map_err(|_| ServiceError::Storage)?;
+                     let result = operation(&tx)?;
+                     tx.commit()
+@@ -520,7 +597,15 @@ impl ContextService {
+         }
+         // Any failure after the durable start is conservatively uncertain; no
+         // automatic retry or rollback can assume rename did not happen.
+-        match project(committed_start, file, plan.live_candidate.as_bytes()) {
++        // A trusted caller can replace a Connection through with_conn_mut.
++        // Recheck under that same mutex before the file effect as well, without
++        // allowing such a replacement between validation and publication.
++        let projection = self.db.with_conn(|c| {
++            Ok(self.validate_current_connection(c).map(|_| {
++                project(committed_start, file, plan.live_candidate.as_bytes())
++            }))
++        }).map_err(|_| ServiceError::Storage)??;
++        match projection {
+             Ok(_) => (),
+             Err(_) => {
+                 return self
+@@ -582,6 +667,10 @@ impl ContextService {
+     }
+ }
+ 
++#[cfg(test)]
++#[path = "codex_service/attach_tests.rs"]
++mod attach_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/ai-toolbox-management/src/codex_service/attach_tests.rs b/crates/ai-toolbox-management/src/codex_service/attach_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..243e0e0632e615e475e009f6f29a614bc3847166
+--- /dev/null
++++ b/crates/ai-toolbox-management/src/codex_service/attach_tests.rs
+@@ -0,0 +1,422 @@
++//! Synthetic file-database attachment tests; no application or user profile.
++
++use super::*;
++use crate::owner::PROFILE_LEASE_FILE;
++use ai_toolbox_storage::{migrations::TARGET_SCHEMA_VERSION, sqlite_state::SQLITE_MIGRATION_BACKUP_DIR};
++use std::{
++    collections::BTreeMap,
++    ffi::OsString,
++    os::unix::fs::{symlink, PermissionsExt},
++    path::PathBuf,
++    sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}},
++};
++
++struct Profile {
++    root: tempfile::TempDir,
++}
++
++impl Profile {
++    fn new() -> Self {
++        let root = tempfile::tempdir().unwrap();
++        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
++        Self { root }
++    }
++
++    fn path(&self) -> &Path {
++        self.root.path()
++    }
++
++    fn database(&self) -> PathBuf {
++        self.path().join(SQLITE_DATABASE_FILE)
++    }
++
++    fn owner(&self) -> OwnerPermit {
++        ProfileOwner::acquire(ProfileIdentity::existing(self.path()).unwrap()).unwrap()
++    }
++
++    fn open(&self) -> (OwnerPermit, SqliteDbState) {
++        let owner = self.owner();
++        let db = SqliteDbState::open(self.database()).unwrap();
++        fs::set_permissions(self.database(), fs::Permissions::from_mode(0o600)).unwrap();
++        (owner, db)
++    }
++
++    fn snapshot(&self) -> BTreeMap<OsString, (u64, u32, Vec<u8>)> {
++        fs::read_dir(self.path()).unwrap().map(|entry| {
++            let entry = entry.unwrap();
++            let metadata = fs::symlink_metadata(entry.path()).unwrap();
++            assert!(metadata.is_file());
++            (entry.file_name(), (metadata.ino(), metadata.mode(), fs::read(entry.path()).unwrap()))
++        }).collect()
++    }
++}
++
++fn count(db: &SqliteDbState) -> i64 {
++    db.with_conn(|c| c.query_row("SELECT COUNT(*) FROM attach_probe", [], |row| row.get(0))
++        .map_err(|e| e.to_string())).unwrap()
++}
++
++#[test]
++fn attach_shares_uncommitted_transaction_and_existing_owner_gate() {
++    let profile = Profile::new();
++    let (owner, db) = profile.open();
++    db.with_conn(|c| c.execute_batch(
++        "CREATE TABLE attach_probe(value INTEGER); BEGIN; INSERT INTO attach_probe VALUES (7);"
++    ).map_err(|e| e.to_string())).unwrap();
++    let writer = owner.try_writer().unwrap();
++    let service = ContextService::attach(&owner, &db).unwrap();
++    assert_eq!(service.owner.epoch(), owner.epoch());
++    assert!(service.owner.try_writer().is_err());
++    assert!(matches!(ProfileOwner::acquire(ProfileIdentity::existing(profile.path()).unwrap()),
++        Err(crate::Error::OwnerBusy)));
++    assert_eq!(count(&service.db), 1);
++    service.db.with_conn(|c| {
++        assert!(!c.is_autocommit());
++        c.execute_batch("ROLLBACK").map_err(|e| e.to_string())
++    }).unwrap();
++    assert_eq!(count(&db), 0);
++    drop(writer);
++    assert!(service.owner.try_writer().is_ok());
++    drop(service);
++    drop(db);
++    drop(owner);
++}
++
++#[test]
++fn attach_preserves_real_commit_veto_on_the_original_connection() {
++    let profile = Profile::new();
++    let (owner, db) = profile.open();
++    db.with_conn(|c| c.execute_batch("CREATE TABLE attach_probe(value INTEGER)")
++        .map_err(|e| e.to_string())).unwrap();
++    let calls = Arc::new(AtomicUsize::new(0));
++    let hook_calls = calls.clone();
++    db.with_conn(|c| {
++        c.commit_hook(Some(move || {
++            hook_calls.fetch_add(1, Ordering::SeqCst);
++            true
++        }));
++        Ok(())
++    }).unwrap();
++    let service = ContextService::attach(&owner, &db).unwrap();
++    assert_eq!(calls.load(Ordering::SeqCst), 0);
++    assert_eq!(service.transaction(|tx| {
++        tx.execute("INSERT INTO attach_probe VALUES (7)", [])
++            .map_err(|_| ServiceError::Storage)?;
++        Ok(())
++    }), Err(ServiceError::PersistenceUncertain));
++    assert_eq!(calls.load(Ordering::SeqCst), 1);
++    assert_eq!(count(&db), 0);
++    db.with_conn(|c| { c.commit_hook(None::<fn() -> bool>); Ok(()) }).unwrap();
++    service.transaction(|tx| {
++        tx.execute("INSERT INTO attach_probe VALUES (8)", [])
++            .map_err(|_| ServiceError::Storage)?;
++        Ok(())
++    }).unwrap();
++    assert_eq!(count(&db), 1);
++    drop(service);
++    drop(db);
++    drop(owner);
++}
++
++#[test]
++fn attach_does_not_migrate_seed_create_files_or_change_the_database() {
++    let profile = Profile::new();
++    let (owner, db) = profile.open();
++    let before = db.with_conn(|c| {
++        c.pragma_update(None, "user_version", TARGET_SCHEMA_VERSION - 1)
++            .map_err(|e| e.to_string())?;
++        assert_eq!(c.execute(
++            "DELETE FROM model_pricing WHERE rowid = (SELECT rowid FROM model_pricing LIMIT 1)", []
++        ).map_err(|e| e.to_string())?, 1);
++        let count: i64 = c.query_row("SELECT COUNT(*) FROM model_pricing", [], |r| r.get(0))
++            .map_err(|e| e.to_string())?;
++        Ok((count, c.total_changes()))
++    }).unwrap();
++    assert!(!profile.path().join(SQLITE_MIGRATION_BACKUP_DIR).exists());
++    let files = profile.snapshot();
++    let service = ContextService::attach(&owner, &db).unwrap();
++    assert_eq!(profile.snapshot(), files);
++    service.db.with_conn(|c| {
++        let version: i32 = c.pragma_query_value(None, "user_version", |r| r.get(0))
++            .map_err(|e| e.to_string())?;
++        let count: i64 = c.query_row("SELECT COUNT(*) FROM model_pricing", [], |r| r.get(0))
++            .map_err(|e| e.to_string())?;
++        assert_eq!(version, TARGET_SCHEMA_VERSION - 1);
++        assert_eq!((count, c.total_changes()), before);
++        Ok(())
++    }).unwrap();
++    assert!(!profile.path().join(SQLITE_MIGRATION_BACKUP_DIR).exists());
++    drop(service);
++    drop(db);
++    drop(owner);
++}
++
++#[test]
++fn attach_rejects_missing_database_without_creating_one_or_retaining_owner() {
++    let profile = Profile::new();
++    let owner = profile.owner();
++    let db = SqliteDbState::in_memory_for_test().unwrap();
++    let before = profile.snapshot();
++    assert!(matches!(ContextService::attach(&owner, &db), Err(ServiceError::Storage)));
++    assert_eq!(profile.snapshot(), before);
++    assert!(!profile.database().exists());
++    drop(owner);
++    let replacement_owner = profile.owner();
++    drop(db);
++    drop(replacement_owner);
++}
++
++#[test]
++fn attach_rejects_wrong_profile_and_does_not_bind_the_failed_owner() {
++    let profile = Profile::new();
++    let other = Profile::new();
++    let (owner, db) = profile.open();
++    let (other_owner, other_db) = other.open();
++    assert!(matches!(ContextService::attach(&other_owner, &db), Err(ServiceError::Storage)));
++    // A failed attach must not have bound other_owner to db.
++    let service = ContextService::attach(&owner, &db).unwrap();
++    drop(other_db);
++    drop(other_owner);
++    let replacement_owner = other.owner();
++    drop(replacement_owner);
++    drop(service);
++    drop(db);
++    drop(owner);
++}
++
++#[test]
++fn attach_uses_actual_main_filename_not_cached_state_path() {
++    let profile = Profile::new();
++    let other = Profile::new();
++    let (owner, db) = profile.open();
++    let (other_owner, other_db) = other.open();
++    // Exercise the existing trusted Rust API's ability to replace a Connection.
++    // No state path is forged; the cached path remains the original profile.
++    let original = db.with_conn_mut(|c| {
++        let replacement = Connection::open(other.database()).map_err(|e| e.to_string())?;
++        Ok(std::mem::replace(c, replacement))
++    }).unwrap();
++    assert_eq!(db.db_path(), profile.database());
++    assert!(matches!(ContextService::attach(&owner, &db), Err(ServiceError::Storage)));
++    db.with_conn_mut(|c| { *c = original; Ok(()) }).unwrap();
++    let service = ContextService::attach(&owner, &db).unwrap();
++    drop(service);
++    drop(db);
++    drop(owner);
++    drop(other_db);
++    drop(other_owner);
++}
++
++#[test]
++fn attached_service_rejects_later_connection_replacement_without_writing_wrong_database() {
++    let profile = Profile::new();
++    let other = Profile::new();
++    let (owner, db) = profile.open();
++    let (other_owner, other_db) = other.open();
++    for state in [&db, &other_db] {
++        state.with_conn(|c| c.execute_batch("CREATE TABLE attach_probe(value INTEGER)")
++            .map_err(|e| e.to_string())).unwrap();
++    }
++    let service = ContextService::attach(&owner, &db).unwrap();
++    let original = db.with_conn_mut(|c| {
++        let replacement = Connection::open(other.database()).map_err(|e| e.to_string())?;
++        Ok(std::mem::replace(c, replacement))
++    }).unwrap();
++    let files = other.snapshot();
++    let attempted = AtomicBool::new(false);
++    assert_eq!(service.transaction(|tx| {
++        attempted.store(true, Ordering::SeqCst);
++        tx.execute("INSERT INTO attach_probe VALUES (99)", [])
++            .map_err(|_| ServiceError::Storage)?;
++        Ok(())
++    }), Err(ServiceError::Storage));
++    assert!(!attempted.load(Ordering::SeqCst));
++    let request = ContextRequest {
++        schema_version: 1,
++        request_id: "replaced-connection".into(),
++        expected_provider_id: "synthetic".into(),
++        expected_revision: "0".repeat(64),
++        target: Target::Common,
++        patch: ContextPatch {
++            model_context_window: Some(2000000),
++            model_auto_compact_token_limit: None,
++        },
++    };
++    assert_eq!(service.execute(&request), Err(ServiceError::Storage));
++    assert_eq!(other.snapshot(), files);
++    assert_eq!(count(&other_db), 0);
++    db.with_conn_mut(|c| { *c = original; Ok(()) }).unwrap();
++    assert_eq!(service.ensure_current(), Ok(()));
++    assert_eq!(count(&db), 0);
++    drop(service);
++    drop(db);
++    drop(owner);
++    drop(other_db);
++    drop(other_owner);
++}
++
++#[test]
++fn attach_rejects_replaced_open_database_inode_even_when_path_still_matches() {
++    let profile = Profile::new();
++    let (owner, db) = profile.open();
++    let original = profile.path().join("held-original.db");
++    fs::rename(profile.database(), &original).unwrap();
++    assert!(matches!(ContextService::attach(&owner, &db), Err(ServiceError::Storage)));
++    assert!(!profile.database().exists());
++    fs::write(profile.database(), b"synthetic replacement").unwrap();
++    fs::set_permissions(profile.database(), fs::Permissions::from_mode(0o600)).unwrap();
++    assert_ne!(database_identity(&original).unwrap(), database_identity(&profile.database()).unwrap());
++    assert!(matches!(ContextService::attach(&owner, &db), Err(ServiceError::Storage)));
++    fs::rename(&original, profile.database()).unwrap();
++    let service = ContextService::attach(&owner, &db).unwrap();
++    drop(service);
++    drop(db);
++    drop(owner);
++}
++
++#[test]
++fn attach_rejects_unsafe_database_and_sidecars_without_repair() {
++    for leaf in [SQLITE_DATABASE_FILE, "ai-toolbox.db-wal", "ai-toolbox.db-shm", "ai-toolbox.db-journal"] {
++        for kind in ["mode", "symlink", "hardlink", "directory"] {
++            let profile = Profile::new();
++            let (owner, db) = profile.open();
++            let path = profile.path().join(leaf);
++            let held = profile.path().join("held-original");
++            let existed = path.exists();
++            if existed { fs::rename(&path, &held).unwrap(); }
++            match kind {
++                "mode" => {
++                    fs::write(&path, b"synthetic unsafe leaf").unwrap();
++                    fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
++                }
++                "symlink" => symlink("missing-synthetic-target", &path).unwrap(),
++                "hardlink" => {
++                    let target = profile.path().join("synthetic-hardlink-target");
++                    fs::write(&target, b"synthetic hardlink").unwrap();
++                    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
++                    fs::hard_link(target, &path).unwrap();
++                }
++                "directory" => fs::create_dir(&path).unwrap(),
++                _ => unreachable!(),
++            }
++            let before = fs::symlink_metadata(&path).unwrap();
++            assert!(matches!(ContextService::attach(&owner, &db), Err(ServiceError::Storage)), "{leaf}: {kind}");
++            let after = fs::symlink_metadata(&path).unwrap();
++            assert_eq!((before.ino(), before.mode()), (after.ino(), after.mode()));
++            if kind == "directory" { fs::remove_dir(&path).unwrap(); }
++            else { fs::remove_file(&path).unwrap(); }
++            if existed { fs::rename(&held, &path).unwrap(); }
++            let service = ContextService::attach(&owner, &db).unwrap();
++            drop(service);
++            drop(db);
++            drop(owner);
++        }
++    }
++}
++
++#[test]
++fn attached_service_rechecks_sidecar_safety_before_work() {
++    for suffix in ["-wal", "-shm"] {
++        let profile = Profile::new();
++        let (owner, db) = profile.open();
++        let service = ContextService::attach(&owner, &db).unwrap();
++        let path = profile.path().join(format!("{SQLITE_DATABASE_FILE}{suffix}"));
++        assert!(path.exists());
++        let original = fs::metadata(&path).unwrap().permissions();
++        fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
++        let attempted = AtomicBool::new(false);
++        assert_eq!(service.transaction(|_| {
++            attempted.store(true, Ordering::SeqCst);
++            Ok(())
++        }), Err(ServiceError::Storage));
++        assert!(!attempted.load(Ordering::SeqCst));
++        fs::set_permissions(&path, original).unwrap();
++        assert_eq!(service.ensure_current(), Ok(()));
++        drop(service);
++        drop(db);
++        drop(owner);
++    }
++}
++
++#[test]
++fn legal_sqlite_sidecar_lifecycle_does_not_invalidate_the_main_connection() {
++    let profile = Profile::new();
++    let (owner, db) = profile.open();
++    db.with_conn(|c| c.execute_batch("CREATE TABLE attach_probe(value INTEGER)")
++        .map_err(|e| e.to_string())).unwrap();
++    let service = ContextService::attach(&owner, &db).unwrap();
++    let main_inode = database_identity(&profile.database()).unwrap();
++    let wal = profile.path().join("ai-toolbox.db-wal");
++    let shm = profile.path().join("ai-toolbox.db-shm");
++    let journal = profile.path().join("ai-toolbox.db-journal");
++    assert!(wal.exists() && shm.exists());
++    db.with_conn(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode = DELETE;")
++        .map_err(|e| e.to_string())).unwrap();
++    assert!(!wal.exists() && !shm.exists());
++    assert_eq!(service.ensure_current(), Ok(()));
++    service.transaction(|tx| {
++        tx.execute("INSERT INTO attach_probe VALUES (1)", [])
++            .map_err(|_| ServiceError::Storage)?;
++        assert!(journal.exists());
++        Ok(())
++    }).unwrap();
++    assert!(!journal.exists());
++    assert_eq!(service.ensure_current(), Ok(()));
++    db.with_conn(|c| c.execute_batch("PRAGMA journal_mode = WAL; INSERT INTO attach_probe VALUES (2);")
++        .map_err(|e| e.to_string())).unwrap();
++    assert!(wal.exists() && shm.exists());
++    assert_eq!(database_identity(&profile.database()).unwrap(), main_inode);
++    assert_eq!(service.ensure_current(), Ok(()));
++    assert_eq!(count(&db), 2);
++    drop(service);
++    drop(db);
++    drop(owner);
++}
++
++#[test]
++fn attach_rejects_stale_owner_before_binding_database() {
++    let profile = Profile::new();
++    let (owner, db) = profile.open();
++    let lease = profile.path().join(PROFILE_LEASE_FILE);
++    let held = profile.path().join("held-original-lease");
++    fs::rename(&lease, &held).unwrap();
++    assert!(matches!(ContextService::attach(&owner, &db), Err(ServiceError::Ownership)));
++    assert!(!lease.exists());
++    fs::rename(&held, &lease).unwrap();
++    drop(owner);
++    // The failed attach did not keep the old lease alive via the DB state.
++    let replacement_owner = profile.owner();
++    let service = ContextService::attach(&replacement_owner, &db).unwrap();
++    drop(service);
++    drop(db);
++    drop(replacement_owner);
++}
++
++#[test]
++fn original_and_later_database_clones_retain_owner_until_last_connection_drop() {
++    let profile = Profile::new();
++    let (owner, db) = profile.open();
++    let preexisting_clone = db.clone();
++    let service = ContextService::attach(&owner, &db).unwrap();
++    let repeated = ContextService::attach(&owner, &preexisting_clone).unwrap();
++    let later_clone = service.db.clone();
++    let epoch = owner.epoch();
++    drop(owner);
++    drop(service);
++    drop(repeated);
++    drop(db);
++    assert!(matches!(ProfileOwner::acquire(ProfileIdentity::existing(profile.path()).unwrap()),
++        Err(crate::Error::OwnerBusy)));
++    drop(preexisting_clone);
++    assert!(matches!(ProfileOwner::acquire(ProfileIdentity::existing(profile.path()).unwrap()),
++        Err(crate::Error::OwnerBusy)));
++    later_clone.with_conn(|c| {
++        c.execute_batch("CREATE TABLE last_clone_probe(value INTEGER)").map_err(|e| e.to_string())
++    }).unwrap();
++    drop(later_clone);
++    let replacement_owner = profile.owner();
++    assert_ne!(replacement_owner.epoch(), epoch);
++    assert!(!profile.path().join("ai-toolbox.db-wal").exists());
++    assert!(!profile.path().join("ai-toolbox.db-shm").exists());
++    drop(replacement_owner);
++}
+diff --git a/crates/ai-toolbox-management/src/owner.rs b/crates/ai-toolbox-management/src/owner.rs
+index f777b06a9d3b8f992e62e6dde290dcc128f03444..77311495d23de8dccb5e704a8ecbff9f5ba0723f 100644
+--- a/crates/ai-toolbox-management/src/owner.rs
++++ b/crates/ai-toolbox-management/src/owner.rs
+@@ -170,6 +170,13 @@ pub struct OwnerPermit {
+ }
+ 
+ impl OwnerPermit {
++    // Preserve the allocation identity, not just an epoch/profile label. The
++    // storage crate retains this lease without depending on management types.
++    #[cfg(target_os = "linux")]
++    pub(crate) fn lifetime_owner(&self) -> Arc<dyn Send + Sync> {
++        self.inner.clone()
++    }
++
+     pub fn profile(&self) -> &ProfileIdentity {
+         &self.inner.profile
+     }
+diff --git a/crates/ai-toolbox-storage/AGENTS.md b/crates/ai-toolbox-storage/AGENTS.md
+index 614dd778df9c775dd91f5f9e45cf19a2a4af4b49..0bf897651069f771d0c20e3bf27062c80478c512 100644
+--- a/crates/ai-toolbox-storage/AGENTS.md
++++ b/crates/ai-toolbox-storage/AGENTS.md
+@@ -13,6 +13,9 @@
+ - 缓存与 bundled seed、桌面远端同步均只用 INSERT OR IGNORE 补缺，不能覆盖用户已有价格。共享 parser、Decimal 校验与缓存写入只有一份；桌面网络请求继续走原 http_client 与代理设置，不把 HTTP 或应用设置引入这里。
+ - CACHE_DIR 是进程级 OnceLock，当前生命周期仅支持启动时设置一次的单 profile。不要把同一进程内反复调用 set_cache_dir 当作切换 profile；不能据此宣称多 profile 隔离已经实现。
+ - 该抽取不是进程 owner、daemon、CLI 管理入口或只读访问模式。open 仍可能设置 WAL、迁移并补 seed，不能用于承诺无文件变更的读取命令。WAL/SHM 与跨进程所有权方案须独立设计验证。
++- 共享连接可以保留一个无反向 management 依赖的 opaque owner lease；所有已有和后续 DB clone 共用它，最后先释放真实 Connection，再释放 lease。lease 不得引用 DB state，避免形成循环。只读验证与首次保留在同一个连接互斥内完成，验证失败不安装；同一 Arc 分配重复保留是幂等操作，不同分配必须拒绝，不能替换原 owner。
++- 该保活机制不获取所有权、不执行初始化，也不能追认调用方已经满足 owner-before-open。它是可信 Rust 调用边界，不是恶意进程内代码隔离；with_conn_mut 保留原签名，业务服务仍须在锁内重新核对真实 main 连接，不能只相信缓存路径。伴随文件可由 SQLite 合法创建或移除，不能把主库 inode 的长期身份约束扩大为 WAL/SHM/journal 永久不变。
++- 保留 owner 后，with_conn_mut 调用方不得 replace、swap、移出 Connection，或让原连接逃逸共享 holder；真正需要替换时须另行设计 detach/reattach 生命周期。同路径、同 inode 上重新打开连接仍可能通过文件身份检查，这不证明它是原连接，也不保留原事务或 hook；不得用裸指针相等声称解决该身份或 ABA 问题。
+ - 不用通用 callback/no-op seed 替换原初始化，不把备份、安全检查或错误传播变成调用方可跳过的默认选项。
+ - v30 新增 Codex context 专用 JSONB 操作账本；fresh 库的 v1 通过 `ALL_TABLES` 建好表，v30 幂等建表是为升级既有 v29 库，不修改已发布迁移。真实文件升级仍须经过原快照与未来版本拒绝路径。
+ - 账本接口只接受有限长安全标识、固定长度摘要、正整数结果和封闭阶段/错误枚举，不保存原始配置、认证、路径或任意错误文本。它不执行投影或声明回滚，不用其它业务表代替。
+diff --git a/crates/ai-toolbox-storage/src/sqlite_state.rs b/crates/ai-toolbox-storage/src/sqlite_state.rs
+index 409fe8004665080ddf00de95b0cea31145015d25..3d39ed1483efbff321497871b89d9ea5f48448e3 100644
+--- a/crates/ai-toolbox-storage/src/sqlite_state.rs
++++ b/crates/ai-toolbox-storage/src/sqlite_state.rs
+@@ -12,10 +12,25 @@ pub const SQLITE_MIGRATION_BACKUP_DIR: &str = "sqlite-migration-backups";
+ 
+ #[derive(Clone)]
+ pub struct SqliteDbState {
+-    conn: Arc<Mutex<Connection>>,
++    conn: Arc<Mutex<SharedConnection>>,
+     db_path: PathBuf,
+ }
+ 
++// All existing and future SqliteDbState clones share this lifetime. Field order
++// closes the real connection before releasing an attached opaque owner lease.
++// The lease must not retain this state, which would create a reference cycle.
++struct SharedConnection {
++    connection: Connection,
++    lifetime_owner: Option<Arc<dyn Send + Sync>>,
++}
++
++#[derive(Debug)]
++pub enum LifetimeOwnerError<E> {
++    Unavailable,
++    DifferentOwner,
++    Validation(E),
++}
++
+ impl SqliteDbState {
+     pub fn open(db_path: PathBuf) -> Result<Self, String> {
+         let mut conn = Connection::open(&db_path).map_err(|error| {
+@@ -26,7 +41,10 @@ impl SqliteDbState {
+         })?;
+         initialize_file_connection(&mut conn, &db_path)?;
+         Ok(Self {
+-            conn: Arc::new(Mutex::new(conn)),
++            conn: Arc::new(Mutex::new(SharedConnection {
++                connection: conn,
++                lifetime_owner: None,
++            })),
+             db_path,
+         })
+     }
+@@ -36,7 +54,10 @@ impl SqliteDbState {
+             .map_err(|error| format!("Failed to open in-memory SQLite database: {error}"))?;
+         initialize_connection(&mut conn)?;
+         Ok(Self {
+-            conn: Arc::new(Mutex::new(conn)),
++            conn: Arc::new(Mutex::new(SharedConnection {
++                connection: conn,
++                lifetime_owner: None,
++            })),
+             db_path: PathBuf::from(":memory:"),
+         })
+     }
+@@ -49,9 +70,12 @@ impl SqliteDbState {
+             .conn
+             .lock()
+             .map_err(|_| "SQLite connection mutex is poisoned".to_string())?;
+-        operation(&conn)
++        operation(&conn.connection)
+     }
+ 
++    /// After owner retention, trusted callers must not replace, swap or move
++    /// out the Connection, or let it escape the shared holder. A future need
++    /// for replacement requires a separate detach/reattach lifecycle.
+     pub fn with_conn_mut<T>(
+         &self,
+         operation: impl FnOnce(&mut Connection) -> Result<T, String>,
+@@ -60,7 +84,36 @@ impl SqliteDbState {
+             .conn
+             .lock()
+             .map_err(|_| "SQLite connection mutex is poisoned".to_string())?;
+-        operation(&mut conn)
++        operation(&mut conn.connection)
++    }
++
++    /// Validate and retain an owner until the shared connection closes.
++    /// This does not acquire ownership, validate paths, or initialize storage.
++    /// The caller supplies read-only validation, performed under the same mutex
++    /// as guard installation, and must not supply a guard retaining this state.
++    /// Rebinding to another allocation is rejected; validation failure never
++    /// installs a guard. This is a trusted Rust boundary, not a SQL endpoint.
++    /// Retention requires the with_conn_mut no-replacement contract: reopening
++    /// the same path/inode does not prove original connection identity.
++    pub fn retain_lifetime_owner_checked<T, E>(
++        &self,
++        owner: Arc<dyn Send + Sync>,
++        validate: impl FnOnce(&Connection) -> Result<T, E>,
++    ) -> Result<T, LifetimeOwnerError<E>> {
++        let mut shared = self
++            .conn
++            .lock()
++            .map_err(|_| LifetimeOwnerError::Unavailable)?;
++        if let Some(current) = &shared.lifetime_owner {
++            if !Arc::ptr_eq(current, &owner) {
++                return Err(LifetimeOwnerError::DifferentOwner);
++            }
++        }
++        let result = validate(&shared.connection).map_err(LifetimeOwnerError::Validation)?;
++        if shared.lifetime_owner.is_none() {
++            shared.lifetime_owner = Some(owner);
++        }
++        Ok(result)
+     }
+ 
+     pub fn db_path(&self) -> &Path {
+@@ -72,6 +125,10 @@ impl SqliteDbState {
+     }
+ }
+ 
++#[cfg(all(test, target_os = "linux"))]
++#[path = "sqlite_state/lifetime_tests.rs"]
++mod lifetime_tests;
++
+ pub fn initialize_connection(conn: &mut Connection) -> Result<(), String> {
+     initialize_connection_inner(conn, None)
+ }
+diff --git a/crates/ai-toolbox-storage/src/sqlite_state/lifetime_tests.rs b/crates/ai-toolbox-storage/src/sqlite_state/lifetime_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..471eccaf06dc6542bb1c8b047b6c537a582b3049
+--- /dev/null
++++ b/crates/ai-toolbox-storage/src/sqlite_state/lifetime_tests.rs
+@@ -0,0 +1,83 @@
++use super::*;
++use std::sync::atomic::{AtomicBool, Ordering};
++
++struct CloseProbe {
++    wal: PathBuf,
++    shm: PathBuf,
++    closed_before_release: Arc<AtomicBool>,
++}
++
++impl Drop for CloseProbe {
++    fn drop(&mut self) {
++        // SQLite's last real WAL connection removes these files on close.
++        // Observe from the guard destructor, not after the whole state drops.
++        self.closed_before_release.store(
++            !self.wal.exists() && !self.shm.exists(), Ordering::SeqCst,
++        );
++    }
++}
++
++#[test]
++fn shared_connection_closes_before_lifetime_owner_is_dropped() {
++    let root = tempfile::tempdir().unwrap();
++    let path = root.path().join("synthetic.db");
++    let connection = Connection::open(&path).unwrap();
++    connection.execute_batch(
++        "PRAGMA journal_mode = WAL; CREATE TABLE probe(value INTEGER); INSERT INTO probe VALUES (1);"
++    ).unwrap();
++    let wal = root.path().join("synthetic.db-wal");
++    let shm = root.path().join("synthetic.db-shm");
++    assert!(wal.exists() && shm.exists());
++    let state = SqliteDbState {
++        conn: Arc::new(Mutex::new(SharedConnection { connection, lifetime_owner: None })),
++        db_path: path,
++    };
++    let old_clone = state.clone();
++    let closed_before_release = Arc::new(AtomicBool::new(false));
++    state.retain_lifetime_owner_checked(Arc::new(CloseProbe {
++        wal, shm, closed_before_release: closed_before_release.clone(),
++    }), |_| Ok::<_, ()>(())).unwrap();
++    let later_clone = state.clone();
++    drop(state);
++    drop(old_clone);
++    assert!(!closed_before_release.load(Ordering::SeqCst));
++    drop(later_clone);
++    assert!(closed_before_release.load(Ordering::SeqCst));
++}
++
++#[test]
++fn lifetime_owner_binding_is_idempotent_and_never_overwrites_another_owner() {
++    let state = SqliteDbState::in_memory_for_test().unwrap();
++    let owner: Arc<dyn Send + Sync> = Arc::new(7_u8);
++    let other: Arc<dyn Send + Sync> = Arc::new(7_u8);
++    let original = Arc::downgrade(&owner);
++    let rejected = Arc::downgrade(&other);
++    state.retain_lifetime_owner_checked(owner.clone(), |_| Ok::<_, ()>(())).unwrap();
++    state.clone().retain_lifetime_owner_checked(owner.clone(), |_| Ok::<_, ()>(())).unwrap();
++    assert_eq!(Arc::strong_count(&owner), 2);
++    assert!(matches!(state.retain_lifetime_owner_checked(other.clone(), |_| Ok::<_, ()>(())),
++        Err(LifetimeOwnerError::DifferentOwner)));
++    assert_eq!(Arc::strong_count(&other), 1);
++    drop(owner);
++    drop(other);
++    assert!(original.upgrade().is_some());
++    assert!(rejected.upgrade().is_none());
++    drop(state);
++    assert!(original.upgrade().is_none());
++}
++
++#[test]
++fn failed_validation_never_installs_an_owner_and_runs_under_connection_mutex() {
++    let state = SqliteDbState::in_memory_for_test().unwrap();
++    let owner: Arc<dyn Send + Sync> = Arc::new(7_u8);
++    let weak = Arc::downgrade(&owner);
++    let outcome = state.retain_lifetime_owner_checked(owner, |connection| {
++        assert!(state.conn.try_lock().is_err());
++        assert!(connection.is_autocommit());
++        Err::<(), _>("synthetic validation failure")
++    });
++    assert!(matches!(outcome, Err(LifetimeOwnerError::Validation("synthetic validation failure"))));
++    assert!(weak.upgrade().is_none());
++    let different_owner: Arc<dyn Send + Sync> = Arc::new(8_u8);
++    state.retain_lifetime_owner_checked(different_owner, |_| Ok::<_, ()>(())).unwrap();
++}
