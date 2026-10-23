@@ -9,7 +9,7 @@
     "crates/ai-toolbox-management/src/lib.rs": "4c92e1bab1d5719dd8a96aa425b376f8bd84266aef8b97009e6c2aafca3ff238",
     "crates/ai-toolbox-management/src/owner.rs": "80faa92b83aebcdcf69b8c3837b15152bd3fb19de50c2fb75ce21b7197c92367",
     "crates/ai-toolbox-management/src/transport.rs": "8664f6c929fb95699983c4c439794e96378ac2bc5388e6001ea3ba9e530db955",
-    "crates/ai-toolbox-management/tests/owner_process.rs": "89167958c34a3f7b75cdafc5b50e5c8912679dd8fee18096c012683882872ba1",
+    "crates/ai-toolbox-management/tests/owner_process.rs": "771a1844fb4051373356efab6b69d9be4c05f50d0483496799e731892a32676e",
     "crates/ai-toolbox-management/tests/support/bounded_shell.rs": "afb4fa4e5f05b8389876f2fedb2def8aa939b2d0fec98139bef64d12bc9d35c9"
   },
   "ignored": [
@@ -46,7 +46,7 @@
     ]
   },
   "owner_parents": 11,
-  "patch_sha256": "e139ee3609da1eb048c07f58522cd7a8c8579ab50e02e4dd935e272ee4b613fc",
+  "patch_sha256": "7419bf24adfb9992e5caf0a375a70db5fc09ac9d31a45224e2ca8d3e6c396369",
   "preserved": {
     "crates/ai-toolbox-codex-config/Cargo.lock": "4a51e694d1bc7b9553085c47027b508ca9240081a4f4c5a9bc8d04c076ff8970",
     "crates/ai-toolbox-storage/Cargo.lock": "cb14e4cabd3e074917823d8a33a86916540b8d26cbffc6a32cf5020e00ccdaf8",

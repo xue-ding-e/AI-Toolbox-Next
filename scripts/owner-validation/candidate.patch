@@ -1793,14 +1793,14 @@ index 0000000000000000000000000000000000000000..839593fb737a00f137074c61cea7ec3a
 +}
 diff --git a/crates/ai-toolbox-management/tests/owner_process.rs b/crates/ai-toolbox-management/tests/owner_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..94be194c11565239384393d606845a98250e98a6
+index 0000000000000000000000000000000000000000..c4a0f94a91ee9a8b476798fcc2ce78ed21283144
 --- /dev/null
 +++ b/crates/ai-toolbox-management/tests/owner_process.rs
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,564 @@
 +//! Linux-only synthetic acceptance drafts. These exercise this test executable,
 +//! NOT the installed GUI/CLI or a different operating-system user's session.
-+//! Each parent explicitly launches the ignored actor and verifies its completion
-+//! marker; the actor being ignored in the normal test listing is not coverage.
++//! Each parent explicitly launches the ignored actor and verifies its normal
++//! completion or the single deliberate abrupt-exit marker; the actor being ignored in the normal test listing is not coverage.
 +
 +#![cfg(target_os = "linux")]
 +
@@ -1828,6 +1828,8 @@ index 0000000000000000000000000000000000000000..94be194c11565239384393d606845a98
 +
 +static SERIAL: Mutex<()> = Mutex::new(());
 +const MARKER: &[u8] = b"ai-toolbox-owner-synthetic-v1";
++const ABRUPT_MARKER: &[u8] = b"synthetic-owner-abrupt-exit-v1";
++const ABRUPT_EXIT: i32 = 73;
 +const WORK_LIMIT: Duration = Duration::from_secs(13);
 +const CHILD_LIMIT: Duration = Duration::from_secs(8);
 +const CLEANUP_LIMIT: Duration = Duration::from_secs(2);
@@ -1947,6 +1949,30 @@ index 0000000000000000000000000000000000000000..94be194c11565239384393d606845a98
 +                return;
 +            }
 +            assert!(Instant::now() < self.actors[index].deadline, "actor completion deadline exceeded");
++            std::thread::sleep(Duration::from_millis(10));
++        }
++    }
++
++    // Only the named stale-owner fixture deliberately exits before libtest/Drop.
++    // Do not count this as a child test pass; require a distinct exit and marker.
++    fn wait_abrupt_owner(&mut self, index: usize) {
++        assert_eq!(self.actors[index].id, "stale");
++        loop {
++            if let Some(status) = self.actors[index].child.try_wait().unwrap() {
++                assert_eq!(status.code(), Some(ABRUPT_EXIT), "unexpected abrupt actor exit");
++                assert_eq!(fs::read(self.path("abrupt-stale")).unwrap(), ABRUPT_MARKER);
++                assert!(!self.path("complete-stale").exists(), "abrupt actor must not claim normal completion");
++                let mut output = Vec::new();
++                File::open(self.path("stale.stdout")).unwrap()
++                    .take(DIAGNOSTIC_LIMIT + 1).read_to_end(&mut output).unwrap();
++                assert!(output.len() <= DIAGNOSTIC_LIMIT as usize);
++                let output = std::str::from_utf8(&output).unwrap();
++                assert!(!output.contains("test result:"), "abrupt actor unexpectedly returned through libtest");
++                self.actors[index].observed = true;
++                eprintln!("verified abrupt actor execution: stale");
++                return;
++            }
++            assert!(Instant::now() < self.actors[index].deadline, "abrupt actor completion deadline exceeded");
 +            std::thread::sleep(Duration::from_millis(10));
 +        }
 +    }
@@ -2242,7 +2268,7 @@ index 0000000000000000000000000000000000000000..94be194c11565239384393d606845a98
 +fn crashed_owner_leaves_an_explicit_stale_endpoint_conflict() {
 +    let mut fixture = Fixture::new();
 +    let child = fixture.spawn("stale", "serve", "stale");
-+    fixture.wait(child);
++    fixture.wait_abrupt_owner(child);
 +    let profile = ProfileIdentity::existing(fixture.path("p")).unwrap();
 +    let runtime = RuntimeDirectory::existing(fixture.path("r")).unwrap();
 +    let socket = runtime.path().join(endpoint_basename(profile.key()));
@@ -2305,10 +2331,11 @@ index 0000000000000000000000000000000000000000..94be194c11565239384393d606845a98
 +                let server = OwnerServer::bind(owner, RuntimeDirectory::existing(root.join("r")).unwrap()).unwrap();
 +                ready();
 +                if argument == "stale" {
-+                    complete();
++                    assert_eq!(id, "stale");
++                    fs::write(root.join("abrupt-stale"), ABRUPT_MARKER).unwrap();
 +                    // Model abrupt owner loss without running Rust Drop. OS
 +                    // closes its handles; only the synthetic socket remains.
-+                    std::process::exit(0);
++                    std::process::exit(ABRUPT_EXIT);
 +                }
 +                let accepted = server.accept().await;
 +                match argument.as_str() {
