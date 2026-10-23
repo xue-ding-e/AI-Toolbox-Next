@@ -1,7 +1,7 @@
 {
   "candidate_commit": null,
   "candidate_files": {
-    "tauri/Cargo.lock": "12da5d710aaf40fcb486a113c7e4314999ddf6528f4acfbd89916eff788a96e1",
+    "tauri/Cargo.lock": "95e3ce5f0ac90009bffd90959cf177da4a9fe65bc45e993838298872a5d3508b",
     "tauri/Cargo.toml": "d12ab4998ad727f84e4be12d369d8628c03cce3d79adfa7ce9c4df7d50c88cb5",
     "tauri/src/coding/codex/AGENTS.md": "28b570f813595c82d0f36a97de2b3153985940ee761b0819e69568098b5800fa",
     "tauri/src/coding/codex/history_sync.rs": "8225674522dbabdaca906b478215c0c0acb37725796ee20fb4402ccd73aa1c20",
@@ -60,7 +60,7 @@
       "settings::backup::utils::tests::ordinary_binary_root_dir_payload_restores_without_metadata_interpretation"
     ]
   },
-  "patch_sha256": "cf51bb9d40f209bbc120fa5426299c56eb29fd7d54221eaf92c1ce195b66921e",
+  "patch_sha256": "2dd6591b0f9253726f1a36d85f0ce5ece63251a335786cded9e24ac2df3031db",
   "preserved_files": {
     "crates/ai-toolbox-codex-config/Cargo.lock": "4a51e694d1bc7b9553085c47027b508ca9240081a4f4c5a9bc8d04c076ff8970",
     "crates/ai-toolbox-management/Cargo.lock": "ae80438747c51bac2bb6b80a5eca05336ca510f5ffad9b3dd749d7fbe0c2e787",

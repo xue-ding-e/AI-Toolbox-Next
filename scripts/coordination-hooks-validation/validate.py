@@ -23,9 +23,9 @@ import tempfile
 
 BASE = '8a15ef04c88bf4404c482faf7166f6694985e401'
 REPO = "xue-ding-e/AI-Toolbox-Next"
-MANIFEST_SHA256 = 'a82bc3ec3ec0a7b7a191bc026a3bed3acf6b43403e56c3c91aa4cb418a4a4a05'
+MANIFEST_SHA256 = 'a8074000beaa3309551d27bb3fc45c1a918eaf0bfab2146061fae2825e36c025'
 CANDIDATE = None
-PATCH_SHA256 = 'cf51bb9d40f209bbc120fa5426299c56eb29fd7d54221eaf92c1ce195b66921e'
+PATCH_SHA256 = '2dd6591b0f9253726f1a36d85f0ce5ece63251a335786cded9e24ac2df3031db'
 BRANCH = "refs/heads/validation/coordination-artifact-hooks"
 CONTROL_PATHS = {
     ".github/workflows/maintenance-validation.yml",
@@ -274,7 +274,9 @@ def source_check(root, manifest):
     head = git("head", ["rev-parse", "HEAD"]).decode().strip()
     require(head == sha, "checkout does not match github.sha")
     parents = git("single-parent", ["rev-list", "--parents", "-n", "1", "HEAD"]).decode().split()
-    require(parents == [head, BASE], "validation must be a single-parent harness on exact base")
+    require(parents == [head, "6a584a01e76264a36b4218c53b024e20b3aa856b"], "validation must follow exact run1 harness")
+    prior = git("prior-parent", ["rev-list", "--parents", "-n", "1", parents[1]]).decode().split()
+    require(prior == [parents[1], BASE], "run1 harness must have exact source base parent")
     require(not git("clean-checkout", ["status", "--porcelain", "--untracked-files=all"]).strip(), "checkout is dirty")
     changed = set(git("changed-paths", ["diff", "--no-renames", "--name-only", BASE, "HEAD"]).decode().splitlines())
     require(changed == CONTROL_PATHS, "validation branch must change exactly the four harness files")
