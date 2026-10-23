@@ -65,6 +65,8 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- Owner 协调文件由 `ai_toolbox_management::transport::is_reserved_coordination_name` 的精确契约保护：两个固定 lock 名及两段 16 位小写 hex 的 socket 名；不能扩大为全部 dotfile/lock/socket。源 WalkDir 必须剪枝，文件 sink 同时校验 source 与 archive 名。恢复先只读预扫所有归档名、custom manifest 目标和将删除的 legacy DB tree，必须早于 SQLite restore、mkdir 或 staging；custom restore 仍是增量覆盖，不因目标根内存在普通 sibling owner lock 而整树拒绝。紧邻旧树删除复检并不消除 TOCTOU，任意硬链接/未审计业务 writer 仍不在此保护证明内。
+
 - 加密备份恢复/生成必须经过共享入口（`prepare_backup_bytes` / `generate.rs`）。任何渠道出现“缺密码、错密码、截断、篡改”都必须在**任何恢复写入之前**报错；`CryptoError::AuthFailed` 映射为 `passwordWrong`，`PasswordRequired` 映射为 `passwordRequired`，前端据此在同一次恢复选择中弹出密码框重试，取消与错误都不能修改数据库/外部配置。
 - 恢复的密码优先级：显式传入的一次性密码 > 本机凭据库；**凭据库读取失败也按 `passwordRequired` 处理**（用户可能知道密码，不能剥夺手动输入机会），但生成加密备份时凭据库不可用仍整体失败，绝不降级明文。改密码只影响今后备份，旧备份仍用创建时密码；关闭加密不重写旧备份，也不清理已存密码。
 - 文件名解析的所有定长切片必须走 `str::get`（非字符边界返回 None），不能 `&body[..15]` / `split_at` 直切——多字节主机标签（如中文 legacy 前缀）会直接 panic，且调度器不会捕获该 panic。
