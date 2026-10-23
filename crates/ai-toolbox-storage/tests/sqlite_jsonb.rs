@@ -95,6 +95,7 @@ fn v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records(
         .map(|entry| entry.unwrap().path())
         .collect();
     assert_eq!(snapshots.len(), 1);
+    let snapshot_bytes = std::fs::read(&snapshots[0]).unwrap();
     let snapshot = rusqlite::Connection::open_with_flags(
         &snapshots[0],
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -106,6 +107,9 @@ fn v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records(
         db_get(&snapshot, DbTable::CodexCommonConfig, "common").unwrap(),
         Some(original)
     );
+    let entries_after_snapshot_read: Vec<_> = std::fs::read_dir(dir.path().join(SQLITE_MIGRATION_BACKUP_DIR))
+        .unwrap().map(|entry| entry.unwrap().file_name()).collect();
+    eprintln!("backup directory immediately after read-only snapshot queries: {entries_after_snapshot_read:?}");
     state.with_conn_mut(migrations::run_all).unwrap();
     drop(state);
     let reopened = SqliteDbState::open(path).unwrap();
@@ -115,12 +119,27 @@ fn v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records(
             Ok(())
         })
         .unwrap();
-    assert_eq!(
-        std::fs::read_dir(dir.path().join(SQLITE_MIGRATION_BACKUP_DIR))
-            .unwrap()
-            .count(),
-        1
-    );
+    // Reading a WAL-mode backup through SQLITE_OPEN_READ_ONLY may create
+    // its -wal/-shm companions. These are not additional migration backups.
+    let mut entries: Vec<_> = std::fs::read_dir(dir.path().join(SQLITE_MIGRATION_BACKUP_DIR))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    entries.sort();
+    let backup_name = snapshots[0].file_name().unwrap().to_str().unwrap();
+    let allowed = [backup_name.to_owned(), format!("{backup_name}-wal"), format!("{backup_name}-shm")];
+    for entry in &entries {
+        assert!(entry.is_file());
+        assert!(allowed.iter().any(|name| entry.file_name().unwrap() == name.as_str()),
+                "unexpected backup-directory entry: {:?}", entry.file_name());
+    }
+    let database_snapshots: Vec<_> = entries.iter()
+        .filter(|entry| entry.extension().is_some_and(|extension| extension == "db"))
+        .cloned().collect();
+    assert_eq!(database_snapshots, snapshots);
+    assert_eq!(std::fs::read(&snapshots[0]).unwrap(), snapshot_bytes);
+    eprintln!("backup directory after reopen: {:?}",
+              entries.iter().map(|entry| entry.file_name().unwrap()).collect::<Vec<_>>());
 }
 
 #[test]
