@@ -13,6 +13,9 @@
 - 缓存与 bundled seed、桌面远端同步均只用 INSERT OR IGNORE 补缺，不能覆盖用户已有价格。共享 parser、Decimal 校验与缓存写入只有一份；桌面网络请求继续走原 http_client 与代理设置，不把 HTTP 或应用设置引入这里。
 - CACHE_DIR 是进程级 OnceLock，当前生命周期仅支持启动时设置一次的单 profile。不要把同一进程内反复调用 set_cache_dir 当作切换 profile；不能据此宣称多 profile 隔离已经实现。
 - 该抽取不是进程 owner、daemon、CLI 管理入口或只读访问模式。open 仍可能设置 WAL、迁移并补 seed，不能用于承诺无文件变更的读取命令。WAL/SHM 与跨进程所有权方案须独立设计验证。
+- 共享连接可以保留一个无反向 management 依赖的 opaque owner lease；所有已有和后续 DB clone 共用它，最后先释放真实 Connection，再释放 lease。lease 不得引用 DB state，避免形成循环。只读验证与首次保留在同一个连接互斥内完成，验证失败不安装；同一 Arc 分配重复保留是幂等操作，不同分配必须拒绝，不能替换原 owner。
+- 该保活机制不获取所有权、不执行初始化，也不能追认调用方已经满足 owner-before-open。它是可信 Rust 调用边界，不是恶意进程内代码隔离；with_conn_mut 保留原签名，业务服务仍须在锁内重新核对真实 main 连接，不能只相信缓存路径。伴随文件可由 SQLite 合法创建或移除，不能把主库 inode 的长期身份约束扩大为 WAL/SHM/journal 永久不变。
+- 保留 owner 后，with_conn_mut 调用方不得 replace、swap、移出 Connection，或让原连接逃逸共享 holder；真正需要替换时须另行设计 detach/reattach 生命周期。同路径、同 inode 上重新打开连接仍可能通过文件身份检查，这不证明它是原连接，也不保留原事务或 hook；不得用裸指针相等声称解决该身份或 ABA 问题。
 - 不用通用 callback/no-op seed 替换原初始化，不把备份、安全检查或错误传播变成调用方可跳过的默认选项。
 - v30 新增 Codex context 专用 JSONB 操作账本；fresh 库的 v1 通过 `ALL_TABLES` 建好表，v30 幂等建表是为升级既有 v29 库，不修改已发布迁移。真实文件升级仍须经过原快照与未来版本拒绝路径。
 - 账本接口只接受有限长安全标识、固定长度摘要、正整数结果和封闭阶段/错误枚举，不保存原始配置、认证、路径或任意错误文本。它不执行投影或声明回滚，不用其它业务表代替。

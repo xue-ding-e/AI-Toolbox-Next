@@ -12,8 +12,23 @@ pub const SQLITE_MIGRATION_BACKUP_DIR: &str = "sqlite-migration-backups";
 
 #[derive(Clone)]
 pub struct SqliteDbState {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Mutex<SharedConnection>>,
     db_path: PathBuf,
+}
+
+// All existing and future SqliteDbState clones share this lifetime. Field order
+// closes the real connection before releasing an attached opaque owner lease.
+// The lease must not retain this state, which would create a reference cycle.
+struct SharedConnection {
+    connection: Connection,
+    lifetime_owner: Option<Arc<dyn Send + Sync>>,
+}
+
+#[derive(Debug)]
+pub enum LifetimeOwnerError<E> {
+    Unavailable,
+    DifferentOwner,
+    Validation(E),
 }
 
 impl SqliteDbState {
@@ -26,7 +41,10 @@ impl SqliteDbState {
         })?;
         initialize_file_connection(&mut conn, &db_path)?;
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            conn: Arc::new(Mutex::new(SharedConnection {
+                connection: conn,
+                lifetime_owner: None,
+            })),
             db_path,
         })
     }
@@ -36,7 +54,10 @@ impl SqliteDbState {
             .map_err(|error| format!("Failed to open in-memory SQLite database: {error}"))?;
         initialize_connection(&mut conn)?;
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            conn: Arc::new(Mutex::new(SharedConnection {
+                connection: conn,
+                lifetime_owner: None,
+            })),
             db_path: PathBuf::from(":memory:"),
         })
     }
@@ -49,9 +70,12 @@ impl SqliteDbState {
             .conn
             .lock()
             .map_err(|_| "SQLite connection mutex is poisoned".to_string())?;
-        operation(&conn)
+        operation(&conn.connection)
     }
 
+    /// After owner retention, trusted callers must not replace, swap or move
+    /// out the Connection, or let it escape the shared holder. A future need
+    /// for replacement requires a separate detach/reattach lifecycle.
     pub fn with_conn_mut<T>(
         &self,
         operation: impl FnOnce(&mut Connection) -> Result<T, String>,
@@ -60,7 +84,36 @@ impl SqliteDbState {
             .conn
             .lock()
             .map_err(|_| "SQLite connection mutex is poisoned".to_string())?;
-        operation(&mut conn)
+        operation(&mut conn.connection)
+    }
+
+    /// Validate and retain an owner until the shared connection closes.
+    /// This does not acquire ownership, validate paths, or initialize storage.
+    /// The caller supplies read-only validation, performed under the same mutex
+    /// as guard installation, and must not supply a guard retaining this state.
+    /// Rebinding to another allocation is rejected; validation failure never
+    /// installs a guard. This is a trusted Rust boundary, not a SQL endpoint.
+    /// Retention requires the with_conn_mut no-replacement contract: reopening
+    /// the same path/inode does not prove original connection identity.
+    pub fn retain_lifetime_owner_checked<T, E>(
+        &self,
+        owner: Arc<dyn Send + Sync>,
+        validate: impl FnOnce(&Connection) -> Result<T, E>,
+    ) -> Result<T, LifetimeOwnerError<E>> {
+        let mut shared = self
+            .conn
+            .lock()
+            .map_err(|_| LifetimeOwnerError::Unavailable)?;
+        if let Some(current) = &shared.lifetime_owner {
+            if !Arc::ptr_eq(current, &owner) {
+                return Err(LifetimeOwnerError::DifferentOwner);
+            }
+        }
+        let result = validate(&shared.connection).map_err(LifetimeOwnerError::Validation)?;
+        if shared.lifetime_owner.is_none() {
+            shared.lifetime_owner = Some(owner);
+        }
+        Ok(result)
     }
 
     pub fn db_path(&self) -> &Path {
@@ -71,6 +124,10 @@ impl SqliteDbState {
         self
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "sqlite_state/lifetime_tests.rs"]
+mod lifetime_tests;
 
 pub fn initialize_connection(conn: &mut Connection) -> Result<(), String> {
     initialize_connection_inner(conn, None)
