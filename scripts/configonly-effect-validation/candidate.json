@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "state": "sealed-input-pending-harness-review",
+  "base": "044e45d373fc078c3affa1628b5cb4286bb36d77",
+  "base_tree": "f4d64278fbbef295971acf6fea69f0da8c2beecd",
+  "patch_sha256": "3bfa65a93779a52fa58947bce0f6f89026eb53305d794ebe8c5a39d2c3ce02dc",
+  "files": {
+    "crates/ai-toolbox-management/AGENTS.md": "810e3440094a55bf57a6eb0b1bb6eecdf2c94238c70a8a5e222bb54f1c3e846a",
+    "crates/ai-toolbox-management/Cargo.lock": "6ac7f1ba5992dc95cb0dbbb10034079793ab006b2064244e4224be4ebcfd722f",
+    "crates/ai-toolbox-management/Cargo.toml": "0f8e50c494ec69d6ab2085412309574c0e716a76a2a00720dc2ea1cce757e5f2",
+    "crates/ai-toolbox-management/src/codex_master.rs": "ad7c58bd1204b556c97fed0d6fc01d18cbed8838defd327486d075e47a9c8cb7",
+    "crates/ai-toolbox-management/src/codex_service.rs": "2174591eb0f80dac0b84e3a99b464497fa0e6767d3dee8f11ccc3abc37695419",
+    "crates/ai-toolbox-management/src/config_file.rs": "d2f8c2fe91599d66602043b1bed98b1b0b422646a6369c1ffc43e8de94f4e4dc",
+    "crates/ai-toolbox-management/src/lib.rs": "53a6e1869d2c30fee7df0a3a134ac03137243391b53551d4dbc2353329157e02",
+    "crates/ai-toolbox-management/src/owner.rs": "d465ecc104cb81ee0c6f4ce02a4ca074c8af63c133b178d157f9ae94d6d551f5"
+  },
+  "preserved": {
+    "crates/ai-toolbox-codex-config/AGENTS.md": "ee4fbcb9faec4f27381e110fef76881bf62cbc764b20c1505687a71a45acbf4d",
+    "crates/ai-toolbox-codex-config/Cargo.lock": "4a51e694d1bc7b9553085c47027b508ca9240081a4f4c5a9bc8d04c076ff8970",
+    "crates/ai-toolbox-codex-config/Cargo.toml": "f173084460094ae5838847bd3b1bcae6b689860fcd4b2d22c14842909d404c93",
+    "crates/ai-toolbox-codex-config/src/lib.rs": "cb76ff38823b52c3f36aaa3ed0374838a908303feb8de480852ef1e286b50e7b",
+    "crates/ai-toolbox-codex-config/src/plan.rs": "916fbcaef8bd5aa11bbb482e8e73cff2a9badd457adebf2c63bcf97823776dad",
+    "crates/ai-toolbox-management/src/coordination.rs": "fcc8a32f09b0a9dae85aa32a224055e5e59fab46f7d8b298ffcb66709f51780f",
+    "crates/ai-toolbox-management/src/transport.rs": "8664f6c929fb95699983c4c439794e96378ac2bc5388e6001ea3ba9e530db955",
+    "crates/ai-toolbox-management/tests/owner_process.rs": "771a1844fb4051373356efab6b69d9be4c05f50d0483496799e731892a32676e",
+    "crates/ai-toolbox-management/tests/support/bounded_shell.rs": "afb4fa4e5f05b8389876f2fedb2def8aa939b2d0fec98139bef64d12bc9d35c9",
+    "crates/ai-toolbox-storage/AGENTS.md": "d1657da4feca0aa597df1fba7596971442b3201d1458160ea44d1a2f88457410",
+    "crates/ai-toolbox-storage/Cargo.lock": "cb14e4cabd3e074917823d8a33a86916540b8d26cbffc6a32cf5020e00ccdaf8",
+    "crates/ai-toolbox-storage/Cargo.toml": "782019fd09158703e481c4b05e5d70b6cef0dfd9c8fae0ab433df82b0286d9c8",
+    "crates/ai-toolbox-storage/src/backup.rs": "c15dc55ad685d98281f64871af3450c1ea4db5ead97b93c985dca490af42515c",
+    "crates/ai-toolbox-storage/src/change_hook.rs": "d01ebb53f2e5075ae7bed3fdfa9c23bad00ecfee2c4e304836628c0b1e22d2dd",
+    "crates/ai-toolbox-storage/src/codex_context_journal.rs": "8fd6431b629bc9770df72d1474aa42a9803a1d9c2a5f73b30b233c68521c76b8",
+    "crates/ai-toolbox-storage/src/health.rs": "b4e12dc2b323f6f09b2a166a034dcf24eef55d25907aac7e0bac124fd2f40458",
+    "crates/ai-toolbox-storage/src/helpers.rs": "a090acb5c79b9ef150aebc41b27479695cbc48070d10e0751f8a8294c4d773ee",
+    "crates/ai-toolbox-storage/src/lib.rs": "86d9bdb60a8a220e7cf55d665382bb85882ea7b5dd81ffe91b0da10c64b25b42",
+    "crates/ai-toolbox-storage/src/migrations.rs": "2a1d581a536badf77d1062cd97081084692040a31adfc92db7ab8757c592185a",
+    "crates/ai-toolbox-storage/src/model_pricing_seed.rs": "ebcab13d8b48812824ff8b59b3204ce03ec31661180c873d4641608c0ec9fd60",
+    "crates/ai-toolbox-storage/src/schema.rs": "8de8d63a464d25147716f5d5a52809fb0060330312d912e045eb4b7cf84923b9",
+    "crates/ai-toolbox-storage/src/sqlite_state.rs": "148ac019639a4a70ce121ca0ccf5ac79fc809363de506f3ee509b74cd922b6a8",
+    "crates/ai-toolbox-storage/tests/codex_context_journal.rs": "e94103a12fc7102d0fb00edf493abe4533aede68602d39041d385dbb3074c630",
+    "crates/ai-toolbox-storage/tests/sqlite_jsonb.rs": "cb391577e4b99130993c9a8a6c43777e4dfb8d4352f3d3ef1f81c87d66f5688d",
+    "tauri/Cargo.lock": "95e3ce5f0ac90009bffd90959cf177da4a9fe65bc45e993838298872a5d3508b",
+    "tauri/Cargo.toml": "d12ab4998ad727f84e4be12d369d8628c03cce3d79adfa7ce9c4df7d50c88cb5",
+    "tauri/resources/model_pricing.json": "6912c04e6ec19d51b42db75c2cf7b927c89c6b855ab1220e3393b05b7636cc45"
+  },
+  "format_files": [
+    "crates/ai-toolbox-management/src/codex_master.rs",
+    "crates/ai-toolbox-management/src/codex_service.rs",
+    "crates/ai-toolbox-management/src/config_file.rs"
+  ],
+  "source_inventory": {
+    "crates/ai-toolbox-management/src/owner.rs": {
+      "prefix": "owner::linux::tests::",
+      "count": 2
+    },
+    "crates/ai-toolbox-management/src/transport.rs": {
+      "prefix": "transport::tests::",
+      "count": 3
+    },
+    "crates/ai-toolbox-management/src/coordination.rs": {
+      "prefix": "coordination::tests::",
+      "count": 6
+    },
+    "crates/ai-toolbox-management/tests/support/bounded_shell.rs": {
+      "prefix": "coordination::tests::shell_fixture::",
+      "count": 1
+    },
+    "crates/ai-toolbox-management/src/codex_master.rs": {
+      "prefix": "codex_master::tests::",
+      "count": 7
+    },
+    "crates/ai-toolbox-management/src/codex_service.rs": {
+      "prefix": "codex_service::tests::",
+      "count": 18
+    },
+    "crates/ai-toolbox-management/src/config_file.rs": {
+      "prefix": "config_file::tests::",
+      "count": 11
+    }
+  },
+  "inventories": {
+    "lib": [
+      "codex_master::tests::master_common_patch_preserves_non_config_fields",
+      "codex_master::tests::master_detects_unrelated_record_drift_before_patch",
+      "codex_master::tests::master_disabled_alias_matches_desktop_precedence_but_rejects_invalid_types",
+      "codex_master::tests::master_noop_and_rollback_preserve_original_records",
+      "codex_master::tests::master_provider_string_patch_preserves_auth_models_and_unknowns",
+      "codex_master::tests::master_rejects_ambiguous_applied_rows",
+      "codex_master::tests::master_rejects_settings_alias_not_consumed_by_desktop",
+      "codex_service::tests::disk_busy_writer_invalid_id_provider_and_unsafe_leaf_fail_before_master_change",
+      "codex_service::tests::disk_common_roundtrip_reopens_and_preserves_auth_unknowns_and_unrequested_fields",
+      "codex_service::tests::disk_interruption_after_real_rename_keeps_started_and_does_not_rewrite_on_reopen",
+      "codex_service::tests::disk_interruption_after_started_before_rename_replays_uncertain_without_write",
+      "codex_service::tests::disk_invalid_numeric_request_creates_no_runtime_lease_or_operation",
+      "codex_service::tests::disk_noop_verifies_without_replacing_file",
+      "codex_service::tests::disk_phase_sqlite_write_failure_preserves_saved_phase_not_fake_conflict",
+      "codex_service::tests::disk_preflight_and_noop_or_projected_readback_drift_keep_partial_status",
+      "codex_service::tests::disk_projected_unverified_reopens_without_claiming_verified",
+      "codex_service::tests::disk_provider_roundtrip_keeps_settings_string_auth_models_unknown_values",
+      "codex_service::tests::disk_real_commit_veto_never_reports_uncommitted_phase_as_success",
+      "codex_service::tests::disk_replace_rejection_and_failure_marker_commit_veto_remain_uncertain",
+      "codex_service::tests::disk_replay_after_new_epoch_does_not_replace_config_again",
+      "codex_service::tests::disk_replay_precedes_changed_provider_and_missing_runtime_inspection",
+      "codex_service::tests::disk_request_fingerprint_and_stale_revision_reject_without_new_effects",
+      "codex_service::tests::disk_runtime_lease_conflict_keeps_master_and_live_unchanged",
+      "codex_service::tests::disk_saved_only_replay_never_implicitly_resumes_new_request_can_recover",
+      "codex_service::tests::disk_synthetic_save_transaction_error_rolls_back_master_and_journal",
+      "config_file::tests::closing_staged_file_does_not_unlink_an_unknown_replacement",
+      "config_file::tests::hardlinked_config_is_rejected_without_mutating_either_name",
+      "config_file::tests::missing_config_is_rejected_without_creating_it",
+      "config_file::tests::noop_readback_is_fresh_and_does_not_replace_the_inode",
+      "config_file::tests::oversized_source_and_candidate_are_rejected_without_replacement",
+      "config_file::tests::real_replace_preserves_mode_owner_and_auth_and_returns_readback",
+      "config_file::tests::resource_permit_cannot_authorize_a_different_writer",
+      "config_file::tests::snapshot_content_drift_rejects_replace_on_the_same_inode",
+      "config_file::tests::snapshot_inode_drift_rejects_replace_even_with_identical_bytes",
+      "config_file::tests::successful_replace_preserves_unknown_temp_leaf",
+      "config_file::tests::symlink_config_is_rejected_without_mutating_link_or_target",
+      "coordination::tests::archive_components_reject_only_exact_reserved_shapes",
+      "coordination::tests::existing_reserved_lock_is_rejected_without_mutation",
+      "coordination::tests::ordinary_tree_and_missing_target_are_read_only_controls",
+      "coordination::tests::posix_guard_rejects_reserved_directories_dangling_links_and_sockets_without_mutation",
+      "coordination::tests::posix_tree_guard_rejects_ordinary_file_root_without_mutation",
+      "coordination::tests::shell_fixture::proc_stat_parser_distinguishes_live_members_from_zombies",
+      "coordination::tests::shell_globs_are_exact_and_paths_do_not_become_shell_source",
+      "owner::linux::tests::absolute_path_admission_is_pure_and_rejects_relative_forms",
+      "owner::linux::tests::local_filesystem_allowlist_is_narrow_and_not_overlay_backing_inference",
+      "transport::tests::handshake_and_operation_reject_unreviewed_input",
+      "transport::tests::peer_uid_comparison_only_is_not_a_native_cross_user_proof",
+      "transport::tests::reserved_names_are_exact_segments_not_a_dotfile_filter"
+    ],
+    "owner": [
+      "abnormal_lock_objects_fail_without_replacement",
+      "aliases_share_owner_and_writer_retains_the_lease",
+      "crashed_owner_leaves_an_explicit_stale_endpoint_conflict",
+      "fixture_process",
+      "missing_profile_client_does_not_create_state",
+      "owner_status_round_trip_is_a_real_local_process_exchange",
+      "peer_rejects_oversized_empty_and_truncated_frames",
+      "peer_rejects_version_epoch_and_profile_mismatch",
+      "profiles_and_aliases_contend_for_one_runtime_inode",
+      "runtime_directory_never_repairs_existing_mode_or_follows_leaf_symlink",
+      "runtime_order_is_physical_and_failed_acquisition_releases_its_prefix",
+      "stalled_partial_frame_has_a_total_deadline"
+    ]
+  },
+  "ordinary_passed": 59,
+  "lib_passed": 48,
+  "owner_parents": 11,
+  "ignored": [
+    "fixture_process"
+  ],
+  "actor_invocations": 13,
+  "normal_actor_passes": 12,
+  "abrupt_actor_exits": 1,
+  "budgets": {
+    "job_seconds": 1200,
+    "driver_seconds": 600,
+    "compile_seconds": 300,
+    "lib_seconds": 120,
+    "owner_seconds": 180,
+    "fixture_bytes": 33554432,
+    "fixture_entries": 512,
+    "test_file_bytes": 8388608
+  }
+}
