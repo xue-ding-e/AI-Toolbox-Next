@@ -3,9 +3,10 @@
 //!
 //! The original AI Toolbox authorship and repository license remain applicable.
 //! This crate has no filesystem, authentication, database, event, or runtime owner.
-//! Composition is not a live-file projection: runtime-owned field preservation,
+//! Composition is not a full live-file projection: runtime-owned field preservation,
 //! previous-managed cleanup, catalog generation, and application remain with the
 //! product service. Do not use this helper as a replacement for that service.
+//! Context-only projection plans preserve unrelated live text without file I/O.
 
 pub mod plan;
 
