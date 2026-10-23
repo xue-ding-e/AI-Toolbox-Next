@@ -30,7 +30,7 @@ jobs:
         timeout-minutes: 2
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - name: Verify reviewed source before setup
         timeout-minutes: 2
@@ -52,11 +52,17 @@ jobs:
           update_status=null
           install_status=null
           trap 'printf "{\"update_exit\":%s,\"install_exit\":%s,\"cleanup_boundary\":\"root GNU timeout and job hard limit; not independently verified\"}\n" "$update_status" "$install_status" > "$evidence/dependencies-summary.json"' EXIT
-          sudo -n timeout --signal=TERM --kill-after=10s 120s apt-get update > "$evidence/dependencies-apt-update.stdout.log" 2> "$evidence/dependencies-apt-update.stderr.log"
-          update_status=$?
+          if sudo -n timeout --signal=TERM --kill-after=10s 120s apt-get update > "$evidence/dependencies-apt-update.stdout.log" 2> "$evidence/dependencies-apt-update.stderr.log"; then
+            update_status=0
+          else
+            update_status=$?
+          fi
           test "$update_status" -eq 0 || exit "$update_status"
-          sudo -n timeout --signal=TERM --kill-after=10s 300s apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev > "$evidence/dependencies-apt-install.stdout.log" 2> "$evidence/dependencies-apt-install.stderr.log"
-          install_status=$?
+          if sudo -n timeout --signal=TERM --kill-after=10s 300s apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev > "$evidence/dependencies-apt-install.stdout.log" 2> "$evidence/dependencies-apt-install.stderr.log"; then
+            install_status=0
+          else
+            install_status=$?
+          fi
           exit "$install_status"
       - name: Compile shared storage and real desktop regression tests serially
         timeout-minutes: 25
