@@ -1,0 +1,56 @@
+{
+  "actor_invocations": 13,
+  "base": "55f70695e0bbd6921cf49b32006ab7fa9556b4f2",
+  "files": {
+    "crates/ai-toolbox-management/AGENTS.md": "58ef132e11b07799cd147a5d774484126f795d708d2233176df60198aa9736c3",
+    "crates/ai-toolbox-management/Cargo.lock": "ae80438747c51bac2bb6b80a5eca05336ca510f5ffad9b3dd749d7fbe0c2e787",
+    "crates/ai-toolbox-management/Cargo.toml": "117344ce10a963f9282fea8c49c9ca74ff0c044e911c9c500bc6240b10921c4f",
+    "crates/ai-toolbox-management/src/coordination.rs": "fcc8a32f09b0a9dae85aa32a224055e5e59fab46f7d8b298ffcb66709f51780f",
+    "crates/ai-toolbox-management/src/lib.rs": "4c92e1bab1d5719dd8a96aa425b376f8bd84266aef8b97009e6c2aafca3ff238",
+    "crates/ai-toolbox-management/src/owner.rs": "80faa92b83aebcdcf69b8c3837b15152bd3fb19de50c2fb75ce21b7197c92367",
+    "crates/ai-toolbox-management/src/transport.rs": "8664f6c929fb95699983c4c439794e96378ac2bc5388e6001ea3ba9e530db955",
+    "crates/ai-toolbox-management/tests/owner_process.rs": "7f37e452377d3375fc3d328732bf83c87723f3539e543008f5fa133429cb254a",
+    "crates/ai-toolbox-management/tests/support/bounded_shell.rs": "afb4fa4e5f05b8389876f2fedb2def8aa939b2d0fec98139bef64d12bc9d35c9"
+  },
+  "ignored": [
+    "fixture_process"
+  ],
+  "inventories": {
+    "lib": [
+      "coordination::tests::archive_components_reject_only_exact_reserved_shapes",
+      "coordination::tests::existing_reserved_lock_is_rejected_without_mutation",
+      "coordination::tests::ordinary_tree_and_missing_target_are_read_only_controls",
+      "coordination::tests::posix_guard_rejects_reserved_directories_dangling_links_and_sockets_without_mutation",
+      "coordination::tests::posix_tree_guard_rejects_ordinary_file_root_without_mutation",
+      "coordination::tests::shell_fixture::proc_stat_parser_distinguishes_live_members_from_zombies",
+      "coordination::tests::shell_globs_are_exact_and_paths_do_not_become_shell_source",
+      "owner::linux::tests::absolute_path_admission_is_pure_and_rejects_relative_forms",
+      "owner::linux::tests::local_filesystem_allowlist_is_narrow_and_not_overlay_backing_inference",
+      "transport::tests::handshake_and_operation_reject_unreviewed_input",
+      "transport::tests::peer_uid_comparison_only_is_not_a_native_cross_user_proof",
+      "transport::tests::reserved_names_are_exact_segments_not_a_dotfile_filter"
+    ],
+    "owner": [
+      "abnormal_lock_objects_fail_without_replacement",
+      "aliases_share_owner_and_writer_retains_the_lease",
+      "crashed_owner_leaves_an_explicit_stale_endpoint_conflict",
+      "fixture_process",
+      "missing_profile_client_does_not_create_state",
+      "owner_status_round_trip_is_a_real_local_process_exchange",
+      "peer_rejects_oversized_empty_and_truncated_frames",
+      "peer_rejects_version_epoch_and_profile_mismatch",
+      "profiles_and_aliases_contend_for_one_runtime_inode",
+      "runtime_directory_never_repairs_existing_mode_or_follows_leaf_symlink",
+      "runtime_order_is_physical_and_failed_acquisition_releases_its_prefix",
+      "stalled_partial_frame_has_a_total_deadline"
+    ]
+  },
+  "owner_parents": 11,
+  "patch_sha256": "fc9ef8d27f4f006453a84d223b63a05a7aecd6dd042ffac8e7b3d6189086318d",
+  "preserved": {
+    "crates/ai-toolbox-codex-config/Cargo.lock": "4a51e694d1bc7b9553085c47027b508ca9240081a4f4c5a9bc8d04c076ff8970",
+    "crates/ai-toolbox-storage/Cargo.lock": "cb14e4cabd3e074917823d8a33a86916540b8d26cbffc6a32cf5020e00ccdaf8",
+    "tauri/Cargo.lock": "c8b8a9092bbc4dc1a9c737e83df094410ae3a94777ec2c65712baa740baad623",
+    "tauri/Cargo.toml": "0ba5ce90b552cdb80abe97b82293105372e89c74c8d0b6ee65f88b78ba779a85"
+  }
+}
