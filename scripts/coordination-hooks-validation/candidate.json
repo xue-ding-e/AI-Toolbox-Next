@@ -12,7 +12,7 @@
     "tauri/src/coding/wsl/sync.rs": "4f0576b8e5372d8b45726efa2b72cf05951cad4254ec2593422eabb7f34f93aa",
     "tauri/src/settings/backup/AGENTS.md": "0e61f77d2649575263913735f396228e42808a83e5066c66c6d4df6b79192eee",
     "tauri/src/settings/backup/restore.rs": "f4328278b53a654c343521a8d6044cdb9382a56004cf51213f440795cf6e935e",
-    "tauri/src/settings/backup/utils.rs": "671b96ff5e0dd0e57b0b22a6a988a3b4422656da99c00ca0428612d57a614e45"
+    "tauri/src/settings/backup/utils.rs": "89d4ca98e379ccb9481bbdb110ef4d2585b8d7205dc0f3c0933da5ae281c7944"
   },
   "candidate_statuses": {
     "tauri/Cargo.lock": "M",
@@ -60,7 +60,7 @@
       "settings::backup::utils::tests::ordinary_binary_root_dir_payload_restores_without_metadata_interpretation"
     ]
   },
-  "patch_sha256": "2dd6591b0f9253726f1a36d85f0ce5ece63251a335786cded9e24ac2df3031db",
+  "patch_sha256": "4329510095ae21f2d9bdff98a3cc8738397b6030bb71d6c05e54de84eb174b14",
   "preserved_files": {
     "crates/ai-toolbox-codex-config/Cargo.lock": "4a51e694d1bc7b9553085c47027b508ca9240081a4f4c5a9bc8d04c076ff8970",
     "crates/ai-toolbox-management/Cargo.lock": "ae80438747c51bac2bb6b80a5eca05336ca510f5ffad9b3dd749d7fbe0c2e787",

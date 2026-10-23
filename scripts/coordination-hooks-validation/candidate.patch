@@ -988,7 +988,7 @@ index 60d01aa7045e00b98031c7e03c9338b652d990e7..e8650cd834f171479a8dc1dbdbf6d11f
              if file_name.ends_with('/') {
                  fs::create_dir_all(&outpath)
 diff --git a/tauri/src/settings/backup/utils.rs b/tauri/src/settings/backup/utils.rs
-index 1490729254e8b66a69c6d0bff2303092f35634ae..4b70f43c8b0283da82d68fa24a60b4d90aa6348f 100644
+index 1490729254e8b66a69c6d0bff2303092f35634ae..745550c581dd540d32d2f10aa7c9fb12e0d21d3e 100644
 --- a/tauri/src/settings/backup/utils.rs
 +++ b/tauri/src/settings/backup/utils.rs
 @@ -1,3 +1,4 @@
@@ -1362,7 +1362,7 @@ index 1490729254e8b66a69c6d0bff2303092f35634ae..4b70f43c8b0283da82d68fa24a60b4d9
              let entry = entry.map_err(|e| format!("Failed to read skills entry: {}", e))?;
              let path = entry.path();
              let relative_path = path
-@@ -4154,6 +4289,146 @@ mod tests {
+@@ -4154,6 +4289,147 @@ mod tests {
      use zip::write::SimpleFileOptions;
      use zip::{ZipArchive, ZipWriter};
  
@@ -1421,6 +1421,7 @@ index 1490729254e8b66a69c6d0bff2303092f35634ae..4b70f43c8b0283da82d68fa24a60b4d9
 +
 +    #[test]
 +    fn ordinary_binary_root_dir_payload_restores_without_metadata_interpretation() {
++        use std::io::Write;
 +        let fixture = tempfile::tempdir().unwrap();
 +        let source = fixture.path().join("root-dir.txt");
 +        let target = fixture.path().join("restored/root-dir.txt");
