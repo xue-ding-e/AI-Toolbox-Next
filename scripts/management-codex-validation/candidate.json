@@ -1,0 +1,42 @@
+{
+  "source_base": "f81e71ac1f232940e9bbc1039afe0198d06eb103",
+  "candidate_commit": "e1d1e6fe11a556016c59964b95e0c3cd572785ac",
+  "patch_sha256": "18af77ac89efd05c7c67edbb58fa80249c54854e163eeaf0ad7fcd8ea04bb780",
+  "candidate_files": {
+    "AGENTS.md": "367cdf90528cd6fde3340e72636effb8b0825e4ddf5c0b2462e009cf842ace3d",
+    "crates/ai-toolbox-codex-config/AGENTS.md": "6f4a5ea3aa4723accd308c27fdb1bc3192197e598fba0553365ecfbdf71e1561",
+    "crates/ai-toolbox-codex-config/Cargo.lock": "4a51e694d1bc7b9553085c47027b508ca9240081a4f4c5a9bc8d04c076ff8970",
+    "crates/ai-toolbox-codex-config/Cargo.toml": "f173084460094ae5838847bd3b1bcae6b689860fcd4b2d22c14842909d404c93",
+    "crates/ai-toolbox-codex-config/src/lib.rs": "9a87536a69e488b75312ba35724ae3e8a7fc57943eb48ae65f53c2d1f64a49fb",
+    "crates/ai-toolbox-codex-config/src/plan.rs": "409f058855768ee0044b9ac3b172fb71d278f3bda58217cd4814ff581522426f",
+    "tauri/Cargo.lock": "603aaec0a70933d2db7c5c5c5b795e760715f71e7a5fed7937cee4891c882f26",
+    "tauri/Cargo.toml": "e6fe3a331308effa71af0f040bdd60588d261df84a2987310f474f74a8bb2cbc",
+    "tauri/src/coding/codex/AGENTS.md": "fd6982685b63fc1ad752e1552c3d15e6dc04f306edfc9fd669292a9fe9db0340",
+    "tauri/src/coding/codex/commands.rs": "feb44597dd12e4033a5b1b7d72f2b5e9b55a1b988a1a660645b8e722d5f7f4e1"
+  },
+  "core_tests": [
+    "plan::tests::provider_cannot_hide_invalid_common_master_data",
+    "plan::tests::equal_numeric_patch_preserves_original_lexical_spelling",
+    "plan::tests::plans_requested_root_values_without_io_or_capacity_claim",
+    "plan::tests::absent_context_is_not_invented_from_model_cache",
+    "plan::tests::preserves_comments_unknown_sections_and_auth_text",
+    "plan::tests::provider_wins_and_shadowing_is_explicit",
+    "plan::tests::rejects_non_integer_effective_value_and_allows_equal_limit",
+    "plan::tests::rejects_zero_overflow_empty_and_invalid_toml",
+    "plan::tests::validates_effective_threshold_even_when_only_context_changes",
+    "tests::append_rejects_invalid_toml_when_composing_two_documents",
+    "tests::append_preserves_existing_empty_side_fast_path",
+    "tests::append_keeps_unmodified_comments_and_provider_precedence",
+    "plan::tests::repeated_patch_is_byte_noop",
+    "tests::append_toml_configs_keeps_explicit_provider_scalar_overrides",
+    "tests::append_toml_configs_keeps_common_root_keys_at_root",
+    "tests::parse_empty_document_and_report_context",
+    "tests::merge_replaces_non_tables_instead_of_inventing_array_or_inline_merges",
+    "tests::append_toml_configs_merges_common_tables_without_overwriting_provider_table"
+  ],
+  "desktop_tests": [
+    "coding::codex::commands::tests::append_toml_configs_keeps_common_root_keys_at_root",
+    "coding::codex::commands::tests::append_toml_configs_merges_common_tables_without_overwriting_provider_table",
+    "coding::codex::commands::tests::append_toml_configs_keeps_explicit_provider_scalar_overrides"
+  ]
+}
