@@ -15,6 +15,7 @@
 ## 核心设计决策（Why）
 
 - `config.toml` 不能靠字符串拼接合并 common/provider 配置，必须结构化 merge，避免顶层键被吞进 provider 表作用域。
+- 纯 TOML parse/common-provider merge 的唯一实现位于 `crates/ai-toolbox-codex-config`；桌面命令直接导入，不保留另一份 merger。该纯库不是 live 投影服务，不包含 runtime-owned 清理、auth、catalog、DB、事件或 owner；CLI 不能用它直接覆盖运行文件。
 - common config 是供应商共享默认值，provider 显式配置必须在应用时覆盖 common。入库拆分只能删除与 common 值相同的重复项，不得仅因字段同名就删除不同值；尤其要保留 provider 自己的 `model`、`model_reasoning_effort` 和 provider table 字段。
 - `auth.json` 与 `config.toml` 混有 Codex runtime 自有字段；AI Toolbox 只能改受管字段，不能整文件覆盖运行时状态。
 - `apply_config_internal` 统一负责写文件、更新 `is_applied`、发 `config-changed` 和 `wsl-sync-request-codex`。
