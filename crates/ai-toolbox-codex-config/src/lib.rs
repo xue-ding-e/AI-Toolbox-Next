@@ -7,6 +7,8 @@
 //! previous-managed cleanup, catalog generation, and application remain with the
 //! product service. Do not use this helper as a replacement for that service.
 
+pub mod plan;
+
 pub fn parse_toml_document(raw_toml: &str, context: &str) -> Result<toml_edit::DocumentMut, String> {
     if raw_toml.trim().is_empty() {
         Ok(toml_edit::DocumentMut::new())
