@@ -1,0 +1,2688 @@
+diff --git a/crates/ai-toolbox-management/AGENTS.md b/crates/ai-toolbox-management/AGENTS.md
+index fcdb7162779d56a334540b55c776c06dc21e490f..85d24bb3aac3f8524695adda3aabcf65552ebef9 100644
+--- a/crates/ai-toolbox-management/AGENTS.md
++++ b/crates/ai-toolbox-management/AGENTS.md
+@@ -15,7 +15,7 @@ This internal crate is an issue #41 candidate, not a complete headless service.
+ 
+ ## Codex data boundary
+ 
+-Future master-helper integration must read existing JSONB records through shared storage helpers; that helper is not part of this owner-primitives crate yet. Provider settings_config is a JSON string, not a nested JSONB object: preserve its other fields while replacing only config. Common patches retain root and unknown fields. Reuse the sole Codex planner, never add a separate merger or call the full auth/catalog writer for a context-only operation.
++The private Linux ConfigOnly service reads existing JSONB records through shared storage helpers. It remains unavailable through GUI, CLI or transport until full writer admission is closed. Provider settings_config is a JSON string, not a nested JSONB object: preserve its other fields while replacing only config. Common patches retain root and unknown fields. Reuse the sole Codex planner, never add a separate merger or call the full auth/catalog writer for a context-only operation.
+ 
+ Raw records/candidates can contain secrets. They are internal, non-serialized data, not default CLI output. Typed errors and operation records must not include raw TOML, auth, paths or arbitrary database errors. Revision and idempotency are separate: check an existing request before rejecting revision drift caused by that same request.
+ 
+@@ -24,3 +24,13 @@ Raw records/candidates can contain secrets. They are internal, non-serialized da
+ Only synthetic, isolated profiles may be used during development. Tests must prove real binary/DB/file effects and bounded cleanup, not just string generation. Until the complete admission map is connected, no GUI-owner or P0 business closure is claimed. Cold standalone owner lifecycle, Windows support, effect execution, recovery and installed artifacts remain separate acceptance work.
+ 
+ The synthetic owner suite must create its runtime root with explicit 0700 permissions rather than relying on the process umask. Normal actor tests require their own successful libtest result and completion marker; the single deliberate abrupt-exit actor uses a distinct exit code and marker because running Drop or libtest completion would invalidate that fixture. Report these executions separately.
++
++## Private ConfigOnly effect slice
++
++The internal service requires an existing database and an explicit stored absolute runtime root. Owner acquisition precedes shared database initialization, which may migrate or seed: this is writer initialization, never a zero-effect read command. Internal revision inspection also acquires runtime coordination leases and must not be advertised as a read-only CLI operation.
++
++Only the two typed context numbers are planned through the existing Codex planner. Master changes and SavedOnly journal insertion share one transaction. A committed ProjectionStarted transition is required before the fixed config.toml effect; replay never authorizes another write. Partial and uncertain outcomes are non-success and are not automatically retried. Explicit new requests require a fresh revision. This is not atomic database-plus-file commit or power-loss recovery.
++
++The file effect uses the held runtime directory FD and fixed config.toml leaf, preserves ordinary mode/uid/gid and checks identity/content before publishing and on readback. It never opens auth.json. ACL/xattr preservation, hostile same-UID race containment and Windows remain unsupported. Failed staging can retain an owned temporary file, initially created as 0600 and later set to the original config mode: do not unlink a pathname after a race or claim zero residual effects. Tests clean only their own isolated directory after all permits and database references are dropped.
++
++SQLite commit-hook veto fixtures test actual transaction commit rejection, not hardware I/O faults or power loss. Interruption checkpoints are controlled returns followed by close/reopen, not process crashes. Keep those evidence levels separate.
+diff --git a/crates/ai-toolbox-management/Cargo.lock b/crates/ai-toolbox-management/Cargo.lock
+index 354ac5f6de80329caa0faf9bc8931d8d9a0adbec..124fe438e1b859adb05dd0ddbf2a53b73ff0e11b 100644
+--- a/crates/ai-toolbox-management/Cargo.lock
++++ b/crates/ai-toolbox-management/Cargo.lock
+@@ -2,38 +2,237 @@
+ # It is not intended for manual editing.
+ version = 4
+ 
++[[package]]
++name = "ahash"
++version = "0.7.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "891477e0c6a8957309ee5c45a6368af3ae14bb510732d2684ffa19af310920f9"
++dependencies = [
++ "getrandom 0.2.17",
++ "once_cell",
++ "version_check",
++]
++
++[[package]]
++name = "ai-toolbox-codex-config"
++version = "0.1.0"
++dependencies = [
++ "toml_edit 0.22.27",
++]
++
+ [[package]]
+ name = "ai-toolbox-management"
+ version = "0.1.0"
+ dependencies = [
++ "ai-toolbox-codex-config",
++ "ai-toolbox-storage",
+  "fs2",
+- "getrandom",
++ "getrandom 0.3.4",
+  "libc",
++ "rusqlite",
+  "serde",
+  "serde_json",
++ "sha2",
+  "tempfile",
+  "thiserror",
+  "tokio",
+ ]
+ 
++[[package]]
++name = "ai-toolbox-storage"
++version = "0.1.0"
++dependencies = [
++ "chrono",
++ "log",
++ "rusqlite",
++ "rust_decimal",
++ "serde",
++ "serde_json",
++ "uuid",
++]
++
++[[package]]
++name = "android_system_properties"
++version = "0.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
++dependencies = [
++ "libc",
++]
++
++[[package]]
++name = "arrayvec"
++version = "0.7.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
++
++[[package]]
++name = "autocfg"
++version = "1.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
++
+ [[package]]
+ name = "bitflags"
+ version = "2.13.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+ 
++[[package]]
++name = "bitvec"
++version = "1.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
++dependencies = [
++ "funty",
++ "radium",
++ "tap",
++ "wyz",
++]
++
++[[package]]
++name = "block-buffer"
++version = "0.10.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
++dependencies = [
++ "generic-array",
++]
++
++[[package]]
++name = "borsh"
++version = "1.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d1da5ab77c1437701eeff7c88d968729e7766172279eab0676857b3d63af7a6f"
++dependencies = [
++ "borsh-derive",
++ "cfg_aliases",
++]
++
++[[package]]
++name = "borsh-derive"
++version = "1.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0686c856aa6aac0c4498f936d7d6a02df690f614c03e4d906d1018062b5c5e2c"
++dependencies = [
++ "once_cell",
++ "proc-macro-crate",
++ "proc-macro2",
++ "quote",
++ "syn 2.0.114",
++]
++
++[[package]]
++name = "bumpalo"
++version = "3.19.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
++
++[[package]]
++name = "bytecheck"
++version = "0.6.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "23cdc57ce23ac53c931e88a43d06d070a6fd142f2617be5855eb75efc9beb1c2"
++dependencies = [
++ "bytecheck_derive",
++ "ptr_meta",
++ "simdutf8",
++]
++
++[[package]]
++name = "bytecheck_derive"
++version = "0.6.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3db406d29fbcd95542e92559bed4d8ad92636d1ca8b3b72ede10b4bcc010e659"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 1.0.109",
++]
++
+ [[package]]
+ name = "bytes"
+ version = "1.11.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
+ 
++[[package]]
++name = "cc"
++version = "1.2.52"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cd4932aefd12402b36c60956a4fe0035421f544799057659ff86f923657aada3"
++dependencies = [
++ "find-msvc-tools",
++ "shlex",
++]
++
+ [[package]]
+ name = "cfg-if"
+ version = "1.0.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+ 
++[[package]]
++name = "cfg_aliases"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
++
++[[package]]
++name = "chrono"
++version = "0.4.43"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fac4744fb15ae8337dc853fee7fb3f4e48c0fbaa23d0afe49c447b4fab126118"
++dependencies = [
++ "iana-time-zone",
++ "js-sys",
++ "num-traits",
++ "serde",
++ "wasm-bindgen",
++ "windows-link",
++]
++
++[[package]]
++name = "core-foundation-sys"
++version = "0.8.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
++
++[[package]]
++name = "cpufeatures"
++version = "0.2.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
++dependencies = [
++ "libc",
++]
++
++[[package]]
++name = "crypto-common"
++version = "0.1.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
++dependencies = [
++ "generic-array",
++ "typenum",
++]
++
++[[package]]
++name = "digest"
++version = "0.10.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
++dependencies = [
++ "block-buffer",
++ "crypto-common",
++]
++
++[[package]]
++name = "equivalent"
++version = "1.0.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
++
+ [[package]]
+ name = "errno"
+ version = "0.3.14"
+@@ -44,12 +243,36 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "fallible-iterator"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
++
++[[package]]
++name = "fallible-streaming-iterator"
++version = "0.1.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
++
+ [[package]]
+ name = "fastrand"
+ version = "2.3.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+ 
++[[package]]
++name = "find-msvc-tools"
++version = "0.1.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
++
++[[package]]
++name = "foldhash"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
++
+ [[package]]
+ name = "fs2"
+ version = "0.4.3"
+@@ -60,6 +283,33 @@ dependencies = [
+  "winapi",
+ ]
+ 
++[[package]]
++name = "funty"
++version = "2.0.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
++
++[[package]]
++name = "generic-array"
++version = "0.14.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
++dependencies = [
++ "typenum",
++ "version_check",
++]
++
++[[package]]
++name = "getrandom"
++version = "0.2.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
++dependencies = [
++ "cfg-if",
++ "libc",
++ "wasi",
++]
++
+ [[package]]
+ name = "getrandom"
+ version = "0.3.4"
+@@ -72,24 +322,112 @@ dependencies = [
+  "wasip2",
+ ]
+ 
++[[package]]
++name = "hashbrown"
++version = "0.12.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
++dependencies = [
++ "ahash",
++]
++
++[[package]]
++name = "hashbrown"
++version = "0.16.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
++dependencies = [
++ "foldhash",
++]
++
++[[package]]
++name = "hashlink"
++version = "0.11.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
++dependencies = [
++ "hashbrown 0.16.1",
++]
++
++[[package]]
++name = "iana-time-zone"
++version = "0.1.64"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "33e57f83510bb73707521ebaffa789ec8caf86f9657cad665b092b581d40e9fb"
++dependencies = [
++ "android_system_properties",
++ "core-foundation-sys",
++ "iana-time-zone-haiku",
++ "js-sys",
++ "log",
++ "wasm-bindgen",
++ "windows-core",
++]
++
++[[package]]
++name = "iana-time-zone-haiku"
++version = "0.1.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
++dependencies = [
++ "cc",
++]
++
++[[package]]
++name = "indexmap"
++version = "2.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
++dependencies = [
++ "equivalent",
++ "hashbrown 0.16.1",
++]
++
+ [[package]]
+ name = "itoa"
+ version = "1.0.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+ 
++[[package]]
++name = "js-sys"
++version = "0.3.85"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8c942ebf8e95485ca0d52d97da7c5a2c387d0e7f0ba4c35e93bfcaee045955b3"
++dependencies = [
++ "once_cell",
++ "wasm-bindgen",
++]
++
+ [[package]]
+ name = "libc"
+ version = "0.2.180"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
+ 
++[[package]]
++name = "libsqlite3-sys"
++version = "0.37.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
++dependencies = [
++ "cc",
++ "pkg-config",
++ "vcpkg",
++]
++
+ [[package]]
+ name = "linux-raw-sys"
+ version = "0.11.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
+ 
++[[package]]
++name = "log"
++version = "0.4.29"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
++
+ [[package]]
+ name = "memchr"
+ version = "2.7.6"
+@@ -107,6 +445,15 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "num-traits"
++version = "0.2.19"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
++dependencies = [
++ "autocfg",
++]
++
+ [[package]]
+ name = "once_cell"
+ version = "1.21.3"
+@@ -119,6 +466,30 @@ version = "0.2.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
+ 
++[[package]]
++name = "pkg-config"
++version = "0.3.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
++
++[[package]]
++name = "ppv-lite86"
++version = "0.2.21"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
++dependencies = [
++ "zerocopy",
++]
++
++[[package]]
++name = "proc-macro-crate"
++version = "3.4.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "219cb19e96be00ab2e37d6e299658a0cfa83e52429179969b0f0121b4ac46983"
++dependencies = [
++ "toml_edit 0.23.10+spec-1.0.0",
++]
++
+ [[package]]
+ name = "proc-macro2"
+ version = "1.0.105"
+@@ -128,6 +499,26 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "ptr_meta"
++version = "0.1.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0738ccf7ea06b608c10564b31debd4f5bc5e197fc8bfe088f68ae5ce81e7a4f1"
++dependencies = [
++ "ptr_meta_derive",
++]
++
++[[package]]
++name = "ptr_meta_derive"
++version = "0.1.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "16b845dbfca988fa33db069c0e230574d15a3088f147a87b64c7589eb662c9ac"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 1.0.109",
++]
++
+ [[package]]
+ name = "quote"
+ version = "1.0.43"
+@@ -143,6 +534,121 @@ version = "5.3.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+ 
++[[package]]
++name = "radium"
++version = "0.7.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
++
++[[package]]
++name = "rand"
++version = "0.8.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
++dependencies = [
++ "libc",
++ "rand_chacha",
++ "rand_core",
++]
++
++[[package]]
++name = "rand_chacha"
++version = "0.3.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
++dependencies = [
++ "ppv-lite86",
++ "rand_core",
++]
++
++[[package]]
++name = "rand_core"
++version = "0.6.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
++dependencies = [
++ "getrandom 0.2.17",
++]
++
++[[package]]
++name = "rend"
++version = "0.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "71fe3824f5629716b1589be05dacd749f6aa084c87e00e016714a8cdfccc997c"
++dependencies = [
++ "bytecheck",
++]
++
++[[package]]
++name = "rkyv"
++version = "0.7.46"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2297bf9c81a3f0dc96bc9521370b88f054168c29826a75e89c55ff196e7ed6a1"
++dependencies = [
++ "bitvec",
++ "bytecheck",
++ "bytes",
++ "hashbrown 0.12.3",
++ "ptr_meta",
++ "rend",
++ "rkyv_derive",
++ "seahash",
++ "tinyvec",
++ "uuid",
++]
++
++[[package]]
++name = "rkyv_derive"
++version = "0.7.46"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "84d7b42d4b8d06048d3ac8db0eb31bcb942cbeb709f0b5f2b2ebde398d3038f5"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 1.0.109",
++]
++
++[[package]]
++name = "rsqlite-vfs"
++version = "0.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a8a1f2315036ef6b1fbacd1972e8ee7688030b0a2121edfc2a6550febd41574d"
++dependencies = [
++ "hashbrown 0.16.1",
++ "thiserror",
++]
++
++[[package]]
++name = "rusqlite"
++version = "0.39.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"
++dependencies = [
++ "bitflags",
++ "fallible-iterator",
++ "fallible-streaming-iterator",
++ "hashlink",
++ "libsqlite3-sys",
++ "smallvec",
++ "sqlite-wasm-rs",
++]
++
++[[package]]
++name = "rust_decimal"
++version = "1.40.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "61f703d19852dbf87cbc513643fa81428361eb6940f1ac14fd58155d295a3eb0"
++dependencies = [
++ "arrayvec",
++ "borsh",
++ "bytes",
++ "num-traits",
++ "rand",
++ "rkyv",
++ "serde",
++ "serde_json",
++]
++
+ [[package]]
+ name = "rustix"
+ version = "1.1.3"
+@@ -156,6 +662,18 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "rustversion"
++version = "1.0.22"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
++
++[[package]]
++name = "seahash"
++version = "4.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
++
+ [[package]]
+ name = "serde"
+ version = "1.0.228"
+@@ -183,7 +701,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.114",
+ ]
+ 
+ [[package]]
+@@ -192,6 +710,7 @@ version = "1.0.149"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
+ dependencies = [
++ "indexmap",
+  "itoa",
+  "memchr",
+  "serde",
+@@ -199,6 +718,35 @@ dependencies = [
+  "zmij",
+ ]
+ 
++[[package]]
++name = "sha2"
++version = "0.10.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
++dependencies = [
++ "cfg-if",
++ "cpufeatures",
++ "digest",
++]
++
++[[package]]
++name = "shlex"
++version = "1.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
++
++[[package]]
++name = "simdutf8"
++version = "0.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
++
++[[package]]
++name = "smallvec"
++version = "1.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
++
+ [[package]]
+ name = "socket2"
+ version = "0.6.1"
+@@ -209,6 +757,29 @@ dependencies = [
+  "windows-sys 0.60.2",
+ ]
+ 
++[[package]]
++name = "sqlite-wasm-rs"
++version = "0.5.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1b2c760607300407ddeaee518acf28c795661b7108c75421303dbefb237d3a36"
++dependencies = [
++ "cc",
++ "js-sys",
++ "rsqlite-vfs",
++ "wasm-bindgen",
++]
++
++[[package]]
++name = "syn"
++version = "1.0.109"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "syn"
+ version = "2.0.114"
+@@ -220,6 +791,12 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "tap"
++version = "1.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
++
+ [[package]]
+ name = "tempfile"
+ version = "3.24.0"
+@@ -227,7 +804,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "655da9c7eb6305c55742045d5a8d2037996d61d8de95806335c7c86ce0f82e9c"
+ dependencies = [
+  "fastrand",
+- "getrandom",
++ "getrandom 0.3.4",
+  "once_cell",
+  "rustix",
+  "windows-sys 0.61.2",
+@@ -250,9 +827,24 @@ checksum = "3ff15c8ecd7de3849db632e14d18d2571fa09dfc5ed93479bc4485c7a517c913"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.114",
+ ]
+ 
++[[package]]
++name = "tinyvec"
++version = "1.10.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bfa5fdc3bce6191a1dbc8c02d5c8bffcf557bafa17c124c5264a458f1b0613fa"
++dependencies = [
++ "tinyvec_macros",
++]
++
++[[package]]
++name = "tinyvec_macros"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
++
+ [[package]]
+ name = "tokio"
+ version = "1.49.0"
+@@ -267,12 +859,96 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "toml_datetime"
++version = "0.6.11"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
++
++[[package]]
++name = "toml_datetime"
++version = "0.7.5+spec-1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
++dependencies = [
++ "serde_core",
++]
++
++[[package]]
++name = "toml_edit"
++version = "0.22.27"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
++dependencies = [
++ "indexmap",
++ "toml_datetime 0.6.11",
++ "toml_write",
++ "winnow 0.7.14",
++]
++
++[[package]]
++name = "toml_edit"
++version = "0.23.10+spec-1.0.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "84c8b9f757e028cee9fa244aea147aab2a9ec09d5325a9b01e0a49730c2b5269"
++dependencies = [
++ "indexmap",
++ "toml_datetime 0.7.5+spec-1.1.0",
++ "toml_parser",
++ "winnow 0.7.14",
++]
++
++[[package]]
++name = "toml_parser"
++version = "1.1.3+spec-1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
++dependencies = [
++ "winnow 1.0.4",
++]
++
++[[package]]
++name = "toml_write"
++version = "0.1.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
++
++[[package]]
++name = "typenum"
++version = "1.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
++
+ [[package]]
+ name = "unicode-ident"
+ version = "1.0.22"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9312f7c4f6ff9069b165498234ce8be658059c6728633667c526e27dc2cf1df5"
+ 
++[[package]]
++name = "uuid"
++version = "1.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e2e054861b4bd027cd373e18e8d8d8e6548085000e41290d95ce0c373a654b4a"
++dependencies = [
++ "getrandom 0.3.4",
++ "js-sys",
++ "serde_core",
++ "wasm-bindgen",
++]
++
++[[package]]
++name = "vcpkg"
++version = "0.2.15"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
++
++[[package]]
++name = "version_check"
++version = "0.9.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
++
+ [[package]]
+ name = "wasi"
+ version = "0.11.1+wasi-snapshot-preview1"
+@@ -288,6 +964,51 @@ dependencies = [
+  "wit-bindgen",
+ ]
+ 
++[[package]]
++name = "wasm-bindgen"
++version = "0.2.108"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "64024a30ec1e37399cf85a7ffefebdb72205ca1c972291c51512360d90bd8566"
++dependencies = [
++ "cfg-if",
++ "once_cell",
++ "rustversion",
++ "wasm-bindgen-macro",
++ "wasm-bindgen-shared",
++]
++
++[[package]]
++name = "wasm-bindgen-macro"
++version = "0.2.108"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "008b239d9c740232e71bd39e8ef6429d27097518b6b30bdf9086833bd5b6d608"
++dependencies = [
++ "quote",
++ "wasm-bindgen-macro-support",
++]
++
++[[package]]
++name = "wasm-bindgen-macro-support"
++version = "0.2.108"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5256bae2d58f54820e6490f9839c49780dff84c65aeab9e772f15d5f0e913a55"
++dependencies = [
++ "bumpalo",
++ "proc-macro2",
++ "quote",
++ "syn 2.0.114",
++ "wasm-bindgen-shared",
++]
++
++[[package]]
++name = "wasm-bindgen-shared"
++version = "0.2.108"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1f01b580c9ac74c8d8f0c0e4afb04eeef2acf145458e52c03845ee9cd23e3d12"
++dependencies = [
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "winapi"
+ version = "0.3.9"
+@@ -310,12 +1031,65 @@ version = "0.4.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+ 
++[[package]]
++name = "windows-core"
++version = "0.62.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
++dependencies = [
++ "windows-implement",
++ "windows-interface",
++ "windows-link",
++ "windows-result",
++ "windows-strings",
++]
++
++[[package]]
++name = "windows-implement"
++version = "0.60.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.114",
++]
++
++[[package]]
++name = "windows-interface"
++version = "0.59.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.114",
++]
++
+ [[package]]
+ name = "windows-link"
+ version = "0.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+ 
++[[package]]
++name = "windows-result"
++version = "0.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
++dependencies = [
++ "windows-link",
++]
++
++[[package]]
++name = "windows-strings"
++version = "0.5.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
++dependencies = [
++ "windows-link",
++]
++
+ [[package]]
+ name = "windows-sys"
+ version = "0.60.2"
+@@ -399,12 +1173,56 @@ version = "0.53.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+ 
++[[package]]
++name = "winnow"
++version = "0.7.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
++dependencies = [
++ "memchr",
++]
++
++[[package]]
++name = "winnow"
++version = "1.0.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
++
+ [[package]]
+ name = "wit-bindgen"
+ version = "0.51.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d7249219f66ced02969388cf2bb044a09756a083d0fab1e566056b04d9fbcaa5"
+ 
++[[package]]
++name = "wyz"
++version = "0.5.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
++dependencies = [
++ "tap",
++]
++
++[[package]]
++name = "zerocopy"
++version = "0.8.33"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "668f5168d10b9ee831de31933dc111a459c97ec93225beb307aed970d1372dfd"
++dependencies = [
++ "zerocopy-derive",
++]
++
++[[package]]
++name = "zerocopy-derive"
++version = "0.8.33"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2c7962b26b0a8685668b671ee4b54d007a67d4eaf05fda79ac0ecf41e32270f1"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.114",
++]
++
+ [[package]]
+ name = "zmij"
+ version = "1.0.14"
+diff --git a/crates/ai-toolbox-management/Cargo.toml b/crates/ai-toolbox-management/Cargo.toml
+index 51bbb33a4add1a37143c76abfc84365fdfb688dd..fb41e23637e09a858e03bc1e784d5eb945d2082d 100644
+--- a/crates/ai-toolbox-management/Cargo.toml
++++ b/crates/ai-toolbox-management/Cargo.toml
+@@ -7,6 +7,10 @@ description = "Typed local management owner boundary for AI Toolbox"
+ publish = false
+ 
+ [dependencies]
++ai-toolbox-codex-config = { path = "../ai-toolbox-codex-config" }
++ai-toolbox-storage = { path = "../ai-toolbox-storage" }
++rusqlite = { version = "=0.39.0", features = ["bundled", "backup", "hooks"] }
++sha2 = "=0.10.9"
+ serde = { version = "=1.0.228", features = ["derive"] }
+ serde_json = "=1.0.149"
+ thiserror = "=2.0.17"
+diff --git a/crates/ai-toolbox-management/src/lib.rs b/crates/ai-toolbox-management/src/lib.rs
+index b84947c5db58bdd25a9b798bd8b33573136cff0e..2a52cdaa344066ee6796ab34192ae6015aa1ce92 100644
+--- a/crates/ai-toolbox-management/src/lib.rs
++++ b/crates/ai-toolbox-management/src/lib.rs
+@@ -3,6 +3,14 @@
+ //! Linux is the only implemented transport. Windows named-pipe ACL and peer
+ //! verification, and other platforms' native proofs, remain unsupported.
+ 
++// Private until the complete application writer admission map is connected.
++#[cfg(target_os = "linux")]
++mod codex_master;
++#[cfg(target_os = "linux")]
++mod config_file;
++#[cfg(target_os = "linux")]
++mod codex_service;
++
+ pub mod coordination;
+ pub mod owner;
+ pub mod transport;
+diff --git a/crates/ai-toolbox-management/src/owner.rs b/crates/ai-toolbox-management/src/owner.rs
+index ba4c5e6aa91d92c6a711ebfaf5d1de29f6dfe742..f777b06a9d3b8f992e62e6dde290dcc128f03444 100644
+--- a/crates/ai-toolbox-management/src/owner.rs
++++ b/crates/ai-toolbox-management/src/owner.rs
+@@ -285,6 +285,22 @@ impl ResourcePermit<'_> {
+         for lease in &self.leases { lease.ensure_current()?; }
+         Ok(())
+     }
++
++    /// Private fixed-config effect capability. The supplied writer must be the
++    /// exact writer borrowed by this resource permit, not another live owner.
++    /// The borrow retains both permits; callers must revalidate before effects.
++    #[cfg(target_os = "linux")]
++    pub(crate) fn config_directory<'a>(
++        &'a self,
++        writer: &WriterPermit,
++        resource: &'a RuntimeResourceIdentity,
++    ) -> Result<&'a std::fs::File> {
++        if !std::ptr::eq(self.writer, writer) {
++            return Err(Error::StaleOwner);
++        }
++        self.require_resource(resource)?;
++        Ok(resource.0.directory.config_directory())
++    }
+ }
+ 
+ #[cfg(target_os = "linux")]
+@@ -373,6 +389,12 @@ pub(crate) mod linux {
+     }
+ 
+     impl CheckedDirectory {
++        // This descriptor is not a path-based filesystem API. Only the private
++        // permit-gated fixed-config effect borrows it from the owner boundary.
++        pub(super) fn config_directory(&self) -> &File {
++            &self.file
++        }
++
+         pub(crate) fn profile(path: &Path) -> Result<Self> {
+             require_absolute(path)?;
+             let canonical = fs::canonicalize(path).map_err(|error| {
+diff --git a/crates/ai-toolbox-management/src/codex_master.rs b/crates/ai-toolbox-management/src/codex_master.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..0cbff858d6fd3738e05cb7431c33991e6dbe211e
+--- /dev/null
++++ b/crates/ai-toolbox-management/src/codex_master.rs
+@@ -0,0 +1,282 @@
++//! Internal master-data half of the GUI-owned context operation.
++//!
++//! This is not an exposed operation or an effects executor. The owning adapter
++//! must establish profile/runtime ownership and admission before calling it.
++use ai_toolbox_codex_config::plan::Target;
++use ai_toolbox_storage::helpers::{db_get, db_patch_fields, db_query_by_bool};
++use ai_toolbox_storage::schema::{DbTable, JsonFieldPath};
++use rusqlite::{Connection, Transaction};
++use serde_json::Value;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(crate) enum MasterError {
++    Storage,
++    MissingCommon,
++    NoAppliedProvider,
++    AmbiguousAppliedProvider,
++    InvalidRecord,
++    ProviderUnavailable,
++    Conflict,
++}
++
++// Deliberately neither Debug nor Serialize: these records may contain secrets.
++pub(crate) struct MasterSnapshot {
++    common: Value,
++    provider: Value,
++    settings: Value,
++    settings_field: &'static str,
++    pub(crate) provider_id: String,
++    pub(crate) common_config: String,
++    pub(crate) provider_config: String,
++}
++
++fn config_text(record: &Value) -> Result<String, MasterError> {
++    match record.get("config") {
++        None => Ok(String::new()),
++        Some(Value::String(text)) => Ok(text.clone()),
++        _ => Err(MasterError::InvalidRecord),
++    }
++}
++
++/// Read existing records only. Never call the desktop list/bootstrap adapter:
++/// listing can import a default provider, and opening storage can migrate/seed.
++pub(crate) fn read_master(conn: &Connection) -> Result<MasterSnapshot, MasterError> {
++    let common = db_get(conn, DbTable::CodexCommonConfig, "common")
++        .map_err(|_| MasterError::Storage)?
++        .ok_or(MasterError::MissingCommon)?;
++    if !common.is_object() {
++        return Err(MasterError::InvalidRecord);
++    }
++    let field = JsonFieldPath::new("is_applied").map_err(|_| MasterError::InvalidRecord)?;
++    let mut applied = db_query_by_bool(
++        conn, DbTable::CodexProvider, &field, true, None, Some(2),
++    ).map_err(|_| MasterError::Storage)?;
++    match applied.len() {
++        0 => return Err(MasterError::NoAppliedProvider),
++        1 => (),
++        _ => return Err(MasterError::AmbiguousAppliedProvider),
++    }
++    let provider = applied.remove(0);
++    let provider_id = provider.get("id").and_then(Value::as_str)
++        .filter(|id| !id.is_empty() && *id != "__local__")
++        .ok_or(MasterError::ProviderUnavailable)?.to_owned();
++    // The query helper has coercion semantics. Do not use that as proof that
++    // malformed stored values satisfy the new typed operation contract.
++    if provider.get("is_applied").and_then(Value::as_bool) != Some(true) {
++        return Err(MasterError::InvalidRecord);
++    }
++    match provider.get("is_disabled").or_else(|| provider.get("isDisabled")) {
++        None | Some(Value::Bool(false)) => (),
++        Some(Value::Bool(true)) => return Err(MasterError::ProviderUnavailable),
++        _ => return Err(MasterError::InvalidRecord),
++    }
++    // Match the desktop adapter: settings_config is the authoritative stored field.
++    let settings_field = "settings_config";
++    let settings_text = provider.get(settings_field).and_then(Value::as_str)
++        .ok_or(MasterError::InvalidRecord)?;
++    let settings: Value = serde_json::from_str(settings_text)
++        .map_err(|_| MasterError::InvalidRecord)?;
++    if !settings.is_object() {
++        return Err(MasterError::InvalidRecord);
++    }
++    let common_config = config_text(&common)?;
++    let provider_config = config_text(&settings)?;
++    Ok(MasterSnapshot { common, provider, settings, settings_field,
++        provider_id, common_config, provider_config })
++}
++
++impl MasterSnapshot {
++    pub(crate) fn revision_bytes(&self) -> Result<Vec<u8>, MasterError> {
++        serde_json::to_vec(&(&self.common, &self.provider)).map_err(|_| MasterError::InvalidRecord)
++    }
++
++    /// Initial internal effect slice requires an explicit stored absolute root.
++    /// Default HOME/runtime-location resolution belongs to the later adapter.
++    pub(crate) fn explicit_root(&self) -> Result<&str, MasterError> {
++        self.common.get("root_dir").and_then(Value::as_str)
++            .filter(|root| !root.is_empty() && std::path::Path::new(root).is_absolute())
++            .ok_or(MasterError::InvalidRecord)
++    }
++    /// Exact internal comparison includes both common/provider JSON records, so
++    /// their root or configuration changes cannot hide behind a matching context pair.
++    /// Separate account-table records are not covered by this comparison.
++    pub(crate) fn unchanged_from(&self, current: &Self) -> bool {
++        self.common == current.common && self.provider == current.provider
++    }
++}
++
++/// Must run in the same caller-owned transaction as the initial journal row.
++/// No file write, event, runtime refresh, account operation or second DB open.
++/// The caller must perform replay lookup before invoking this function.
++pub(crate) fn patch_master(
++    tx: &Transaction<'_>,
++    expected: &MasterSnapshot,
++    target: Target,
++    candidate: &str,
++) -> Result<bool, MasterError> {
++    let current = read_master(tx)?;
++    if !expected.unchanged_from(&current) {
++        return Err(MasterError::Conflict);
++    }
++    let original = match target {
++        Target::Common => &current.common_config,
++        Target::Provider => &current.provider_config,
++    };
++    if original == candidate {
++        return Ok(false);
++    }
++    let (table, id, field, value) = match target {
++        Target::Common => (DbTable::CodexCommonConfig, "common", "config", Value::String(candidate.to_owned())),
++        Target::Provider => {
++            let mut settings = current.settings.clone();
++            settings.as_object_mut().ok_or(MasterError::InvalidRecord)?
++                .insert("config".to_owned(), Value::String(candidate.to_owned()));
++            let serialized = serde_json::to_string(&settings).map_err(|_| MasterError::InvalidRecord)?;
++            (DbTable::CodexProvider, current.provider_id.as_str(), current.settings_field, Value::String(serialized))
++        }
++    };
++    db_patch_fields(tx, table, id, &[(field, value)])
++        .map_err(|_| MasterError::Storage)?
++        .ok_or(MasterError::Conflict)?;
++    Ok(true)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use ai_toolbox_storage::{helpers::db_put, SqliteDbState};
++    use serde_json::json;
++
++    fn seeded() -> SqliteDbState {
++        let state = SqliteDbState::in_memory_for_test().unwrap();
++        state.with_conn(|conn| {
++            db_put(conn, DbTable::CodexCommonConfig, "common", &json!({
++                "config":"model_context_window = 1000000\n",
++                "root_dir":"synthetic-root", "unknown":{"keep":true}
++            }))?;
++            db_put(conn, DbTable::CodexProvider, "synthetic-provider", &json!({
++                "is_applied":true,"is_disabled":false,"unknown_outer":{"keep":7},
++                "settings_config":json!({
++                    "config":"model_auto_compact_token_limit = 900000\n",
++                    "auth":{"SYNTHETIC":"not-a-credential"},
++                    "models":[{"id":"synthetic-model"}],"unknown":{"nested":true}
++                }).to_string()
++            }))
++        }).unwrap();
++        state
++    }
++
++    #[test]
++    fn master_common_patch_preserves_non_config_fields() {
++        let state = seeded();
++        state.with_conn_mut(|conn| {
++            let before = read_master(conn).unwrap();
++            let tx = conn.transaction().unwrap();
++            assert!(patch_master(&tx, &before, Target::Common, "model_context_window = 2000000\n").unwrap());
++            tx.commit().unwrap();
++            let after = read_master(conn).unwrap();
++            assert_eq!(after.common["root_dir"], before.common["root_dir"]);
++            assert_eq!(after.common["unknown"], before.common["unknown"]);
++            assert_eq!(after.provider, before.provider);
++            Ok(())
++        }).unwrap();
++    }
++
++    #[test]
++    fn master_provider_string_patch_preserves_auth_models_and_unknowns() {
++        let state = seeded();
++        state.with_conn_mut(|conn| {
++            let before = read_master(conn).unwrap();
++            let tx = conn.transaction().unwrap();
++            patch_master(&tx, &before, Target::Provider, "model_auto_compact_token_limit = 800000\n").unwrap();
++            tx.commit().unwrap();
++            let after = read_master(conn).unwrap();
++            assert!(after.provider["settings_config"].is_string());
++            for field in ["auth", "models", "unknown"] {
++                assert_eq!(after.settings[field], before.settings[field]);
++            }
++            assert_eq!(after.provider["unknown_outer"], before.provider["unknown_outer"]);
++            assert_eq!(after.common, before.common);
++            Ok(())
++        }).unwrap();
++    }
++
++    #[test]
++    fn master_noop_and_rollback_preserve_original_records() {
++        let state = seeded();
++        state.with_conn_mut(|conn| {
++            let before = read_master(conn).unwrap();
++            let tx = conn.transaction().unwrap();
++            assert!(!patch_master(&tx, &before, Target::Provider, &before.provider_config).unwrap());
++            tx.commit().unwrap();
++            assert!(before.unchanged_from(&read_master(conn).unwrap()));
++            let tx = conn.transaction().unwrap();
++            patch_master(&tx, &before, Target::Common, "model_context_window = 2000000\n").unwrap();
++            tx.rollback().unwrap();
++            assert!(before.unchanged_from(&read_master(conn).unwrap()));
++            Ok(())
++        }).unwrap();
++    }
++
++    #[test]
++    fn master_rejects_ambiguous_applied_rows() {
++        let state = seeded();
++        state.with_conn(|conn| {
++            db_put(conn, DbTable::CodexProvider, "second", &json!({"is_applied":true}))?;
++            assert!(matches!(read_master(conn), Err(MasterError::AmbiguousAppliedProvider)));
++            Ok(())
++        }).unwrap();
++    }
++
++    #[test]
++    fn master_detects_unrelated_record_drift_before_patch() {
++        let state = seeded();
++        state.with_conn_mut(|conn| {
++            let before = read_master(conn).unwrap();
++            db_patch_fields(conn, DbTable::CodexCommonConfig, "common", &[("unknown",json!({"changed":true}))])?;
++            let tx = conn.transaction().unwrap();
++            assert_eq!(patch_master(&tx, &before, Target::Common, "model_context_window = 2000000\n"), Err(MasterError::Conflict));
++            tx.rollback().unwrap();
++            assert_eq!(read_master(conn).unwrap().common_config, before.common_config);
++            Ok(())
++        }).unwrap();
++    }
++    #[test]
++    fn master_disabled_alias_matches_desktop_precedence_but_rejects_invalid_types() {
++        for (snake, camel, expected) in [
++            (None, Some(json!(true)), Some(MasterError::ProviderUnavailable)),
++            (None, Some(json!(false)), None),
++            (Some(json!(false)), Some(json!(true)), None),
++            (Some(json!(true)), Some(json!(false)), Some(MasterError::ProviderUnavailable)),
++            (Some(json!("false")), Some(json!(false)), Some(MasterError::InvalidRecord)),
++            (None, Some(json!("false")), Some(MasterError::InvalidRecord)),
++        ] {
++            let state = seeded();
++            state.with_conn(|conn| {
++                let mut row = db_get(conn, DbTable::CodexProvider, "synthetic-provider")?.unwrap();
++                let object = row.as_object_mut().unwrap();
++                object.remove("is_disabled");
++                if let Some(value) = snake { object.insert("is_disabled".into(), value); }
++                if let Some(value) = camel { object.insert("isDisabled".into(), value); }
++                db_put(conn, DbTable::CodexProvider, "synthetic-provider", &row)?;
++                assert_eq!(read_master(conn).err(), expected);
++                Ok(())
++            }).unwrap();
++        }
++    }
++
++    #[test]
++    fn master_rejects_settings_alias_not_consumed_by_desktop() {
++        let state = seeded();
++        state.with_conn(|conn| {
++            let mut row = db_get(conn, DbTable::CodexProvider, "synthetic-provider")?.unwrap();
++            let object = row.as_object_mut().unwrap();
++            let settings = object.remove("settings_config").unwrap();
++            object.insert("settingsConfig".into(), settings);
++            db_put(conn, DbTable::CodexProvider, "synthetic-provider", &row)?;
++            assert!(matches!(read_master(conn), Err(MasterError::InvalidRecord)));
++            Ok(())
++        }).unwrap();
++    }
++
++}
+diff --git a/crates/ai-toolbox-management/src/codex_service.rs b/crates/ai-toolbox-management/src/codex_service.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..df5dedb498bd8961021a8bdbb44adf3acddf479d
+--- /dev/null
++++ b/crates/ai-toolbox-management/src/codex_service.rs
+@@ -0,0 +1,548 @@
++//! Internal Linux ConfigOnly service. No CLI, GUI or transport entry is enabled.
++//! All data paths are fixed by the acquired owner and existing master data.
++use std::{fs, path::Path, os::unix::fs::MetadataExt};
++use ai_toolbox_codex_config::plan::{plan_context_projection, ContextPatch, Target};
++use ai_toolbox_storage::{SqliteDbState, SQLITE_DATABASE_FILE, codex_context_journal as journal};
++use journal::{AdvanceResult, FailureCode, InsertResult, JournalEntry, JournalInput, Lookup, Phase};
++use rusqlite::Transaction;
++use sha2::{Digest, Sha256};
++use crate::{codex_master::{read_master, patch_master, MasterSnapshot, MasterError}, config_file::{ConfigFile, ConfigFileErrorReason},
++    owner::{OwnerPermit, ProfileIdentity, ProfileOwner, RuntimeResourceIdentity}};
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(crate) enum ServiceError {
++    Ownership, Storage, InvalidMaster, InvalidRequest, ProviderChanged, RevisionConflict,
++    RuntimeUnsupported, FileUnavailable, JournalConflict, JournalInvalid, PersistenceUncertain,
++    PhasePersistence { last_committed: Phase }, Interrupted,
++}
++
++pub(crate) struct ContextRequest {
++    pub schema_version: u32,
++    pub request_id: String,
++    pub expected_provider_id: String,
++    pub expected_revision: String,
++    pub target: Target,
++    pub patch: ContextPatch,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub(crate) struct ContextStatus {
++    pub phase: Phase,
++    pub failure: Option<FailureCode>,
++    pub replay: bool,
++    pub context: Option<i64>,
++    pub auto_compact: Option<i64>,
++}
++impl ContextStatus {
++    fn from_entry(entry: JournalEntry, replay: bool) -> Self {
++        Self { phase: if replay { entry.replay_phase() } else { entry.phase },
++            failure: entry.failure, replay, context: entry.input.context,
++            auto_compact: entry.input.auto_compact }
++    }
++    // Reserved for the eventual typed adapter; partial states never mean success.
++    pub(crate) fn exit_code(&self) -> i32 { if self.phase == Phase::Verified { 0 } else { 3 } }
++}
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum Checkpoint {
++    None,
++    #[cfg(test)] BeforeSaveCommit,
++    #[cfg(test)] AfterSaved,
++    #[cfg(test)] AfterStarted,
++    #[cfg(test)] AfterWrite,
++    #[cfg(test)] AfterProjected,
++    #[cfg(test)] StartedCommitRollback,
++    #[cfg(test)] VerifiedCommitRollback,
++    #[cfg(test)] PreflightDrift,
++    #[cfg(test)] NoopReadbackDrift,
++    #[cfg(test)] ProjectedReadbackDrift,
++    #[cfg(test)] PhaseWriteReadOnly,
++    #[cfg(test)] ReplaceDrift,
++}
++
++// Declaration order closes SQLite before dropping the lifetime profile lease.
++pub(crate) struct ContextService {
++    db: SqliteDbState,
++    owner: OwnerPermit,
++    database_inode: (u64, u64),
++}
++
++fn master_error(error:MasterError)->ServiceError {
++    match error {MasterError::Storage=>ServiceError::Storage,MasterError::Conflict=>ServiceError::RevisionConflict,_=>ServiceError::InvalidMaster}
++}
++fn journal_error(error:journal::JournalError)->ServiceError {
++    match error {journal::JournalError::Storage(_)=>ServiceError::Storage,
++        journal::JournalError::FingerprintConflict=>ServiceError::JournalConflict,
++        _=>ServiceError::JournalInvalid}
++}
++
++fn valid_patch(patch:ContextPatch)->bool {
++    let values=[patch.model_context_window,patch.model_auto_compact_token_limit];
++    values.iter().any(Option::is_some) && values.into_iter().flatten().all(|v|v>0 && v<=i64::MAX as u64)
++        && !matches!((patch.model_context_window,patch.model_auto_compact_token_limit),(Some(c),Some(a)) if a>c)
++}
++
++// Constructed only after a new Advanced start and its successful commit.
++// Replay cannot produce this non-cloneable private capability.
++struct CommittedStart;
++fn project(_start:CommittedStart,file:ConfigFile<'_, '_>,candidate:&[u8])
++    ->Result<Vec<u8>,crate::config_file::ConfigFileError> {file.replace(candidate)}
++
++fn valid_id(value:&str)->bool {
++    !value.is_empty() && value.len()<=128 && value.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_')
++}
++
++fn digest(parts: &[&[u8]]) -> String {
++    let mut h = Sha256::new();
++    for part in parts { h.update((part.len() as u64).to_le_bytes()); h.update(part); }
++    format!("{:x}", h.finalize())
++}
++fn database_identity(path: &Path) -> Result<(u64,u64),ServiceError> {
++    let m = fs::symlink_metadata(path).map_err(|_| ServiceError::Storage)?;
++    let uid = crate::owner::linux::current_uid().map_err(|_| ServiceError::Ownership)?;
++    if !m.is_file() || m.uid()!=uid || m.nlink()!=1 || m.mode() & 0o022 != 0 {
++        return Err(ServiceError::Storage);
++    }
++    Ok((m.dev(),m.ino()))
++}
++
++impl ContextService {
++    /// Writer initialization only, not a read-command implementation. Requires
++    /// an existing file database; shared storage initialization may seed/migrate.
++    pub(crate) fn open(profile: &Path) -> Result<Self,ServiceError> {
++        let identity=ProfileIdentity::existing(profile).map_err(|_| ServiceError::Ownership)?;
++        let owner=ProfileOwner::acquire(identity).map_err(|_| ServiceError::Ownership)?;
++        let path=owner.profile().canonical_path().join(SQLITE_DATABASE_FILE);
++        let database_inode=database_identity(&path)?;
++        for suffix in ["-wal", "-shm"] {
++            let side=path.with_file_name(format!("{SQLITE_DATABASE_FILE}{suffix}"));
++            match fs::symlink_metadata(&side) {
++                Ok(_) => { database_identity(&side)?; },
++                Err(e) if e.kind()==std::io::ErrorKind::NotFound => (),
++                Err(_) => return Err(ServiceError::Storage),
++            }
++        }
++        owner.ensure_current().map_err(|_| ServiceError::Ownership)?;
++        let db=SqliteDbState::open(path.clone()).map_err(|_| ServiceError::Storage)?;
++        owner.ensure_current().map_err(|_| ServiceError::Ownership)?;
++        if database_identity(&path)?!=database_inode { return Err(ServiceError::Storage); }
++        Ok(Self { db, owner, database_inode })
++    }
++    fn ensure_current(&self) -> Result<(),ServiceError> {
++        self.owner.ensure_current().map_err(|_| ServiceError::Ownership)?;
++        if database_identity(self.db.db_path())?!=self.database_inode { return Err(ServiceError::Storage); }
++        Ok(())
++    }
++    fn master(&self)->Result<MasterSnapshot,ServiceError> {
++        self.db.with_conn(|c| Ok(read_master(c))).map_err(|_|ServiceError::Storage)?
++            .map_err(master_error)
++    }
++    fn runtime(master:&MasterSnapshot)->Result<RuntimeResourceIdentity,ServiceError> {
++        RuntimeResourceIdentity::existing(master.explicit_root().map_err(|_|ServiceError::RuntimeUnsupported)?)
++            .map_err(|_|ServiceError::RuntimeUnsupported)
++    }
++    fn revision(&self,master:&MasterSnapshot,runtime:&RuntimeResourceIdentity,live:&[u8])->Result<String,ServiceError> {
++        let key=runtime.key(); let p=self.owner.profile().key();
++        Ok(digest(&[b"codex-context-revision-v1",&p.device.to_le_bytes(),&p.inode.to_le_bytes(),
++            &key.device.to_le_bytes(),&key.inode.to_le_bytes(),
++            &master.revision_bytes().map_err(|_|ServiceError::InvalidMaster)?,live]))
++    }
++    /// Reads only through an already initialized owner; does not create a new
++    /// profile, database or default provider. Runtime lease is an internal effect.
++    pub(crate) fn current_revision(&self)->Result<(String,String),ServiceError> {
++        self.ensure_current()?;
++        let writer=self.owner.try_writer().map_err(|_|ServiceError::Ownership)?;
++        let master=self.master()?; let runtime=Self::runtime(&master)?;
++        let resources=writer.acquire_resources(vec![runtime.clone()]).map_err(|_|ServiceError::Ownership)?;
++        let file=ConfigFile::read(&writer,&resources,&runtime).map_err(|_|ServiceError::FileUnavailable)?;
++        Ok((self.revision(&master,&runtime,file.bytes())?,master.provider_id))
++    }
++    fn fingerprint(&self,r:&ContextRequest)->String {
++        let key=self.owner.profile().key();
++        let target=match r.target {Target::Common=>b"common".as_slice(),Target::Provider=>b"provider".as_slice()};
++        let patch=serde_json::to_vec(&(r.patch.model_context_window,r.patch.model_auto_compact_token_limit)).expect("integer options serialize");
++        digest(&[b"codex-context-config-only-v1",&key.device.to_le_bytes(),&key.inode.to_le_bytes(),
++            r.request_id.as_bytes(),r.expected_provider_id.as_bytes(),r.expected_revision.as_bytes(),target,&patch])
++    }
++    fn lookup(&self,r:&ContextRequest,fingerprint:&str)->Result<Lookup,ServiceError> {
++        self.db.with_conn(|c|Ok(journal::lookup(c,&r.request_id,fingerprint)))
++            .map_err(|_|ServiceError::Storage)?.map_err(journal_error)
++    }
++    /// Only successful typed operations commit. In particular never pass
++    /// Ok(Err(..)) to helpers::db_transaction, whose Ok branch commits.
++    fn transaction<T>(&self,operation:impl FnOnce(&Transaction<'_>)->Result<T,ServiceError>)->Result<T,ServiceError> {
++        self.db.with_conn_mut(|c| {
++            let outcome=(|| {
++                let tx=c.transaction().map_err(|_|ServiceError::Storage)?;
++                let result=operation(&tx)?;
++                tx.commit().map_err(|_|ServiceError::PersistenceUncertain)?;
++                Ok(result)
++            })();
++            Ok(outcome)
++        }).map_err(|_|ServiceError::Storage)?
++    }
++    fn advance(&self,r:&ContextRequest,fp:&str,from:Phase,to:Phase,failure:Option<FailureCode>)->Result<JournalEntry,ServiceError> {
++        self.advance_at(r,fp,from,to,failure,Checkpoint::None)
++    }
++    fn advance_at(&self,r:&ContextRequest,fp:&str,from:Phase,to:Phase,failure:Option<FailureCode>,checkpoint:Checkpoint)->Result<JournalEntry,ServiceError> {
++        self.transaction(|tx| {
++            let entry=match journal::advance(tx,&r.request_id,fp,from,to,failure)
++                .map_err(journal_error)? {
++                AdvanceResult::Advanced(entry)=>entry,
++                AdvanceResult::Replay(_)=>return Err(ServiceError::JournalConflict),
++            };
++            // Synthetic pre-commit transaction errors, not real COMMIT/I/O faults.
++            #[cfg(test)] if (to==Phase::ProjectionStarted && checkpoint==Checkpoint::StartedCommitRollback)
++                || (to==Phase::Verified && checkpoint==Checkpoint::VerifiedCommitRollback) {
++                return Err(ServiceError::Interrupted);
++            }
++            Ok(entry)
++        }).map_err(|error| match error {
++            ServiceError::Storage=>ServiceError::PhasePersistence {last_committed:from},
++            other=>other,
++        })
++    }
++    pub(crate) fn execute(&self,r:&ContextRequest)->Result<ContextStatus,ServiceError> {
++        self.execute_at(r,Checkpoint::None)
++    }
++    fn execute_at(&self,r:&ContextRequest,checkpoint:Checkpoint)->Result<ContextStatus,ServiceError> {
++        if r.schema_version!=1 || !valid_patch(r.patch) || !valid_id(&r.request_id) || !valid_id(&r.expected_provider_id) || r.expected_revision.len()!=64
++            || !r.expected_revision.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
++            return Err(ServiceError::InvalidRequest);
++        }
++        self.ensure_current()?;
++        let writer=self.owner.try_writer().map_err(|_|ServiceError::Ownership)?;
++        let fp=self.fingerprint(r);
++        // Replay precedes provider/runtime/revision inspection, including after
++        // this same operation changed the master data or the live file.
++        if let Lookup::Replay(entry)=self.lookup(r,&fp)? { return Ok(ContextStatus::from_entry(entry,true)); }
++        let master=self.master()?;
++        if master.provider_id!=r.expected_provider_id { return Err(ServiceError::ProviderChanged); }
++        let runtime=Self::runtime(&master)?;
++        let resources=writer.acquire_resources(vec![runtime.clone()]).map_err(|_|ServiceError::Ownership)?;
++        let file=ConfigFile::read(&writer,&resources,&runtime).map_err(|_|ServiceError::FileUnavailable)?;
++        if self.revision(&master,&runtime,file.bytes())?!=r.expected_revision { return Err(ServiceError::RevisionConflict); }
++        let live=std::str::from_utf8(file.bytes()).map_err(|_|ServiceError::FileUnavailable)?;
++        let plan=plan_context_projection(live,&master.common_config,&master.provider_config,r.target,r.patch)
++            .map_err(|_|ServiceError::InvalidRequest)?;
++        let input=JournalInput {request_id:r.request_id.clone(),provider_id:master.provider_id.clone(),
++            request_fingerprint:fp.clone(),expected_revision:r.expected_revision.clone(),
++            planned_live_digest:digest(&[plan.live_candidate.as_bytes()]),context:plan.master.context.value,
++            auto_compact:plan.master.auto_compact.value,master_changed:plan.master.changed,live_changed:plan.live_changed};
++        let saved=self.transaction(|tx| {
++            if !matches!(journal::lookup(tx,&r.request_id,&fp).map_err(journal_error)?,Lookup::Missing) {
++                return Err(ServiceError::JournalConflict);
++            }
++            patch_master(tx,&master,r.target,&plan.master.candidate).map_err(master_error)?;
++            let entry=match journal::insert_saved(tx,input).map_err(journal_error)? {
++                InsertResult::Inserted(entry)=>entry,InsertResult::Replay(_)=>return Err(ServiceError::JournalConflict),
++            };
++            #[cfg(test)] if checkpoint==Checkpoint::BeforeSaveCommit {return Err(ServiceError::Interrupted);}
++            Ok(entry)
++        })?;
++        #[cfg(test)] if checkpoint==Checkpoint::AfterSaved {return Err(ServiceError::Interrupted);}
++        #[cfg(test)] if checkpoint==Checkpoint::PreflightDrift {
++            fs::write(runtime.canonical_path().join("config.toml"),b"# synthetic external drift\n").unwrap();
++        }
++        if file.preflight().is_err() {
++            let entry=self.advance(r,&fp,Phase::SavedOnly,Phase::SavedOnly,Some(FailureCode::ProjectionPreflightFailed))?;
++            return Ok(ContextStatus::from_entry(entry,false));
++        }
++        if !plan.live_changed {
++            #[cfg(test)] if checkpoint==Checkpoint::NoopReadbackDrift {
++                fs::write(runtime.canonical_path().join("config.toml"),b"# synthetic external drift\n").unwrap();
++            }
++            let result=file.readback();
++            let (next,failure)=match result {
++                Ok(bytes) if digest(&[&bytes])==saved.input.planned_live_digest => (Phase::Verified,None),
++                Ok(_)=>(Phase::SavedOnly,Some(FailureCode::ReadbackMismatch)),
++                Err(error)=>(Phase::SavedOnly,Some(match error.reason() {
++                    ConfigFileErrorReason::ConfigChanged | ConfigFileErrorReason::ReadbackMismatch => FailureCode::ReadbackMismatch,
++                    _ => FailureCode::ReadbackFailed,
++                })),
++            };
++            return self.advance(r,&fp,Phase::SavedOnly,next,failure).map(|e|ContextStatus::from_entry(e,false));
++        }
++        #[cfg(test)] if checkpoint==Checkpoint::PhaseWriteReadOnly {
++            self.db.with_conn(|c|c.execute_batch("PRAGMA query_only = ON").map_err(|_|"synthetic fixture".into())).unwrap();
++        }
++        self.advance_at(r,&fp,Phase::SavedOnly,Phase::ProjectionStarted,None,checkpoint)?;
++        let committed_start=CommittedStart;
++        #[cfg(test)] if checkpoint==Checkpoint::AfterStarted {return Err(ServiceError::Interrupted);}
++        #[cfg(test)] if checkpoint==Checkpoint::ReplaceDrift {
++            fs::write(runtime.canonical_path().join("config.toml"),b"# synthetic external drift\n").unwrap();
++        }
++        // Any failure after the durable start is conservatively uncertain; no
++        // automatic retry or rollback can assume rename did not happen.
++        match project(committed_start,file,plan.live_candidate.as_bytes()) {
++            Ok(_)=>(),
++            Err(_)=>return self.advance(r,&fp,Phase::ProjectionStarted,Phase::ProjectionUncertain,
++                Some(FailureCode::ProjectionOutcomeUnknown)).map(|e|ContextStatus::from_entry(e,false)),
++        };
++        #[cfg(test)] if checkpoint==Checkpoint::AfterWrite {return Err(ServiceError::Interrupted);}
++        self.advance(r,&fp,Phase::ProjectionStarted,Phase::ProjectedUnverified,None)?;
++        #[cfg(test)] if checkpoint==Checkpoint::AfterProjected {return Err(ServiceError::Interrupted);}
++        #[cfg(test)] if checkpoint==Checkpoint::ProjectedReadbackDrift {
++            fs::write(runtime.canonical_path().join("config.toml"),b"# synthetic external drift\n").unwrap();
++        }
++        let (phase,failure)=match ConfigFile::read(&writer,&resources,&runtime) {
++            Ok(current) if digest(&[current.bytes()])==saved.input.planned_live_digest => (Phase::Verified,None),
++            Ok(_)=>(Phase::ProjectedUnverified,Some(FailureCode::ReadbackMismatch)),
++            Err(_)=>(Phase::ProjectedUnverified,Some(FailureCode::ReadbackFailed)),
++        };
++        self.advance_at(r,&fp,Phase::ProjectedUnverified,phase,failure,checkpoint).map(|e|ContextStatus::from_entry(e,false))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use ai_toolbox_storage::{helpers::{db_get,db_put},schema::DbTable};
++    use serde_json::json;
++    use std::{os::unix::fs::PermissionsExt,path::PathBuf};
++
++    struct Fixture { _root:tempfile::TempDir, profile:PathBuf, runtime:PathBuf, auth_inode:u64 }
++    impl Fixture {
++        fn new()->Self {
++            let root=tempfile::tempdir().unwrap();
++            fs::set_permissions(root.path(),fs::Permissions::from_mode(0o700)).unwrap();
++            let profile=root.path().join("profile");let runtime=root.path().join("codex");
++            for p in [&profile,&runtime] {fs::create_dir(p).unwrap();fs::set_permissions(p,fs::Permissions::from_mode(0o700)).unwrap();}
++            fs::write(runtime.join("config.toml"),concat!("# synthetic config\nmodel_context_window = 1000000\n",
++                "model_auto_compact_token_limit = 900000\nmodel_provider = \"synthetic\"\n",
++                "requires_openai_auth = true\n[model_providers.synthetic]\nbase_url = \"https://invalid.example\"\n")).unwrap();
++            fs::write(runtime.join("auth.json"),b"{\"synthetic\":\"not-a-credential\"}\n").unwrap();
++            let db=SqliteDbState::open(profile.join(SQLITE_DATABASE_FILE)).unwrap();
++            db.with_conn(|c| {
++                db_put(c,DbTable::CodexCommonConfig,"common",&json!({"config":"model_context_window = 1000000\n",
++                    "root_dir":runtime.to_str().unwrap(),"unknown":{"retained":true}}))?;
++                db_put(c,DbTable::CodexProvider,"synthetic-provider",&json!({"is_applied":true,"is_disabled":false,
++                    "unknown_outer":{"retained":7},"settings_config":json!({"config":"model_auto_compact_token_limit = 900000\n",
++                        "auth":{"synthetic":"not-a-credential"},"models":[{"id":"synthetic-model"}],"unknown":{"keep":true}}).to_string()}))
++            }).unwrap();drop(db);
++            for path in [runtime.join("config.toml"),runtime.join("auth.json"),profile.join(SQLITE_DATABASE_FILE)] {
++                fs::set_permissions(&path,fs::Permissions::from_mode(0o600)).unwrap();
++                assert_eq!(fs::metadata(&path).unwrap().mode() & 0o7777,0o600);
++            }
++            let auth_inode=fs::metadata(runtime.join("auth.json")).unwrap().ino();
++            Self {_root:root,profile,runtime,auth_inode}
++        }
++        fn open(&self)->ContextService {ContextService::open(&self.profile).unwrap()}
++        fn auth_unchanged(&self) {
++            assert_eq!(fs::read(self.runtime.join("auth.json")).unwrap(),b"{\"synthetic\":\"not-a-credential\"}\n");
++            assert_eq!(fs::metadata(self.runtime.join("auth.json")).unwrap().ino(),self.auth_inode);
++        }
++        fn live(&self)->Vec<u8> {fs::read(self.runtime.join("config.toml")).unwrap()}
++    }
++    fn request(service:&ContextService,id:&str,target:Target)->ContextRequest {
++        let (revision,provider)=service.current_revision().unwrap();
++        ContextRequest {schema_version:1,request_id:id.into(),expected_provider_id:provider,
++            expected_revision:revision,target,patch:ContextPatch {model_context_window:Some(2000000),model_auto_compact_token_limit:None}}
++    }
++    fn records(service:&ContextService)->(serde_json::Value,serde_json::Value) {
++        service.db.with_conn(|c|Ok((db_get(c,DbTable::CodexCommonConfig,"common")?.unwrap(),
++            db_get(c,DbTable::CodexProvider,"synthetic-provider")?.unwrap()))).unwrap()
++    }
++    fn journal_entry(service:&ContextService,r:&ContextRequest)->JournalEntry {
++        let Lookup::Replay(e)=service.lookup(r,&service.fingerprint(r)).unwrap() else {panic!("missing fixture journal")};e
++    }
++    #[test]
++    fn disk_common_roundtrip_reopens_and_preserves_auth_unknowns_and_unrequested_fields() {
++        let f=Fixture::new();let service=f.open();let before=records(&service);let r=request(&service,"common-roundtrip",Target::Common);
++        let status=service.execute(&r).unwrap();assert_eq!(status.phase,Phase::Verified);assert_eq!(status.exit_code(),0);
++        let after=records(&service);assert_eq!(before.1,after.1);assert_eq!(before.0["unknown"],after.0["unknown"]);
++        assert_eq!(before.0["root_dir"],after.0["root_dir"]);assert!(after.0["config"].as_str().unwrap().contains("2000000"));
++        let live=String::from_utf8(f.live()).unwrap();assert!(live.contains("model_context_window = 2000000"));
++        for kept in ["# synthetic config","model_auto_compact_token_limit = 900000","requires_openai_auth = true","base_url = \"https://invalid.example\""] {assert!(live.contains(kept));}
++        f.auth_unchanged();drop(service);let reopened=f.open();assert_eq!(records(&reopened),after);
++        assert_eq!(journal_entry(&reopened,&r).phase,Phase::Verified);assert!(reopened.execute(&r).unwrap().replay);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_provider_roundtrip_keeps_settings_string_auth_models_unknown_values() {
++        let f=Fixture::new();let service=f.open();let before=records(&service);let mut r=request(&service,"provider-roundtrip",Target::Provider);
++        r.patch=ContextPatch {model_context_window:None,model_auto_compact_token_limit:Some(800000)};
++        assert_eq!(service.execute(&r).unwrap().phase,Phase::Verified);let after=records(&service);assert_eq!(before.0,after.0);
++        let old:serde_json::Value=serde_json::from_str(before.1["settings_config"].as_str().unwrap()).unwrap();
++        let new:serde_json::Value=serde_json::from_str(after.1["settings_config"].as_str().unwrap()).unwrap();
++        for name in ["auth","models","unknown"] {assert_eq!(old[name],new[name]);}
++        assert_eq!(before.1["unknown_outer"],after.1["unknown_outer"]);assert!(new["config"].as_str().unwrap().contains("800000"));
++        drop(service);let reopened=f.open();assert_eq!(records(&reopened),after);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_replay_after_new_epoch_does_not_replace_config_again() {
++        let f=Fixture::new();let service=f.open();let r=request(&service,"replay",Target::Common);let epoch=service.owner.epoch();
++        service.execute(&r).unwrap();let inode=fs::metadata(f.runtime.join("config.toml")).unwrap().ino();let bytes=f.live();
++        drop(service);let reopened=f.open();assert_ne!(reopened.owner.epoch(),epoch);
++        assert!(reopened.execute(&r).unwrap().replay);assert_eq!(f.live(),bytes);
++        assert_eq!(fs::metadata(f.runtime.join("config.toml")).unwrap().ino(),inode);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_request_fingerprint_and_stale_revision_reject_without_new_effects() {
++        let f=Fixture::new();let service=f.open();let mut r=request(&service,"first",Target::Common);
++        service.execute(&r).unwrap();let before=records(&service);let live=f.live();
++        r.patch.model_context_window=Some(3000000);assert_eq!(service.execute(&r),Err(ServiceError::JournalConflict));
++        r.request_id="new-request".into();assert_eq!(service.execute(&r),Err(ServiceError::RevisionConflict));
++        assert!(matches!(service.lookup(&r,&service.fingerprint(&r)).unwrap(),Lookup::Missing));
++        assert_eq!(records(&service),before);assert_eq!(f.live(),live);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_synthetic_save_transaction_error_rolls_back_master_and_journal() {
++        let f=Fixture::new();let service=f.open();let before=records(&service);let live=f.live();let r=request(&service,"rollback",Target::Common);
++        assert_eq!(service.execute_at(&r,Checkpoint::BeforeSaveCommit),Err(ServiceError::Interrupted));
++        assert_eq!(records(&service),before);assert_eq!(f.live(),live);
++        assert!(matches!(service.lookup(&r,&service.fingerprint(&r)).unwrap(),Lookup::Missing));
++        drop(service);let reopened=f.open();assert_eq!(records(&reopened),before);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_saved_only_replay_never_implicitly_resumes_new_request_can_recover() {
++        let f=Fixture::new();let service=f.open();let live=f.live();let r=request(&service,"saved-only",Target::Common);
++        assert_eq!(service.execute_at(&r,Checkpoint::AfterSaved),Err(ServiceError::Interrupted));assert_eq!(f.live(),live);
++        drop(service);let reopened=f.open();let status=reopened.execute(&r).unwrap();assert_eq!(status.phase,Phase::SavedOnly);
++        assert_eq!(status.exit_code(),3);assert!(status.replay);assert_eq!(f.live(),live);
++        let recovery=request(&reopened,"saved-recovery",Target::Common);assert_eq!(reopened.execute(&recovery).unwrap().phase,Phase::Verified);
++        assert!(!journal_entry(&reopened,&recovery).input.master_changed);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_interruption_after_started_before_rename_replays_uncertain_without_write() {
++        let f=Fixture::new();let service=f.open();let live=f.live();let r=request(&service,"started",Target::Common);
++        assert_eq!(service.execute_at(&r,Checkpoint::AfterStarted),Err(ServiceError::Interrupted));assert_eq!(f.live(),live);
++        drop(service);let reopened=f.open();let status=reopened.execute(&r).unwrap();assert_eq!(status.phase,Phase::ProjectionUncertain);
++        assert_eq!(status.exit_code(),3);assert_eq!(f.live(),live);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_interruption_after_real_rename_keeps_started_and_does_not_rewrite_on_reopen() {
++        let f=Fixture::new();let service=f.open();let old=f.live();let r=request(&service,"renamed",Target::Common);
++        assert_eq!(service.execute_at(&r,Checkpoint::AfterWrite),Err(ServiceError::Interrupted));assert_ne!(f.live(),old);
++        let bytes=f.live();let inode=fs::metadata(f.runtime.join("config.toml")).unwrap().ino();drop(service);
++        let reopened=f.open();assert_eq!(reopened.execute(&r).unwrap().phase,Phase::ProjectionUncertain);
++        assert_eq!(f.live(),bytes);assert_eq!(fs::metadata(f.runtime.join("config.toml")).unwrap().ino(),inode);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_projected_unverified_reopens_without_claiming_verified() {
++        let f=Fixture::new();let service=f.open();let r=request(&service,"unverified",Target::Common);
++        assert_eq!(service.execute_at(&r,Checkpoint::AfterProjected),Err(ServiceError::Interrupted));let live=f.live();drop(service);
++        let reopened=f.open();let status=reopened.execute(&r).unwrap();assert_eq!(status.phase,Phase::ProjectedUnverified);
++        assert_eq!(status.exit_code(),3);assert_eq!(f.live(),live);
++        let recovery=request(&reopened,"verify-new-id",Target::Common);assert_eq!(reopened.execute(&recovery).unwrap().phase,Phase::Verified);
++        assert!(!journal_entry(&reopened,&recovery).input.live_changed);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_noop_verifies_without_replacing_file() {
++        let f=Fixture::new();let service=f.open();let mut r=request(&service,"noop",Target::Common);r.patch.model_context_window=Some(1000000);
++        let inode=fs::metadata(f.runtime.join("config.toml")).unwrap().ino();let bytes=f.live();
++        assert_eq!(service.execute(&r).unwrap().phase,Phase::Verified);let e=journal_entry(&service,&r);
++        assert!(!e.input.master_changed && !e.input.live_changed);assert_eq!(f.live(),bytes);
++        assert_eq!(fs::metadata(f.runtime.join("config.toml")).unwrap().ino(),inode);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_busy_writer_invalid_id_provider_and_unsafe_leaf_fail_before_master_change() {
++        let f=Fixture::new();let service=f.open();let mut r=request(&service,"controls",Target::Common);let before=records(&service);
++        let writer=service.owner.try_writer().unwrap();assert_eq!(service.execute(&r),Err(ServiceError::Ownership));drop(writer);
++        r.request_id="invalid/id".into();assert_eq!(service.execute(&r),Err(ServiceError::InvalidRequest));r.request_id="controls".into();
++        r.expected_provider_id="different-provider".into();assert_eq!(service.execute(&r),Err(ServiceError::ProviderChanged));
++        r.expected_provider_id="synthetic-provider".into();let original=f.runtime.join("config.toml");fs::rename(&original,f.runtime.join("config-saved")).unwrap();
++        std::os::unix::fs::symlink("config-saved",&original).unwrap();assert_eq!(service.execute(&r),Err(ServiceError::FileUnavailable));
++        assert_eq!(records(&service),before);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_runtime_lease_conflict_keeps_master_and_live_unchanged() {
++        let f=Fixture::new();let service=f.open();let r=request(&service,"resource-busy",Target::Common);let before=records(&service);let live=f.live();
++        let other=f._root.path().join("other-profile");fs::create_dir(&other).unwrap();fs::set_permissions(&other,fs::Permissions::from_mode(0o700)).unwrap();
++        let owner=ProfileOwner::acquire(ProfileIdentity::existing(other).unwrap()).unwrap();let writer=owner.try_writer().unwrap();
++        let _held=writer.acquire_resources(vec![RuntimeResourceIdentity::existing(&f.runtime).unwrap()]).unwrap();
++        assert_eq!(service.execute(&r),Err(ServiceError::Ownership));assert_eq!(records(&service),before);assert_eq!(f.live(),live);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_real_commit_veto_never_reports_uncommitted_phase_as_success() {
++        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
++        for nth in 1..=4 {
++            let f=Fixture::new();let service=f.open();let r=request(&service,"commit-veto",Target::Common);
++            let before=records(&service);let old_live=f.live();let count=Arc::new(AtomicUsize::new(0));let seen=count.clone();
++            service.db.with_conn(|c| {c.commit_hook(Some(move || seen.fetch_add(1,Ordering::SeqCst)+1==nth)).map_err(|_|"synthetic hook installation".to_string())?;Ok(())}).unwrap();
++            assert_eq!(service.execute(&r),Err(ServiceError::PersistenceUncertain));
++            assert_eq!(count.load(Ordering::SeqCst),nth);drop(service);
++            let reopened=f.open();
++            if nth==1 {
++                assert_eq!(records(&reopened),before);assert_eq!(f.live(),old_live);
++                assert!(matches!(reopened.lookup(&r,&reopened.fingerprint(&r)).unwrap(),Lookup::Missing));
++            } else {
++                let status=reopened.execute(&r).unwrap();assert!(status.replay);assert_eq!(status.exit_code(),3);
++                assert_eq!(status.phase,match nth {2=>Phase::SavedOnly,3=>Phase::ProjectionUncertain,_=>Phase::ProjectedUnverified});
++                if nth==2 {assert_eq!(f.live(),old_live);} else {assert_ne!(f.live(),old_live);}
++            }
++            f.auth_unchanged();
++        }
++    }
++    #[test]
++    fn disk_phase_sqlite_write_failure_preserves_saved_phase_not_fake_conflict() {
++        let f=Fixture::new();let service=f.open();let r=request(&service,"phase-readonly",Target::Common);let live=f.live();
++        assert_eq!(service.execute_at(&r,Checkpoint::PhaseWriteReadOnly),Err(ServiceError::PhasePersistence {last_committed:Phase::SavedOnly}));
++        assert_eq!(f.live(),live);drop(service);let reopened=f.open();assert_eq!(reopened.execute(&r).unwrap().phase,Phase::SavedOnly);f.auth_unchanged();
++    }
++    #[test]
++    fn disk_preflight_and_noop_or_projected_readback_drift_keep_partial_status() {
++        for checkpoint in [Checkpoint::PreflightDrift,Checkpoint::NoopReadbackDrift,Checkpoint::ProjectedReadbackDrift] {
++            let f=Fixture::new();let service=f.open();let mut r=request(&service,"drift",Target::Common);
++            if checkpoint==Checkpoint::NoopReadbackDrift {r.patch.model_context_window=Some(1000000);}
++            let status=service.execute_at(&r,checkpoint).unwrap();assert_eq!(status.exit_code(),3);
++            let (phase,failure)=match checkpoint {
++                Checkpoint::PreflightDrift=>(Phase::SavedOnly,FailureCode::ProjectionPreflightFailed),
++                Checkpoint::NoopReadbackDrift=>(Phase::SavedOnly,FailureCode::ReadbackMismatch),
++                _=>(Phase::ProjectedUnverified,FailureCode::ReadbackMismatch),
++            };
++            assert_eq!(status.phase,phase);assert_eq!(status.failure,Some(failure));drop(service);
++            let reopened=f.open();assert_eq!(reopened.execute(&r).unwrap().phase,phase);f.auth_unchanged();
++        }
++    }
++    #[test]
++    fn disk_invalid_numeric_request_creates_no_runtime_lease_or_operation() {
++        let f=Fixture::new();let service=f.open();
++        // Do not call current_revision: even internal inspection takes a resource lease.
++        let mut r=ContextRequest {schema_version:1,request_id:"invalid-numbers".into(),expected_provider_id:"synthetic-provider".into(),
++            expected_revision:"0".repeat(64),target:Target::Common,patch:ContextPatch::default()};
++        for patch in [ContextPatch::default(),ContextPatch {model_context_window:Some(0),model_auto_compact_token_limit:None},
++            ContextPatch {model_context_window:Some(u64::MAX),model_auto_compact_token_limit:None},
++            ContextPatch {model_context_window:Some(1),model_auto_compact_token_limit:Some(2)}] {
++            r.patch=patch;assert_eq!(service.execute(&r),Err(ServiceError::InvalidRequest));
++        }
++        assert!(!f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());f.auth_unchanged();
++    }
++
++    #[test]
++    fn disk_replace_rejection_and_failure_marker_commit_veto_remain_uncertain() {
++        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
++        for veto_marker in [false,true] {
++            let f=Fixture::new();let service=f.open();let r=request(&service,"replace-rejection",Target::Common);
++            if veto_marker {
++                let count=Arc::new(AtomicUsize::new(0));
++                service.db.with_conn(|c| {c.commit_hook(Some(move || count.fetch_add(1,Ordering::SeqCst)+1==3)).map_err(|_|"synthetic hook installation".to_string())?;Ok(())}).unwrap();
++            }
++            let result=service.execute_at(&r,Checkpoint::ReplaceDrift);
++            if veto_marker {assert_eq!(result,Err(ServiceError::PersistenceUncertain));}
++            else {
++                let status=result.unwrap();assert_eq!(status.phase,Phase::ProjectionUncertain);
++                assert_eq!(status.failure,Some(FailureCode::ProjectionOutcomeUnknown));assert_eq!(status.exit_code(),3);
++            }
++            assert_eq!(f.live(),b"# synthetic external drift\n");let inode=fs::metadata(f.runtime.join("config.toml")).unwrap().ino();
++            drop(service);let reopened=f.open();let status=reopened.execute(&r).unwrap();
++            assert!(status.replay);assert_eq!(status.phase,Phase::ProjectionUncertain);assert_eq!(status.exit_code(),3);
++            assert_eq!(f.live(),b"# synthetic external drift\n");assert_eq!(fs::metadata(f.runtime.join("config.toml")).unwrap().ino(),inode);f.auth_unchanged();
++        }
++    }
++    #[test]
++    fn disk_replay_precedes_changed_provider_and_missing_runtime_inspection() {
++        let f=Fixture::new();let service=f.open();let r=request(&service,"lookup-first",Target::Common);
++        assert_eq!(service.execute(&r).unwrap().phase,Phase::Verified);
++        service.db.with_conn(|c| {
++            let mut provider:serde_json::Value=db_get(c,DbTable::CodexProvider,"synthetic-provider")?.unwrap();
++            provider["is_applied"]=json!(false);db_put(c,DbTable::CodexProvider,"synthetic-provider",&provider)
++        }).unwrap();
++        let status=service.execute(&r).unwrap();assert!(status.replay);assert_eq!(status.phase,Phase::Verified);
++        let moved=f._root.path().join("moved-runtime");fs::rename(&f.runtime,&moved).unwrap();
++        drop(service);let reopened=f.open();let status=reopened.execute(&r).unwrap();
++        assert!(status.replay);assert_eq!(status.phase,Phase::Verified);assert!(!f.runtime.exists());
++        assert_eq!(fs::read(moved.join("auth.json")).unwrap(),b"{\"synthetic\":\"not-a-credential\"}\n");
++        assert_eq!(fs::metadata(moved.join("auth.json")).unwrap().ino(),f.auth_inode);
++    }
++
++}
+diff --git a/crates/ai-toolbox-management/src/config_file.rs b/crates/ai-toolbox-management/src/config_file.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..bacc1268474b0c34d70f33d89505180408fb3e74
+--- /dev/null
++++ b/crates/ai-toolbox-management/src/config_file.rs
+@@ -0,0 +1,694 @@
++//! Private, Linux-only replacement of one existing `config.toml` leaf.
++//!
++//! This is not an arbitrary-path writer, an auth writer, or complete desktop
++//! writer admission. It retains owner/resource permits throughout the effect.
++//! Rechecks detect observed drift; they do not eliminate races with processes
++//! of the same UID that ignore the resource lease. Only Unix mode and ownership
++//! are preserved, not arbitrary ACLs or extended attributes.
++//! Failure closes our descriptors but leaves any named temporary file in place:
++//! a pathname check followed by unlink could delete an uncooperative replacement.
++//! Successful rename consumes the temporary name; no cleanup unlinks any path.
++
++use crate::owner::{ResourcePermit, RuntimeResourceIdentity, WriterPermit};
++
++pub(crate) const MAX_CONFIG_BYTES: usize = 1024 * 1024;
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) enum PublishDisposition {
++    /// This attempt has not called rename. A staging file may remain; this is
++    /// not a promise of zero filesystem side effects and is not a rollback.
++    NotPublished,
++    /// Rename was attempted. Never infer that the old config still applies.
++    OutcomeUnknown,
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) enum ConfigFileErrorReason {
++    UnsupportedPlatform,
++    AdmissionRejected,
++    MissingConfig,
++    UnsafeConfig,
++    ConfigChanged,
++    ConfigTooLarge,
++    NotWritable,
++    ReadFailed,
++    RandomUnavailable,
++    TemporaryCreateFailed,
++    TemporaryChanged,
++    TemporaryWriteFailed,
++    MetadataFailed,
++    FileSyncFailed,
++    PublishFailed,
++    DirectorySyncFailed,
++    ReadbackMismatch,
++}
++
++/// Errors deliberately contain no path, input bytes, or raw OS diagnostics.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) struct ConfigFileError {
++    disposition: PublishDisposition,
++    reason: ConfigFileErrorReason,
++}
++
++impl ConfigFileError {
++    pub(crate) fn disposition(self) -> PublishDisposition {
++        self.disposition
++    }
++
++    pub(crate) fn reason(self) -> ConfigFileErrorReason {
++        self.reason
++    }
++
++    fn before_publish(reason: ConfigFileErrorReason) -> Self {
++        Self { disposition: PublishDisposition::NotPublished, reason }
++    }
++
++    fn outcome_unknown(mut self) -> Self {
++        self.disposition = PublishDisposition::OutcomeUnknown;
++        self
++    }
++}
++
++impl std::fmt::Display for ConfigFileError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "CONFIG_FILE_{:?}_{:?}", self.disposition, self.reason)
++    }
++}
++
++impl std::error::Error for ConfigFileError {}
++
++type Result<T> = std::result::Result<T, ConfigFileError>;
++
++/// The original descriptor prevents inode reuse while the plan is outstanding.
++/// No Debug/Serialize implementation may accidentally expose its raw config.
++pub(crate) struct ConfigFile<'permit, 'writer> {
++    writer: &'writer WriterPermit,
++    resources: &'permit ResourcePermit<'writer>,
++    runtime: RuntimeResourceIdentity,
++    bytes: Vec<u8>,
++    #[cfg(target_os = "linux")]
++    original: linux::OpenedConfig,
++}
++
++impl<'permit, 'writer> ConfigFile<'permit, 'writer> {
++    pub(crate) fn read(
++        writer: &'writer WriterPermit,
++        resources: &'permit ResourcePermit<'writer>,
++        runtime: &RuntimeResourceIdentity,
++    ) -> Result<Self> {
++        #[cfg(target_os = "linux")]
++        {
++            let directory = resources.config_directory(writer, runtime)
++                .map_err(|_| ConfigFileError::before_publish(ConfigFileErrorReason::AdmissionRejected))?;
++            let (original, bytes) = linux::read_config(directory)?;
++            let snapshot = Self { writer, resources, runtime: runtime.clone(), bytes, original };
++            snapshot.readback()?;
++            Ok(snapshot)
++        }
++        #[cfg(not(target_os = "linux"))]
++        {
++            let _ = (writer, resources, runtime);
++            Err(ConfigFileError::before_publish(ConfigFileErrorReason::UnsupportedPlatform))
++        }
++    }
++
++    pub(crate) fn bytes(&self) -> &[u8] {
++        &self.bytes
++    }
++
++    /// Read-only check before journaling an intended projection. Replace still
++    /// repeats it immediately before publication; this is not a reservation.
++    pub(crate) fn preflight(&self) -> Result<()> {
++        #[cfg(target_os = "linux")]
++        {
++            use std::os::unix::fs::MetadataExt;
++
++            let directory = self.directory()?;
++            let mode = directory.metadata()
++                .map_err(|_| ConfigFileError::before_publish(ConfigFileErrorReason::AdmissionRejected))?.mode();
++            // Do not let root's DAC bypass turn explicitly read-only fixtures
++            // or configs into successful writes.
++            if mode & 0o300 != 0o300 || self.original.stamp.mode & 0o600 != 0o600 {
++                return Err(ConfigFileError::before_publish(ConfigFileErrorReason::NotWritable));
++            }
++            self.readback().map(|_| ())
++        }
++        #[cfg(not(target_os = "linux"))]
++        {
++            Err(ConfigFileError::before_publish(ConfigFileErrorReason::UnsupportedPlatform))
++        }
++    }
++
++    /// Freshly opens only the fixed leaf and proves that the original snapshot
++    /// still applies. Useful for a no-op: no cached bytes are reported as proof.
++    pub(crate) fn readback(&self) -> Result<Vec<u8>> {
++        #[cfg(target_os = "linux")]
++        {
++            let directory = self.directory()?;
++            self.original.ensure_current()?;
++            let (current, bytes) = linux::read_config(directory)?;
++            if current.stamp != self.original.stamp || bytes != self.bytes {
++                return Err(ConfigFileError::before_publish(ConfigFileErrorReason::ConfigChanged));
++            }
++            self.directory()?;
++            self.original.ensure_current()?;
++            Ok(bytes)
++        }
++        #[cfg(not(target_os = "linux"))]
++        {
++            Err(ConfigFileError::before_publish(ConfigFileErrorReason::UnsupportedPlatform))
++        }
++    }
++
++    /// Stages, syncs, replaces and reads back the existing config. Consuming the
++    /// snapshot prevents accidental reuse after its inode has been replaced.
++    /// No failure after the rename attempt is represented as a known rollback.
++    pub(crate) fn replace(self, candidate: &[u8]) -> Result<Vec<u8>> {
++        #[cfg(target_os = "linux")]
++        {
++            if candidate.len() > MAX_CONFIG_BYTES {
++                return Err(ConfigFileError::before_publish(ConfigFileErrorReason::ConfigTooLarge));
++            }
++            self.preflight()?;
++            let directory = self.directory()?;
++            let mut temporary = linux::Temporary::create(directory)?;
++            temporary.stage(candidate, &self.original.stamp)?;
++            self.preflight()?;
++            temporary.ensure_current()?;
++            // From this line onward, even a rename error is conservative:
++            // publish state may not be inferred from a later cleanup/read.
++            temporary.publish().map_err(ConfigFileError::outcome_unknown)?;
++            directory.sync_all().map_err(|_| {
++                ConfigFileError::before_publish(ConfigFileErrorReason::DirectorySyncFailed).outcome_unknown()
++            })?;
++            self.directory().map_err(ConfigFileError::outcome_unknown)?;
++            let (published, bytes) = linux::read_config(directory)
++                .map_err(ConfigFileError::outcome_unknown)?;
++            if !published.stamp.same_inode(&temporary.stamp)
++                || !published.stamp.same_permissions(&self.original.stamp)
++                || bytes != candidate
++            {
++                return Err(ConfigFileError::before_publish(ConfigFileErrorReason::ReadbackMismatch).outcome_unknown());
++            }
++            self.directory().map_err(ConfigFileError::outcome_unknown)?;
++            Ok(bytes)
++        }
++        #[cfg(not(target_os = "linux"))]
++        {
++            let _ = candidate;
++            Err(ConfigFileError::before_publish(ConfigFileErrorReason::UnsupportedPlatform))
++        }
++    }
++
++    #[cfg(target_os = "linux")]
++    fn directory(&self) -> Result<&std::fs::File> {
++        self.resources.config_directory(self.writer, &self.runtime)
++            .map_err(|_| ConfigFileError::before_publish(ConfigFileErrorReason::AdmissionRejected))
++    }
++}
++
++#[cfg(target_os = "linux")]
++mod linux {
++    use std::ffi::{CStr, CString};
++    use std::fs::{File, Metadata, Permissions};
++    use std::io::{self, Write};
++    use std::mem::MaybeUninit;
++    use std::os::fd::{AsRawFd, FromRawFd};
++    use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
++
++    use super::*;
++
++    fn fail(reason: ConfigFileErrorReason) -> ConfigFileError {
++        ConfigFileError::before_publish(reason)
++    }
++
++    fn config_name() -> &'static CStr {
++        // A fixed leaf, not caller-controlled path text.
++        CStr::from_bytes_with_nul(b"config.toml\0").expect("fixed config leaf")
++    }
++
++    #[derive(Clone, Copy, Eq, PartialEq)]
++    pub(super) struct Stamp {
++        device: u64,
++        inode: u64,
++        uid: u32,
++        gid: u32,
++        pub(super) mode: u32,
++        links: u64,
++        length: u64,
++        modified: (i64, i64),
++        changed: (i64, i64),
++    }
++
++    impl Stamp {
++        fn from_metadata(meta: &Metadata) -> Self {
++            Self {
++                device: meta.dev(), inode: meta.ino(), uid: meta.uid(), gid: meta.gid(),
++                mode: meta.mode(), links: meta.nlink(), length: meta.len(),
++                modified: (meta.mtime(), meta.mtime_nsec()),
++                changed: (meta.ctime(), meta.ctime_nsec()),
++            }
++        }
++
++        pub(super) fn same_inode(&self, other: &Self) -> bool {
++            self.device == other.device && self.inode == other.inode
++        }
++
++        pub(super) fn same_permissions(&self, other: &Self) -> bool {
++            self.uid == other.uid && self.gid == other.gid && self.mode == other.mode && self.links == other.links
++        }
++
++        fn validate(&self) -> Result<()> {
++            let uid = crate::owner::linux::current_uid()
++                .map_err(|_| fail(ConfigFileErrorReason::AdmissionRejected))?;
++            if self.mode & libc::S_IFMT != libc::S_IFREG || self.uid != uid
++                || self.links != 1 || self.mode & 0o7022 != 0
++            {
++                return Err(fail(ConfigFileErrorReason::UnsafeConfig));
++            }
++            if self.length > MAX_CONFIG_BYTES as u64 {
++                return Err(fail(ConfigFileErrorReason::ConfigTooLarge));
++            }
++            Ok(())
++        }
++    }
++
++    fn stat_leaf(directory: &File, name: &CStr) -> Result<Stamp> {
++        let mut metadata = MaybeUninit::<libc::stat>::uninit();
++        // SAFETY: The borrowed directory FD is live; the internally produced
++        // single leaf is NUL terminated and output storage has the right size.
++        if unsafe { libc::fstatat(directory.as_raw_fd(), name.as_ptr(), metadata.as_mut_ptr(), libc::AT_SYMLINK_NOFOLLOW) } != 0 {
++            let reason = if io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
++                ConfigFileErrorReason::MissingConfig
++            } else {
++                ConfigFileErrorReason::ReadFailed
++            };
++            return Err(fail(reason));
++        }
++        // SAFETY: Successful fstatat initialized the complete structure.
++        let meta = unsafe { metadata.assume_init() };
++        Ok(Stamp {
++            device: meta.st_dev as u64, inode: meta.st_ino as u64,
++            uid: meta.st_uid, gid: meta.st_gid, mode: meta.st_mode,
++            links: meta.st_nlink as u64, length: meta.st_size as u64,
++            modified: (meta.st_mtime as i64, meta.st_mtime_nsec as i64),
++            changed: (meta.st_ctime as i64, meta.st_ctime_nsec as i64),
++        })
++    }
++
++    pub(super) struct OpenedConfig {
++        file: File,
++        pub(super) stamp: Stamp,
++    }
++
++    impl OpenedConfig {
++        pub(super) fn ensure_current(&self) -> Result<()> {
++            let current = Stamp::from_metadata(&self.file.metadata().map_err(|_| fail(ConfigFileErrorReason::ReadFailed))?);
++            current.validate()?;
++            if current != self.stamp {
++                return Err(fail(ConfigFileErrorReason::ConfigChanged));
++            }
++            Ok(())
++        }
++    }
++
++    fn read_bounded(file: &File, stamp: &Stamp) -> Result<Vec<u8>> {
++        stamp.validate()?;
++        // Allocate and read at most 1 MiB, including for a file that grows while
++        // being read. Revalidated size/timestamps detect observed growth/drift.
++        let mut bytes = vec![0; stamp.length as usize];
++        let mut offset = 0;
++        while offset < bytes.len() {
++            match file.read_at(&mut bytes[offset..], offset as u64) {
++                Ok(0) => return Err(fail(ConfigFileErrorReason::ConfigChanged)),
++                Ok(count) => offset += count,
++                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
++                Err(_) => return Err(fail(ConfigFileErrorReason::ReadFailed)),
++            }
++        }
++        let after = Stamp::from_metadata(&file.metadata().map_err(|_| fail(ConfigFileErrorReason::ReadFailed))?);
++        if after != *stamp {
++            return Err(fail(ConfigFileErrorReason::ConfigChanged));
++        }
++        Ok(bytes)
++    }
++
++    pub(super) fn read_config(directory: &File) -> Result<(OpenedConfig, Vec<u8>)> {
++        let name = config_name();
++        let before = stat_leaf(directory, name)?;
++        // Reject an already-observed special file without opening it. O_NONBLOCK
++        // and O_NOFOLLOW also keep a racing FIFO/link from blocking/following.
++        before.validate()?;
++        if before.device != directory.metadata().map_err(|_| fail(ConfigFileErrorReason::ReadFailed))?.dev() {
++            return Err(fail(ConfigFileErrorReason::UnsafeConfig));
++        }
++        // SAFETY: The directory FD and fixed C leaf are valid for this call.
++        let fd = unsafe {
++            libc::openat(directory.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
++        };
++        if fd < 0 {
++            return Err(fail(ConfigFileErrorReason::ReadFailed));
++        }
++        // SAFETY: Successful openat returned one new owned descriptor.
++        let file = unsafe { File::from_raw_fd(fd) };
++        let held = Stamp::from_metadata(&file.metadata().map_err(|_| fail(ConfigFileErrorReason::ReadFailed))?);
++        held.validate()?;
++        if held != before {
++            return Err(fail(ConfigFileErrorReason::ConfigChanged));
++        }
++        let bytes = read_bounded(&file, &held)?;
++        if stat_leaf(directory, name)? != held {
++            return Err(fail(ConfigFileErrorReason::ConfigChanged));
++        }
++        Ok((OpenedConfig { file, stamp: held }, bytes))
++    }
++
++    pub(super) struct Temporary<'directory> {
++        directory: &'directory File,
++        name: CString,
++        file: File,
++        pub(super) stamp: Stamp,
++    }
++
++    impl<'directory> Temporary<'directory> {
++        pub(super) fn create(directory: &'directory File) -> Result<Self> {
++            // Bound collision retries. Unknown pre-existing leaves are never
++            // opened for writing, truncated, repaired, or removed.
++            for _ in 0..8 {
++                let mut random = [0u8; 16];
++                getrandom::fill(&mut random).map_err(|_| fail(ConfigFileErrorReason::RandomUnavailable))?;
++                let hex = random.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
++                let name = CString::new(format!(".ai-toolbox-config-{hex}.tmp"))
++                    .map_err(|_| fail(ConfigFileErrorReason::TemporaryCreateFailed))?;
++                // SAFETY: The directory FD is live and the locally generated
++                // name is one C leaf. Exclusive creation cannot open an old file.
++                let fd = unsafe {
++                    libc::openat(directory.as_raw_fd(), name.as_ptr(),
++                        libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
++                        0o600 as libc::mode_t)
++                };
++                if fd < 0 {
++                    if io::Error::last_os_error().kind() == io::ErrorKind::AlreadyExists {
++                        continue;
++                    }
++                    return Err(fail(ConfigFileErrorReason::TemporaryCreateFailed));
++                }
++                // SAFETY: Successful exclusive openat returned a new owned FD.
++                let file = unsafe { File::from_raw_fd(fd) };
++                let stamp = Stamp::from_metadata(&file.metadata().map_err(|_| fail(ConfigFileErrorReason::MetadataFailed))?);
++                stamp.validate()?;
++                let temporary = Self { directory, name, file, stamp };
++                temporary.ensure_current()?;
++                return Ok(temporary);
++            }
++            Err(fail(ConfigFileErrorReason::TemporaryCreateFailed))
++        }
++
++        pub(super) fn stage(&mut self, bytes: &[u8], original: &Stamp) -> Result<()> {
++            self.file.write_all(bytes).map_err(|_| fail(ConfigFileErrorReason::TemporaryWriteFailed))?;
++            if self.stamp.gid != original.gid {
++                // SAFETY: This is our exclusively created file. An unchanged
++                // UID and original GID preserve access rather than widening it.
++                if unsafe { libc::fchown(self.file.as_raw_fd(), !0 as libc::uid_t, original.gid) } != 0 {
++                    return Err(fail(ConfigFileErrorReason::MetadataFailed));
++                }
++            }
++            self.file.set_permissions(Permissions::from_mode(original.mode & 0o777))
++                .map_err(|_| fail(ConfigFileErrorReason::MetadataFailed))?;
++            self.file.sync_all().map_err(|_| fail(ConfigFileErrorReason::FileSyncFailed))?;
++            let staged = Stamp::from_metadata(&self.file.metadata().map_err(|_| fail(ConfigFileErrorReason::MetadataFailed))?);
++            staged.validate()?;
++            if !staged.same_inode(&self.stamp) || !staged.same_permissions(original)
++                || staged.length != bytes.len() as u64
++            {
++                return Err(fail(ConfigFileErrorReason::TemporaryChanged));
++            }
++            self.stamp = staged;
++            if read_bounded(&self.file, &self.stamp)? != bytes {
++                return Err(fail(ConfigFileErrorReason::TemporaryChanged));
++            }
++            self.ensure_current()
++        }
++
++        pub(super) fn ensure_current(&self) -> Result<()> {
++            let held = Stamp::from_metadata(&self.file.metadata().map_err(|_| fail(ConfigFileErrorReason::MetadataFailed))?);
++            held.validate()?;
++            if held != self.stamp || stat_leaf(self.directory, &self.name)? != held {
++                return Err(fail(ConfigFileErrorReason::TemporaryChanged));
++            }
++            Ok(())
++        }
++
++        pub(super) fn publish(&mut self) -> Result<()> {
++            // SAFETY: Both names are internal single leaves in the same held
++            // directory. renameat atomically replaces the config name only.
++            if unsafe { libc::renameat(self.directory.as_raw_fd(), self.name.as_ptr(), self.directory.as_raw_fd(), config_name().as_ptr()) } != 0 {
++                return Err(fail(ConfigFileErrorReason::PublishFailed));
++            }
++            Ok(())
++        }
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod tests {
++    use std::fs::{self, OpenOptions};
++    use std::io::Write;
++    use std::os::unix::fs::{symlink, MetadataExt, OpenOptionsExt, PermissionsExt};
++    use std::path::{Path, PathBuf};
++
++    use crate::owner::{OwnerPermit, ProfileIdentity, ProfileOwner};
++
++    use super::*;
++
++    const ORIGINAL: &[u8] = b"model = \"synthetic-original\"\n";
++    const CANDIDATE: &[u8] = b"model = \"synthetic-candidate\"\n";
++    const AUTH_SENTINEL: &[u8] = b"synthetic-auth-sentinel-not-a-credential";
++
++    fn write_private(path: &Path, bytes: &[u8]) {
++        let mut file = OpenOptions::new().write(true).create_new(true).mode(0o600).open(path).unwrap();
++        file.set_permissions(fs::Permissions::from_mode(0o600)).unwrap();
++        file.write_all(bytes).unwrap();
++    }
++
++    struct Fixture {
++        // Drop owner/runtime descriptors before the owned directory tree.
++        owner: OwnerPermit,
++        runtime: RuntimeResourceIdentity,
++        root: tempfile::TempDir,
++    }
++
++    impl Fixture {
++        fn new(config: Option<&[u8]>) -> Self {
++            // The runner supplies a supported local TMPDIR. Never fall back to
++            // another root or a real profile if owner admission rejects it.
++            let root = tempfile::Builder::new().prefix("ait-config-")
++                .permissions(fs::Permissions::from_mode(0o700)).tempdir().unwrap();
++            assert_eq!(fs::metadata(root.path()).unwrap().mode() & 0o7777, 0o700);
++            for leaf in ["profile", "runtime"] {
++                let path = root.path().join(leaf);
++                fs::create_dir(&path).unwrap();
++                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
++                assert_eq!(fs::metadata(path).unwrap().mode() & 0o7777, 0o700);
++            }
++            let runtime_path = root.path().join("runtime");
++            if let Some(bytes) = config {
++                write_private(&runtime_path.join("config.toml"), bytes);
++            }
++            write_private(&runtime_path.join("auth.json"), AUTH_SENTINEL);
++            let owner = ProfileOwner::acquire(ProfileIdentity::existing(root.path().join("profile")).unwrap()).unwrap();
++            let runtime = RuntimeResourceIdentity::existing(runtime_path).unwrap();
++            Self { owner, runtime, root }
++        }
++
++        fn path(&self, leaf: &str) -> PathBuf {
++            self.runtime.canonical_path().join(leaf)
++        }
++
++        fn assert_auth_unchanged(&self, inode: u64) {
++            assert_eq!(fs::read(self.path("auth.json")).unwrap(), AUTH_SENTINEL);
++            assert_eq!(fs::metadata(self.path("auth.json")).unwrap().ino(), inode);
++        }
++    }
++
++    #[test]
++    fn real_replace_preserves_mode_owner_and_auth_and_returns_readback() {
++        let fixture = Fixture::new(Some(ORIGINAL));
++        let before = fs::metadata(fixture.path("config.toml")).unwrap();
++        let auth_inode = fs::metadata(fixture.path("auth.json")).unwrap().ino();
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let snapshot = ConfigFile::read(&writer, &resources, &fixture.runtime).unwrap();
++        assert_eq!(snapshot.bytes(), ORIGINAL);
++        snapshot.preflight().unwrap();
++        assert_eq!(snapshot.replace(CANDIDATE).unwrap(), CANDIDATE);
++        let after = fs::metadata(fixture.path("config.toml")).unwrap();
++        assert_ne!(after.ino(), before.ino());
++        assert_eq!((after.mode(), after.uid(), after.gid(), after.nlink()),
++            (before.mode(), before.uid(), before.gid(), 1));
++        assert_eq!(after.mode() & 0o7777, 0o600);
++        assert_eq!(fs::read(fixture.path("config.toml")).unwrap(), CANDIDATE);
++        fixture.assert_auth_unchanged(auth_inode);
++        assert!(!fs::read_dir(fixture.runtime.canonical_path()).unwrap()
++            .any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".ai-toolbox-config-")));
++    }
++
++    #[test]
++    fn missing_config_is_rejected_without_creating_it() {
++        let fixture = Fixture::new(None);
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let error = ConfigFile::read(&writer, &resources, &fixture.runtime).err().expect("missing config must fail");
++        assert_eq!(error.reason(), ConfigFileErrorReason::MissingConfig);
++        assert_eq!(error.disposition(), PublishDisposition::NotPublished);
++        assert!(!fixture.path("config.toml").exists());
++    }
++
++    #[test]
++    fn symlink_config_is_rejected_without_mutating_link_or_target() {
++        let fixture = Fixture::new(None);
++        let outside = fixture.root.path().join("outside.toml");
++        write_private(&outside, ORIGINAL);
++        symlink(&outside, fixture.path("config.toml")).unwrap();
++        let before = fs::metadata(&outside).unwrap();
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let error = ConfigFile::read(&writer, &resources, &fixture.runtime).err().expect("symlink must fail");
++        assert_eq!(error.reason(), ConfigFileErrorReason::UnsafeConfig);
++        assert_eq!(error.disposition(), PublishDisposition::NotPublished);
++        assert!(fs::symlink_metadata(fixture.path("config.toml")).unwrap().file_type().is_symlink());
++        assert_eq!(fs::metadata(&outside).unwrap().ino(), before.ino());
++        assert_eq!(fs::read(&outside).unwrap(), ORIGINAL);
++    }
++
++    #[test]
++    fn hardlinked_config_is_rejected_without_mutating_either_name() {
++        let fixture = Fixture::new(Some(ORIGINAL));
++        let alias = fixture.root.path().join("alias.toml");
++        fs::hard_link(fixture.path("config.toml"), &alias).unwrap();
++        let before = fs::metadata(&alias).unwrap();
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let error = ConfigFile::read(&writer, &resources, &fixture.runtime).err().expect("hardlink must fail");
++        assert_eq!(error.reason(), ConfigFileErrorReason::UnsafeConfig);
++        assert_eq!(error.disposition(), PublishDisposition::NotPublished);
++        assert_eq!(fs::metadata(fixture.path("config.toml")).unwrap().ino(), before.ino());
++        assert_eq!(fs::metadata(&alias).unwrap().nlink(), 2);
++        assert_eq!(fs::read(fixture.path("config.toml")).unwrap(), ORIGINAL);
++        assert_eq!(fs::read(&alias).unwrap(), ORIGINAL);
++    }
++
++    #[test]
++    fn snapshot_inode_drift_rejects_replace_even_with_identical_bytes() {
++        let fixture = Fixture::new(Some(ORIGINAL));
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let snapshot = ConfigFile::read(&writer, &resources, &fixture.runtime).unwrap();
++        let retired = fixture.path("retired-original.toml");
++        fs::rename(fixture.path("config.toml"), &retired).unwrap();
++        write_private(&fixture.path("config.toml"), ORIGINAL);
++        let replacement_inode = fs::metadata(fixture.path("config.toml")).unwrap().ino();
++        let error = snapshot.replace(CANDIDATE).unwrap_err();
++        assert_eq!(error.disposition(), PublishDisposition::NotPublished);
++        assert_eq!(fs::metadata(fixture.path("config.toml")).unwrap().ino(), replacement_inode);
++        assert_eq!(fs::read(fixture.path("config.toml")).unwrap(), ORIGINAL);
++        assert_eq!(fs::read(retired).unwrap(), ORIGINAL);
++    }
++
++    #[test]
++    fn snapshot_content_drift_rejects_replace_on_the_same_inode() {
++        let fixture = Fixture::new(Some(ORIGINAL));
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let snapshot = ConfigFile::read(&writer, &resources, &fixture.runtime).unwrap();
++        let inode = fs::metadata(fixture.path("config.toml")).unwrap().ino();
++        let external = b"external_synthetic_change = true\n";
++        fs::write(fixture.path("config.toml"), external).unwrap();
++        let error = snapshot.replace(CANDIDATE).unwrap_err();
++        assert_eq!(error.disposition(), PublishDisposition::NotPublished);
++        assert_eq!(fs::metadata(fixture.path("config.toml")).unwrap().ino(), inode);
++        assert_eq!(fs::read(fixture.path("config.toml")).unwrap(), external);
++    }
++
++    #[test]
++    fn noop_readback_is_fresh_and_does_not_replace_the_inode() {
++        let fixture = Fixture::new(Some(ORIGINAL));
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let snapshot = ConfigFile::read(&writer, &resources, &fixture.runtime).unwrap();
++        let inode = fs::metadata(fixture.path("config.toml")).unwrap().ino();
++        snapshot.preflight().unwrap();
++        assert_eq!(snapshot.readback().unwrap(), ORIGINAL);
++        assert_eq!(fs::metadata(fixture.path("config.toml")).unwrap().ino(), inode);
++        fs::write(fixture.path("config.toml"), b"changed_after_noop = true\n").unwrap();
++        assert_eq!(snapshot.readback().unwrap_err().disposition(), PublishDisposition::NotPublished);
++    }
++
++    #[test]
++    fn successful_replace_preserves_unknown_temp_leaf() {
++        let fixture = Fixture::new(Some(ORIGINAL));
++        let unknown = fixture.path(".ai-toolbox-config-0123456789abcdef0123456789abcdef.tmp");
++        write_private(&unknown, b"unknown-synthetic-temp");
++        let inode = fs::metadata(&unknown).unwrap().ino();
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        ConfigFile::read(&writer, &resources, &fixture.runtime).unwrap().replace(CANDIDATE).unwrap();
++        assert_eq!(fs::metadata(&unknown).unwrap().ino(), inode);
++        assert_eq!(fs::read(unknown).unwrap(), b"unknown-synthetic-temp");
++    }
++
++    #[test]
++    fn closing_staged_file_does_not_unlink_an_unknown_replacement() {
++        let fixture = Fixture::new(Some(ORIGINAL));
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let snapshot = ConfigFile::read(&writer, &resources, &fixture.runtime).unwrap();
++        let directory = resources.config_directory(&writer, &fixture.runtime).unwrap();
++        let mut temporary = linux::Temporary::create(directory).unwrap();
++        temporary.stage(CANDIDATE, &snapshot.original.stamp).unwrap();
++        let named = fs::read_dir(fixture.runtime.canonical_path()).unwrap()
++            .map(|entry| entry.unwrap().path())
++            .find(|path| path.file_name().unwrap().to_string_lossy().starts_with(".ai-toolbox-config-"))
++            .expect("exclusive staging created one temp leaf");
++        let owned = fixture.path("owned-staged-file");
++        fs::rename(&named, &owned).unwrap();
++        write_private(&named, b"unknown-replacement");
++        let replacement_inode = fs::metadata(&named).unwrap().ino();
++        drop(temporary);
++        assert_eq!(fs::metadata(&named).unwrap().ino(), replacement_inode);
++        assert_eq!(fs::read(named).unwrap(), b"unknown-replacement");
++        assert_eq!(fs::read(owned).unwrap(), CANDIDATE);
++        assert_eq!(fs::read(fixture.path("config.toml")).unwrap(), ORIGINAL);
++    }
++
++    #[test]
++    fn resource_permit_cannot_authorize_a_different_writer() {
++        let first = Fixture::new(Some(ORIGINAL));
++        let second = Fixture::new(Some(ORIGINAL));
++        let wrong_writer = first.owner.try_writer().unwrap();
++        let writer = second.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![second.runtime.clone()]).unwrap();
++        let error = ConfigFile::read(&wrong_writer, &resources, &second.runtime).err().expect("writer mismatch must fail");
++        assert_eq!(error.reason(), ConfigFileErrorReason::AdmissionRejected);
++        assert_eq!(error.disposition(), PublishDisposition::NotPublished);
++        assert_eq!(fs::read(second.path("config.toml")).unwrap(), ORIGINAL);
++    }
++
++    #[test]
++    fn oversized_source_and_candidate_are_rejected_without_replacement() {
++        let oversized = vec![b'x'; MAX_CONFIG_BYTES + 1];
++        let fixture = Fixture::new(Some(&oversized));
++        let writer = fixture.owner.try_writer().unwrap();
++        let resources = writer.acquire_resources(vec![fixture.runtime.clone()]).unwrap();
++        let error = ConfigFile::read(&writer, &resources, &fixture.runtime).err().expect("oversized source must fail");
++        assert_eq!(error.reason(), ConfigFileErrorReason::ConfigTooLarge);
++        fs::write(fixture.path("config.toml"), ORIGINAL).unwrap();
++        let inode = fs::metadata(fixture.path("config.toml")).unwrap().ino();
++        let snapshot = ConfigFile::read(&writer, &resources, &fixture.runtime).unwrap();
++        let error = snapshot.replace(&oversized).unwrap_err();
++        assert_eq!(error.reason(), ConfigFileErrorReason::ConfigTooLarge);
++        assert_eq!(error.disposition(), PublishDisposition::NotPublished);
++        assert_eq!(fs::metadata(fixture.path("config.toml")).unwrap().ino(), inode);
++        assert_eq!(fs::read(fixture.path("config.toml")).unwrap(), ORIGINAL);
++    }
++}
