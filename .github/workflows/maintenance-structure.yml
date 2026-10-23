@@ -11,6 +11,7 @@ jobs:
   structure:
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,3 +35,11 @@ jobs:
           assert len(rows) > 1
           print('Structural checks passed. Build and runtime tests are separate.')
           CHECK
+      - name: Verify generated operation inventory and its boundary tests
+        shell: bash
+        run: |
+          node --version
+          node -e 'if (Number(process.versions.node.split(".")[0]) < 22) process.exit(1)'
+          timeout 30s node scripts/generate-operation-coverage.mjs --check
+          timeout 30s node --test web/test/scripts/operationInventory.test.mjs
+          # Inventory consistency is not full CLI/MCP business coverage.
