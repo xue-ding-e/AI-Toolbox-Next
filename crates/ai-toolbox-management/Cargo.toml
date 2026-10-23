@@ -7,6 +7,10 @@ description = "Typed local management owner boundary for AI Toolbox"
 publish = false
 
 [dependencies]
+ai-toolbox-codex-config = { path = "../ai-toolbox-codex-config" }
+ai-toolbox-storage = { path = "../ai-toolbox-storage" }
+rusqlite = { version = "=0.39.0", features = ["bundled", "backup", "hooks"] }
+sha2 = "=0.10.9"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
 thiserror = "=2.0.17"

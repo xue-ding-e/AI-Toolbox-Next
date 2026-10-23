@@ -15,7 +15,7 @@ This internal crate is an issue #41 candidate, not a complete headless service. 
 
 ## Codex data boundary
 
-Future master-helper integration must read existing JSONB records through shared storage helpers; that helper is not part of this owner-primitives crate yet. Provider settings_config is a JSON string, not a nested JSONB object: preserve its other fields while replacing only config. Common patches retain root and unknown fields. Reuse the sole Codex planner, never add a separate merger or call the full auth/catalog writer for a context-only operation.
+The private Linux ConfigOnly service reads existing JSONB records through shared storage helpers. It remains unavailable through GUI, CLI or transport until full writer admission is closed. Provider settings_config is a JSON string, not a nested JSONB object: preserve its other fields while replacing only config. Common patches retain root and unknown fields. Reuse the sole Codex planner, never add a separate merger or call the full auth/catalog writer for a context-only operation.
 
 Raw records/candidates can contain secrets. They are internal, non-serialized data, not default CLI output. Typed errors and operation records must not include raw TOML, auth, paths or arbitrary database errors. Revision and idempotency are separate: check an existing request before rejecting revision drift caused by that same request.
 
@@ -24,3 +24,13 @@ Raw records/candidates can contain secrets. They are internal, non-serialized da
 Only synthetic, isolated profiles may be used during development. Tests must prove real binary/DB/file effects and bounded cleanup, not just string generation. Until the complete admission map is connected, no GUI-owner or P0 business closure is claimed. Cold standalone owner lifecycle, Windows support, effect execution, recovery and installed artifacts remain separate acceptance work.
 
 The synthetic owner suite must create its runtime root with explicit 0700 permissions rather than relying on the process umask. Normal actor tests require their own successful libtest result and completion marker; the single deliberate abrupt-exit actor uses a distinct exit code and marker because running Drop or libtest completion would invalidate that fixture. Report these executions separately.
+
+## Private ConfigOnly effect slice
+
+The internal service requires an existing database and an explicit stored absolute runtime root. Owner acquisition precedes shared database initialization, which may migrate or seed: this is writer initialization, never a zero-effect read command. Internal revision inspection also acquires runtime coordination leases and must not be advertised as a read-only CLI operation.
+
+Only the two typed context numbers are planned through the existing Codex planner. Master changes and SavedOnly journal insertion share one transaction. A committed ProjectionStarted transition is required before the fixed config.toml effect; replay never authorizes another write. Partial and uncertain outcomes are non-success and are not automatically retried. Explicit new requests require a fresh revision. This is not atomic database-plus-file commit or power-loss recovery.
+
+The file effect uses the held runtime directory FD and fixed config.toml leaf, preserves ordinary mode/uid/gid and checks identity/content before publishing and on readback. It never opens auth.json. ACL/xattr preservation, hostile same-UID race containment and Windows remain unsupported. Failed staging can retain an owned temporary file, initially created as 0600 and later set to the original config mode: do not unlink a pathname after a race or claim zero residual effects. Tests clean only their own isolated directory after all permits and database references are dropped.
+
+SQLite commit-hook veto fixtures test actual transaction commit rejection, not hardware I/O faults or power loss. Interruption checkpoints are controlled returns followed by close/reopen, not process crashes. Keep those evidence levels separate.
