@@ -91,6 +91,7 @@ dependencies = [
 name = "ai-toolbox"
 version = "1.2.0"
 dependencies = [
+ "ai-toolbox-codex-config",
  "anyhow",
  "apple-native-keyring-store",
  "arboard",
@@ -163,6 +164,13 @@ dependencies = [
  "zeroize",
  "zip 2.4.2",
  "zstd",
+]
+
+[[package]]
+name = "ai-toolbox-codex-config"
+version = "0.1.0"
+dependencies = [
+ "toml_edit 0.22.27",
 ]
 
 [[package]]

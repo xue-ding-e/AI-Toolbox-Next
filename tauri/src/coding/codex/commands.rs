@@ -1,3 +1,4 @@
+use ai_toolbox_codex_config::{append_toml_configs, merge_toml_tables, parse_toml_document};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1744,16 +1745,6 @@ async fn query_codex_provider_by_id(
     get_codex_provider_from_sqlite(db, provider_id)?.ok_or_else(|| "Provider not found".to_string())
 }
 
-fn parse_toml_document(raw_toml: &str, context: &str) -> Result<toml_edit::DocumentMut, String> {
-    if raw_toml.trim().is_empty() {
-        Ok(toml_edit::DocumentMut::new())
-    } else {
-        raw_toml
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("Failed to parse {}: {}", context, e))
-    }
-}
-
 fn parse_codex_settings_config(
     provider_settings_config: &str,
 ) -> Result<serde_json::Value, String> {
@@ -2934,27 +2925,6 @@ fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
     }
     if remove_features_table {
         document.as_table_mut().remove("features");
-    }
-}
-
-fn merge_toml_tables(base: &mut toml_edit::Table, overlay: &toml_edit::Table) {
-    for (key, overlay_item) in overlay.iter() {
-        if let Some(base_item) = base.get_mut(key) {
-            merge_toml_items(base_item, overlay_item);
-        } else {
-            base.insert(key, overlay_item.clone());
-        }
-    }
-}
-
-fn merge_toml_items(base: &mut toml_edit::Item, overlay: &toml_edit::Item) {
-    match (base, overlay) {
-        (toml_edit::Item::Table(base_table), toml_edit::Item::Table(overlay_table)) => {
-            merge_toml_tables(base_table, overlay_table);
-        }
-        (base_item, overlay_item) => {
-            *base_item = overlay_item.clone();
-        }
     }
 }
 
@@ -4972,25 +4942,6 @@ async fn apply_config_to_file_with_previous_managed_config(
     )
     .await?;
     Ok(())
-}
-
-/// Merge common defaults with provider config while preserving explicit provider overrides.
-fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
-    let provider_content = provider.trim();
-    let common_content = common.trim();
-
-    if provider_content.is_empty() {
-        return Ok(common_content.to_string());
-    }
-    if common_content.is_empty() {
-        return Ok(provider_content.to_string());
-    }
-
-    let provider_doc = parse_toml_document(provider_content, "provider config")?;
-    let mut common_doc = parse_toml_document(common_content, "common config")?;
-
-    merge_toml_tables(common_doc.as_table_mut(), provider_doc.as_table());
-    Ok(common_doc.to_string())
 }
 
 /// Write auth.json and config.toml files
