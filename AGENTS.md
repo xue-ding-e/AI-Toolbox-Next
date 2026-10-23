@@ -92,6 +92,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/settings/` | WSL/SSH 设置页、同步入口、moduleStatuses 消费和 UI 边界 |
 | `web/components/common/` | 共享编辑器与基础交互组件的性能和正确性约束 |
 | `web/components/common/FieldHelp/` | 字段说明问号：纯字符串文案的分段/列表/粗体/行内代码解析与 Tooltip 渲染，供各 CLI 表单复用 |
+| `crates/ai-toolbox-storage/` | 共享 SQLite 实现、定价 seed、单 profile 缓存边界与独立测试闸门 |
 | `tauri/src/db/` | SQLite JSONB 存储层：schema/迁移、读改写语义、change hook 与备份拷贝边界 |
 | `tauri/src/settings/` | 应用设置存储、adapter 全量替换语义、CLI 路径覆盖与托盘联动 |
 | `tauri/src/settings/backup/` | 备份恢复（本地/WebDAV/GitHub-Gitee 仓库）、可选加密、自动备份与恢复后续链路 |
@@ -593,6 +594,8 @@ features/
 5. **Dev Server**: Runs on `http://127.0.0.1:5173`
 
 ## SQLite JSONB Database Notes
+
+- SQLite 连接、schema、迁移、helper、备份与同步 pricing seed 的唯一实现位于 `crates/ai-toolbox-storage/`，桌面 `db` 只 re-export；共享 crate 边界规则仍见 `tauri/src/db/AGENTS.md`。不得为 headless/CLI 复制 SQL 或绕开原初始化安全链路。
 
 - 主数据库是 SQLite JSONB。新增或改造的持久化路径必须直接读写 `SqliteDbState`，禁止新增 SurrealDB-only 或 SurrealDB 双写路径。
 - SQLite 表结构统一遵循 `id + data(JSONB) + created_at + updated_at`，业务字段放在 JSONB `data` 中；新增/删除普通业务字段不需要 schema migration，adapter 负责默认值与兼容读取。
