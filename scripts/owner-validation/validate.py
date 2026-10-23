@@ -14,7 +14,7 @@ FIXTURE=None
 FIXTURE_ID=None
 LAST_SCAN=0
 BASE='55f70695e0bbd6921cf49b32006ab7fa9556b4f2'
-MANIFEST_SHA='73ee4aa5249fa4f317a916b70a062a5d6afeba237b2418cea4167ae22df0b7e9'
+MANIFEST_SHA='9933c333abe63505057fadf0af8ee1dd600d29d5ca72d9754fe822f9bbc674eb'
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -286,7 +286,8 @@ def main():
         head=os.environ['EXPECTED_SHA'];require(re.fullmatch('[0-9a-f]{40}',head) and head==os.environ['GITHUB_SHA'],'exact SHA required')
         envroot=rt/'owner-isolation';envroot.mkdir();env=safe_env(envroot)
         def git(label,args,cwd=checkout):return run(label,['git',*args],15,cwd,env)
-        require(git('parents',['rev-list','--parents','-n','1','HEAD']).decode().split()==[head,BASE],'single parent base required')
+        require(git('parents',['rev-list','--parents','-n','1','HEAD']).decode().split()==[head,'5e6ae2866da01c3088f0869215dd35d0ccf8993c'],'exact previous harness parent required')
+        require(git('original-parent',['rev-list','--parents','-n','1','HEAD^']).decode().split()==['5e6ae2866da01c3088f0869215dd35d0ccf8993c',BASE],'original single parent base required')
         require(not git('initial-status',['status','--porcelain']).strip(),'dirty harness checkout')
         scope=git('harness-scope',['diff','--name-only',BASE,'HEAD']).decode().splitlines()
         require(set(scope)=={'.github/workflows/maintenance-validation.yml','scripts/owner-validation/validate.py','scripts/owner-validation/candidate.json','scripts/owner-validation/candidate.patch'},'unexpected harness scope')
