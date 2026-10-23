@@ -1,6 +1,7 @@
 //! Pure argument adapter. Even parsing failures do not initialize application state.
-use crate::{execute, Envelope, Operation, OperationError};
+use crate::{execute, Command, Envelope, OperationError, OwnerStatusInput};
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -34,6 +35,8 @@ pub fn run(args: &[OsString]) -> Response {
             .ok_or_else(OperationError::invalid_input)?;
         let mut command = Vec::new();
         let mut format_seen = false;
+        let mut profile = None;
+        let mut endpoint_dir = None;
         let mut index = 0;
         while index < args.len() {
             if args[index] == "--format" {
@@ -47,16 +50,36 @@ pub fn run(args: &[OsString]) -> Response {
                     Some(&"json") => Format::Json,
                     _ => return Err(OperationError::invalid_input()),
                 };
+            } else if matches!(args[index], "--profile" | "--endpoint-dir") {
+                let destination = if args[index] == "--profile" {
+                    &mut profile
+                } else {
+                    &mut endpoint_dir
+                };
+                if destination.is_some() {
+                    return Err(OperationError::invalid_input());
+                }
+                index += 1;
+                *destination = Some(PathBuf::from(
+                    *args.get(index).ok_or_else(OperationError::invalid_input)?,
+                ));
             } else {
                 command.push(args[index]);
             }
             index += 1;
         }
+        // Parsing and absolute-path checks finish before any directory inspection.
+        // Discovery does not accept or inspect owner paths, even when supplied.
+        let no_owner_paths = profile.is_none() && endpoint_dir.is_none();
         match command.as_slice() {
-            ["--help" | "-h"] => Ok(Operation::Help),
-            ["--version" | "-V"] => Ok(Operation::Version),
-            ["capabilities"] => Ok(Operation::Capabilities),
-            ["codex", "status"] => Ok(Operation::CodexStatus),
+            ["--help" | "-h"] if no_owner_paths => Ok(Command::Help),
+            ["--version" | "-V"] if no_owner_paths => Ok(Command::Version),
+            ["capabilities"] if no_owner_paths => Ok(Command::Capabilities),
+            ["codex", "status"] if no_owner_paths => Ok(Command::CodexStatus),
+            ["daemon", "status"] => OwnerStatusInput::new(
+                profile.ok_or_else(OperationError::invalid_input)?,
+                endpoint_dir.ok_or_else(OperationError::invalid_input)?,
+            ).map(Command::DaemonStatus),
             _ => Err(OperationError::invalid_input()),
         }
     })();

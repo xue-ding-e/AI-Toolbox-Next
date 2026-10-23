@@ -145,6 +145,13 @@ fn malformed_and_unknown_arguments_have_stable_redacted_json_errors() {
         vec!["capabilities", "extra"],
         vec!["codex"],
         vec!["codex", "status", "--repair"],
+        vec!["daemon", "status"],
+        vec!["daemon", "status", "--profile", "relative", "--endpoint-dir", "/missing"],
+        vec!["daemon", "status", "--profile", "/missing", "--endpoint-dir", "relative"],
+        vec!["daemon", "status", "--profile", "/missing", "--profile", "/missing", "--endpoint-dir", "/missing"],
+        vec!["daemon", "status", "--profile", "/missing", "--endpoint-dir", "/missing", "--endpoint-dir", "/missing"],
+        vec!["daemon", "status", "--profile", "/missing", "--endpoint-dir", "/missing", "--repair"],
+        vec!["--help", "--profile", "/never-inspected"],
         vec!["secret=never-echo-我\n"],
         vec!["--format", "text", "capabilities"],
     ];
@@ -196,10 +203,26 @@ fn discovery_does_not_claim_business_or_mcp_support() {
         r#"{"operation_id":"automation.help","command":"--help","supported":true,"side_effects":false,"input":"none"},"#,
         r#"{"operation_id":"automation.version","command":"--version","supported":true,"side_effects":false,"input":"none"},"#,
         r#"{"operation_id":"automation.capabilities","command":"capabilities","supported":true,"side_effects":false,"input":"none"},"#,
-        r#"{"operation_id":"codex.status","command":"codex status","supported":false,"side_effects":false,"input":"none"}]},"warnings":[],"error":null}"#,
-        "\n"
+        r#"{"operation_id":"codex.status","command":"codex status","supported":false,"side_effects":false,"input":"none"},"#,
     );
+    let expected = format!("{expected}{{\"operation_id\":\"daemon.status\",\"command\":\"daemon status\",\"supported\":{},\"side_effects\":false,\"input\":\"explicit_absolute_profile_and_private_endpoint_dir\",\"status_scope\":\"profile_lease_only\",\"daemon_lifecycle_complete\":false,\"platforms\":[\"linux\"]}}]}},\"warnings\":[],\"error\":null}}\n", cfg!(target_os = "linux"));
     assert_eq!(text, expected);
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn owner_status_is_explicitly_unsupported_without_path_inspection() {
+    let sandbox = Sandbox::new();
+    let mut command = args(&["--format", "json", "daemon", "status", "--profile"]);
+    command.push(sandbox.root.join("missing-profile").into_os_string());
+    command.push("--endpoint-dir".into());
+    command.push(sandbox.root.join("missing-endpoint").into_os_string());
+    let output = sandbox.run(&command);
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["operation"], "daemon.status");
+    assert_eq!(value["error"]["code"], "NOT_SUPPORTED");
 }
 
 #[cfg(unix)]

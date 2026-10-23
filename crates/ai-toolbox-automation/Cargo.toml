@@ -13,5 +13,17 @@ name = "ai_toolbox_automation"
 name = "ai-toolbox-cli"
 path = "src/main.rs"
 
-# Intentionally independent of the desktop graph: discovery must not initialize Tauri.
+# The client is Linux-only and independent of the desktop graph. Linking shared
+# management/storage does not authorize database or owner initialization.
+[target.'cfg(target_os = "linux")'.dependencies]
+ai-toolbox-management = { path = "../ai-toolbox-management" }
+tokio = { version = "=1.49.0", default-features = false, features = ["io-util", "net", "rt", "sync", "time"] }
+
+[dev-dependencies]
+serde_json = "=1.0.149"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "=0.2.180"
+
+# Discovery must not initialize Tauri or any application state.
 [workspace]
