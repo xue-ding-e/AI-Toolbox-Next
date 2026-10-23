@@ -503,6 +503,7 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 | `docsUrl` | 官方文档地址；**不传则不显示**该链接 |
 | `onPreviewConfig` | 传了才显示「预览配置」；无 provider 应用态时可传 `undefined` |
 | `configPath` | 路径字符串，**调用方自己给兜底值** |
+| `configPathKind` | `'file'`（默认）或 `'directory'`——决定标签取 `common.configPath` 还是 `common.configDir`。**管理根目录而非单个文件的 CLI 要传 `'directory'`**（pi / oh_my_pi / dsh / hermes / omo_native） |
 | `onCustomizeConfig` | 传了才显示「自定义配置目录」 |
 | `customizeConfigDisabled` / `customizeConfigDisabledReason` | 置灰「自定义配置目录」；**两个一起传**——禁用态按钮不接收指针事件，组件用外层 `<span>` 承载 Tooltip，只置灰不传原因会读成坏按钮（opencode 的 V2 迁移场景） |
 | `onOpenFolder` | 传了才显示「打开文件夹」 |
@@ -527,7 +528,7 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 >
 > 覆盖 prop 不但没保住什么，反而让 zcode 的「刷新」这种不一致固化了下来。**已全部删除**，组件只用 `common.*`；codex/zcode 的 8 个孤儿 key 一并 prune。
 >
-> **唯一保留的例外**：`pi` / `ohMyPi` 显示的是**目录**（`rootPathInfo.path`）而非配置文件路径，标签是「配置目录路径」。这是真实语义差异，但它们尚未迁移；迁移时应给组件加 `configPathLabel` 之类的 prop，而不是把差异抹平。
+> **唯一保留的例外（已落地，2026-10-22）**：`pi` / `ohMyPi` / `dsh` / `hermes` / `omo_native` 显示的是**目录**（`rootPathInfo.path`）而非配置文件路径。这是真实语义差异，迁移时没有抹平，也没有加自由文案覆盖，而是加了一个**枚举** prop：`configPathKind?: 'file' | 'directory'`（默认 `'file'`）。两份标签都在 `common.*`（`common.configPath`「配置文件路径」/ `common.configDir`「配置目录路径」），**调用方只声明「我这个路径是哪种东西」**——自由文案 prop 是当年被删掉的那五个（见上），枚举则不会重新长出一堆同义异写。
 >
 > **教训**：不要为了"迁移时不动文案"而预先加覆盖 prop。先把各页面的值统计出来，同义的直接统一，只有真正不同的才参数化。
 
@@ -571,7 +572,7 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 | 组件 | 路径 | 职责 |
 |------|------|------|
 | `ProviderListSection` | `shared/ProviderListSection.tsx` | 区域外壳：标题 + 工具栏 + 提示 + 空态 + 底部导入 |
-| `ProviderCard` | `components/common/ProviderCard/` | **旧卡片，仅供尚未迁移的 CLI**（现剩余 pi / oh_my_pi / dsh；已迁移的映射层禁止 import，见 §4.2.1 的守卫） |
+| `ProviderCard` | `components/common/ProviderCard/` | **旧卡片，已于 2026-10-22 随 pi / oh_my_pi / dsh 迁完而删除**。目录里只剩 `types.ts`（`ModelDisplayData` 等共享类型仍被 `ModelListSection` / `ModelItem` 使用）。已迁移的映射层禁止 import 旧卡，见 §4.2.1 的守卫 |
 | `ModelListSection` | `shared/ModelListSection.tsx` | 模型列表区，两种形态按 `appearance` 选（列表卡片折叠 / 明细侧栏常开，见 §4.2.3；仅"支持自定义模型"形态用） |
 
 #### 4.2.1 区域外壳 `ProviderListSection`
@@ -653,7 +654,7 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 
 #### 4.2.2 卡片 `ProviderCard`
 
-`web/components/common/ProviderCard/` 是**旧卡片**（拖拽手柄 / 多选复选框、名称、SDK 标签、baseUrl、编辑/复制/分享/删除按钮 + `extraActions`）。2026-10-21 起它只剩 `pi` / `oh_my_pi` / `dsh` 三家在用；**已迁移的 CLI 不得再 import 它**（`verify-provider-card-layout.mjs` 机械拦截），新 CLI 一律用 `providerCardVariants` 的三种样式之一。
+`web/components/common/ProviderCard/` 曾是**旧卡片**（拖拽手柄 / 多选复选框、名称、SDK 标签、baseUrl、编辑/复制/分享/删除按钮 + `extraActions`）。2026-10-22 最后三家 `pi` / `oh_my_pi` / `dsh` 迁完后，**组件本体已删除**（目录只剩 `types.ts`，`ModelDisplayData` 等共享类型仍在使用）。**已迁移的 CLI 不得再 import 旧卡**（`verify-provider-card-layout.mjs` 的第四条规则机械拦截），新 CLI 一律用 `providerCardVariants` 的三种样式之一。
 
 **Claude / Codex 不直接用它**——两者各自有模块内的 `ClaudeProviderCard` / `CodexProviderCard`，字段区差异太大（Claude 是 Haiku/Sonnet/Opus 映射行，Codex 是自动审批行 + 完整模型目录），强行参数化只会得到一个塞满条件分支的组件。
 
@@ -1098,16 +1099,16 @@ pnpm run test:provider-card-layout        # 官方卡片作为列表成员时，
 
 **相关**：§13 教训 #120–#130、§13.1 模式六十九～七十九、§12.3 的「官方账号区块在列表里的位置」核对项、附录 B.1（prop 台账）、附录 B.2（页面级区块清单）、模块 `web/features/coding/shared/officialAccounts/AGENTS.md`。
 
-#### 4.2.10 尚未迁移的页面
+#### 4.2.10 迁移进度（2026-10-22 起已全部迁移）
 
 三个共享组件各自独立迁移，**不要把它们当成一件事**——一个页面可能列表外壳迁完了、卡片还在自己手里：
 
 | 关注点 | 已迁移 | 未迁移 |
 |------|------|------|
-| `ProviderListSection`（列表外壳） | claudecode、claudedesktop、codex、geminicli、grok、zcode、omo_native、kimi、opencode（2026-10-20 九个 coding 页全部接入） | 其余页面（pi / ohMyPi / dsh / hermes / openclaw / antigravity 等） |
-| **卡片变体**（`providerCardVariants`） | claudecode、claudedesktop、codex、geminicli、grok、zcode、omo_native、kimi、opencode | **无**（`PENDING_MIGRATION` 已清空） |
-| **卡片视图**（`providerCardView`，含详情侧栏 `ProviderDetailPanel`） | claudecode（2026-10-11）、codex（2026-10-12）、zcode / kimi（2026-10-13）、opencode（2026-10-19）、claudedesktop / geminicli / grok / omo_native（2026-10-20） | 其余页面；接入方式见该模块 `AGENTS.md`（映射层加 `viewMode`，页面换列表容器，抽屉与面板由共享卡片给——映射层只提供 `detail = { title, statusTags, sections, … }` 的内容；非 provider 的列表成员在网格里就是**一个普通格子**，与邻居同宽同高，管理器进它自己的侧栏） |
-| `ModelListSection`（模型列表区；两个样式卡片里折叠，卡片视图侧栏里常开） | codex、zcode、omo_native、opencode（**均经 `providerCardVariants/ProviderModelSection` 间接触达**，两个样式卡片与卡片视图侧栏共用这一份映射，侧栏那处传 `appearance="detail"`） | — |
+| `ProviderListSection`（列表外壳） | 全部 14 个有供应商列表的 coding 页：claudecode、claudedesktop、codex、geminicli、grok、zcode、omo_native、kimi、opencode（2026-10-20）、pi / oh_my_pi / dsh（2026-10-22）、openclaw / hermes（2026-10-21） | **无**（antigravity 没有供应商列表，只有官方账号面板，不适用） |
+| **卡片变体**（`providerCardVariants`） | 同上 14 个 | **无**（`PENDING_MIGRATION` 已清空；旧卡 `components/common/ProviderCard/index.tsx` 已删除） |
+| **卡片视图**（`providerCardView`，含详情侧栏 `ProviderDetailPanel`） | claudecode（2026-10-11）、codex（2026-10-12）、zcode / kimi（2026-10-13）、opencode（2026-10-19）、claudedesktop / geminicli / grok / omo_native（2026-10-20）、openclaw / hermes（2026-10-21）、pi / oh_my_pi / dsh（2026-10-22） | **无**。接入方式见该模块 `AGENTS.md`（映射层加 `viewMode`，页面换列表容器，抽屉与面板由共享卡片给——映射层只提供 `detail = { title, statusTags, sections, … }` 的内容；非 provider 的列表成员在网格里就是**一个普通格子**，与邻居同宽同高，管理器进它自己的侧栏） |
+| `ModelListSection`（模型列表区；两个样式卡片里折叠，卡片视图侧栏里常开） | codex、dsh、grok、hermes、kimi、oh_my_pi、omo_native、openclaw、opencode、pi、zcode（**均经 `providerCardVariants/ProviderModelSection` 间接触达**，两个样式卡片与卡片视图侧栏共用这一份映射，侧栏那处传 `appearance="detail"`） | — |
 
 > ⚠️ **卡片变体是三者里唯一有机械守卫的**（`pnpm run test:provider-card-layout`）。列表外壳与模型列表区**没有**守卫，迁移进度只能靠这张表——**改这张表时先跑一遍**：
 > ```bash
@@ -1116,11 +1117,11 @@ pnpm run test:provider-card-layout        # 官方卡片作为列表成员时，
 > grep -rln "shared/ModelListSection" web/features/coding --include=*.tsx | sed 's|web/features/coding/||;s|/.*||' | sort -u
 > ```
 
-> ⚠️ **守卫扫不到「内联弹窗」**：`scripts/verify-form-modal-layout.mjs` 只检查文件名匹配 `*ProviderFormModal.tsx` / `*ModelFormModal.tsx` 的文件。把供应商/模型弹窗**内联写在页面或 section 里**（pi / oh_my_pi / dsh / hermes 目前都是这样，`layout="vertical"` + 网格）就完全逃过这道守卫。**迁移时先把弹窗抽成独立文件**（omo_native 2026-10-07 就是这么做的，守卫文件数 13 → 14），再改布局——否则改完无人拦回归（教训 #83）。
+> ⚠️ **守卫扫不到「内联弹窗」**：`scripts/verify-form-modal-layout.mjs` 只检查文件名匹配 `*ProviderFormModal.tsx` / `*ModelFormModal.tsx` 的文件。把供应商/模型弹窗**内联写在页面或 section 里**（`layout="vertical"` + 网格）就完全逃过这道守卫。**迁移时先把弹窗抽成独立文件**，再改布局——否则改完无人拦回归（教训 #83）。历史：omo_native 2026-10-07 抽过一次（13 → 14）；pi / oh_my_pi / dsh 2026-10-22 抽到 `PiProviderFormModal` / `OmpProviderFormModal` / `DshProviderFormModal`（15 → 18）。**现只剩 `hermes` 的供应商弹窗仍是内联的**，它迁移时应照同一顺序做。
 
-### 4.3 页面头部尚未迁移的页面
+### 4.3 页面头部的迁移状态
 
-以下页面**暂未**改用 `CodingPageHeader`（见 4.1）：
+各页改用 `CodingPageHeader`（见 4.1）的状态一览——**只剩 antigravity 未迁移**：
 
 | 页面 | 差异点 |
 |------|--------|
@@ -1133,8 +1134,63 @@ pnpm run test:provider-card-layout        # 官方卡片作为列表成员时，
 | claudedesktop | ✅ 已迁移（2026-10-20；**不传 `onCustomizeConfig`**——本模块没有自定义根目录能力；平台不支持时在页头下方补一行 `claudedesktop.unsupportedPlatform`，页头与工具栏文案统一取 `common.*`） |
 | geminicli | ✅ 已迁移（2026-10-20；`onPreviewConfig` 仅在已应用时传） |
 | grok | ✅ 已迁移（2026-10-20） |
-| openclaw | 预览配置用 `openclaw.previewConfig` 而非 `common.previewConfig` |
-| 其余页面 | 结构合规，可直接迁移 |
+| openclaw | ✅ 已迁移（2026-10-21）。页头这一层没有覆盖 prop；`openclaw.previewConfig` 仍在用，但那是**预览弹窗自己的标题**（`FileConfigPreviewModal` 的 `title`），不是页头的「预览配置」链接 |
+| hermes | ✅ 已迁移（2026-10-21） |
+| pi | ✅ 已迁移（2026-10-22）。`configPathKind="directory"`（页头显示配置目录）；`extraActions` 放「同步预设模型」 |
+| oh_my_pi | ✅ 已迁移（2026-10-22）。同上：`configPathKind="directory"` + `extraActions` 放「同步预设模型」 |
+| dsh | ✅ 已迁移（2026-10-22）。`configPathKind="directory"`；`extraActions` 放「同步模型」「打开 Web UI」与**配置 Profile 选择器**（`profiles.length > 0` 才渲染）——它属于「这一页的全局开关」，放页头而不进供应商工具栏 |
+| antigravity | ❌ 未迁移（手写页头，见模块 `AGENTS.md` 第 8 条；它没有供应商列表，迁移时只换页头这一件） |
+
+#### 4.3.1 页面容器的间距：**区块自带 margin，容器不许有 `gap`**
+
+`CodingPageHeader` 自己带 `marginBottom: 16`。如果页面容器（`.pageContent`）同时又写 `display: flex; flex-direction: column; gap: 16px`，两段间距会**相加**：页头到第一个区块变成 32px，而全仓其他页面是 16px。用户能一眼看出来（2026-10-22：「今天新迁移的 3 个 CLI 顶部和下面的模块之间的间距有点大」），但 `tsc`、i18n 检查、组件级夹具**全都看不见**——间距取决于页面容器的计算布局，而没有任何夹具渲染页面容器。
+
+**正确形状**（Codex / Claude Code / OpenCode 都是这个）：
+
+```less
+.pageContent { display: block; }        // 不要 flex + gap
+.piSection   { margin-bottom: 16px; }   // 区块自带间距，不依赖邻居
+```
+
+- **为什么是 `block` 而不是 `flex column` 且不写 gap**：`block` 下相邻区块的 `margin-bottom` 与下一个区块自身（或其首个子元素）的 `margin-top` 会**折叠**；`flex` 容器不折叠，所以只要某个区块的根节点自身带 16px（`ProviderListSection` 的 `Collapse`、`SessionManagerPanel`、`GlobalPromptSettings` 都带），间距就会翻倍成 32px。这是 §13.1 模式十「间距借自邻居」的页面级版本。
+- **页头下方的提示行**（hermes 的 `pageHint`、openclaw 的 `configFileHint`、opencode 的 hint + V2 状态）用 `marginTop: -12px` 把自己拉到页头 16px 下边距里面（视觉上属于页头），然后自己补 `marginBottom: 16px` 顶住第一个区块。
+- **Alert / 通知条**同理：它是「关于页头的说明」，与页头同属一个视觉块，用 12px 收尾即可，不要用 16px 去和区块抢节奏。
+- 机械守卫：`pnpm run test:page-rhythm`（本节由此而来，8 项断言：四个页面 × 页头→首区块 / 区块→区块，都必须量到 16px）。
+
+> **验收方法**：这类间距**只能量**。把页头底边和第一个区块顶边的 `getBoundingClientRect()` 相减，16 才对；读 less 看到 `gap: 16px` 会觉得「也是 16」——这正是它两次逃过检查的原因。
+
+#### 4.3.2 迁移时必查：CSS Modules 的类名还对不对
+
+`styles.xxx` 在 CSS Modules 里是普通对象取值。**类名写错不报错**：取到 `undefined`，React 渲染成 `class=""`，元素、事件、文本全在，只是**样式全丢**。
+
+`OhMyPiPage` 就是这样：页面里 6 个区块都写 `styles.ompSection`，而 `OhMyPiPage.module.less` 定义的是 `.piSection`——页头的 `scroll-margin-top` 与区块间距一起静默失效，直到 2026-10-22 才被「间距看起来不对」发现。
+
+**两个方向都要查，一条命令**：
+
+```bash
+pnpm run test:css-module-classes
+```
+
+- **引用了但没定义** → 元素渲染成 `class=""`，样式全丢。按文件精确报出，**不许**加进白名单绕过。
+- **定义了但没人引用**（孤儿 CSS）→ 迁移把旧结构搬走后，`.pageHeader` / `.providerCard` / `.modalSection` 这类类名整段留在文件里，仍然读起来像「活着的样式」，下一次改动会去改它、然后看不到任何效果。三个迁移页面各有 21–22 个。
+
+> **孤儿检查必须按 less 文件汇总所有导入者**。一个 `.module.less` 常被同目录多个 `.tsx` 共用（`GatewayStatisticsView.module.less` 被统计页与两个图表组件共用），按「单个导入者」判会报出 2655 条假孤儿。用 `:global(...)` 包住的 `.ant-*` 选择器也要先剥掉——它们本来就不是模块键。
+>
+> **基准已清零（2026-10-23）**：`KNOWN_ORPHAN_COUNTS` 现在是空表。首次上线时登记的 28 个文件 / 112 个类（Codex / Grok 供应商弹窗从 Claude Code 复制过来却没删的整套 `officialMode*`、image / settings 页的旧按钮系统等）已按用户要求**全部删除**。**新增孤儿一律失败**，不许再加回基线——那个表只留给「某个新 CLI 的迁移确实有正当理由暂时留一个」的情况。
+>
+> **删类之前先过三关**，否则删的是活代码：① Less **mixin** 定义（`.buttonBase() { … }`）与调用（`.buttonBase();`）长得像类名，`buttonSystem.less` 那套被 20 多处调用，误删直接构建失败——解析器现在靠「有没有空参数列表」区分；② `:global { … }` **块形式**里的 `.ant-*` 是全局选择器，不是模块键（本仓库两种 `:global` 写法都在用）；③ `@import '.../x.less'` 的文件扩展名不是类名。这三关都是守卫自己踩过的假阳性，**用全仓数据跑一遍看报的是不是真问题**，再决定删。
+>
+> 顺带修好一类真 bug：`.listActions .ant-btn { … }` 这类**没包 `:global` 的 Ant Design 选择器**，CSS Modules 会把 `.ant-btn` 也哈希化，规则从写下那天起就没生效过。守卫把它报成孤儿，正是发现它的方式。见到这类写法一律补 `:global(...)`，而不是删掉。
+>
+> **守卫的第一版还有两处盲区，是「之前迁移的其他 CLI」的残留藏在里面的原因**（2026-10-23 补齐）：
+>
+> 1. **动态键一票否决**。`styles[`messageRole${role}`]` 曾让整份样式表退出反向检查，于是 `SessionDetailWorkbench.module.less`（14 个组件共用、174 个类）里 7 个真孤儿谁也看不见。现在动态键只登记**前缀**（`level` / `messageRole`），凡以它开头的类视为可能被用到，**其余照查**。
+> 2. **没人导入的样式表整个漏掉**。`github-markdown-overrides.module.less` 是 `MarkdownPreview/index.module.less` 的旧副本，全仓零导入，却因为反向检查只看「有导入者的文件」而一直躺着。现在 `*.module.less` 无导入即整份报死。
+> 3. **按单个导入者判孤儿**（更早修过）。一个样式表常被同目录七八个组件共用，必须汇总全部导入者的 `styles.x` 再判。
+>
+> 三条盲区都验证过「造一个假孤儿会红」。**判别标准：守卫报 0 不等于没有残留，先问它到底扫了什么。**
+>
+> 守卫自己犯过一次错并因此加强：第一版只剥 `/* */` 注释，而 Less 里普遍用 `//`；一句 `// was `.ompSection`` 的注释就把缺失的类名「定义」上了，守卫于是对真正的缺陷报绿。**写源码守卫时，先拿已知违规文件跑一次**（§13.1 模式四十六的推论）。同一轮里它还因为「按单个导入者算孤儿」产生了 2655 条假报——**守卫上线前必须用全仓数据跑一遍，看它报的是不是真问题**。
 
 ---
 
@@ -2771,6 +2827,7 @@ const existingModels = provider
 |------|-------------|-----------|
 | `docsUrl` | 「官方文档」 | ✅ 传 |
 | **`onPreviewConfig`** | **「预览配置」** | ❌ **漏传** |
+| `configPathKind` | `'file'`（默认）/ `'directory'`：决定标签取 `common.configPath`「配置文件路径」还是 `common.configDir`「配置目录路径」 | 不传（ZCode 显示的是 `v2/provider_config.json`，是文件） |
 | `onCustomizeConfig` / `customizeConfigDisabled` / `customizeConfigDisabledReason` | 「自定义配置目录」；禁用时悬停说明原因 | ✅ 传 |
 | `onOpenFolder` | 「打开文件夹」 | ✅ 传 |
 | `onRefresh` | 「刷新配置」 | ✅ 传 |
@@ -2784,10 +2841,10 @@ const existingModels = provider
 | prop | 渲染出的东西 | 现有消费方 |
 |------|-------------|-----------|
 | `provider` | 名称 + baseUrl（名称链到端点 origin） | 全部 |
-| `providerState.isDisabled` / `onToggleDisabled` | 已禁用态；启用开关（`onToggleDisabled` 不传则菜单里没有开关）。回调收到的是**新的启用状态**（同 antd `Switch.onChange`） | claudecode、codex、zcode、opencode、geminicli、grok、claudedesktop |
-| `providerState.draggable` / `sortableId` | 卡片级拖拽把手（**不是** `modelSection.*`）；拖拽不可用时映射层传 `dragDisabled`，把手整个消失 | claudecode、codex、zcode、omo_native、opencode、geminicli、grok、claudedesktop |
-| `providerState.accent` | 卡片外框高亮：`applied` / `gatewayPrimary` | claudecode、codex、claudedesktop（`gatewayPrimary` 优先于 `applied`） |
-| `providerState.connectivityStatus` | 名称左侧状态点 | claudecode、codex、zcode、opencode、grok、claudedesktop（geminicli 的连通性入口在行内按钮，状态点无消费方） |
+| `providerState.isDisabled` / `onToggleDisabled` | 已禁用态；启用开关（`onToggleDisabled` 不传则菜单里没有开关）。回调收到的是**新的启用状态**（同 antd `Switch.onChange`） | claudecode、codex、kimi、zcode、opencode、geminicli、grok、claudedesktop（omo_native 没有单渠道启用概念，不传） |
+| `providerState.draggable` / `sortableId` | 卡片级拖拽把手（**不是** `modelSection.*`）；拖拽不可用时映射层传 `dragDisabled`，把手整个消失 | 14 个有供应商列表的 CLI，但**只有在该行有存储位置时才为真**：pi 限 `models_json` 来源、oh_my_pi 的 Codex 订阅卡片与 dsh 的内置目录渠道都没有把手 |
+| `providerState.accent` | 卡片外框高亮：`applied` / `gatewayPrimary` | claudecode、codex、kimi、geminicli、grok、claudedesktop（`gatewayPrimary` 优先于 `applied`） |
+| `providerState.connectivityStatus` | 名称左侧状态点 | claudecode、claudedesktop、codex、grok、kimi、omo_native、opencode、zcode（geminicli 没有连通性测试功能，不是「入口在别处」） |
 | `providerState.selectable` / `selected` / `onSelectChange` | 多选复选框（取代拖拽手柄） | 全部 |
 | `actions.onEdit` / `onCopy` / `onShare` / `onDelete` | 头部/菜单里的四个标准动作 | 全部 |
 | `actions.deleteDisabledReason` / `deleteConfirm` | 删除的禁用原因 / 内置二次确认 | zcode（`deleteConfirm: false`，自己确认）、omo_native（`deleteDisabledReason`＝「默认渠道不可删」+ `deleteConfirm: false`）、opencode（`deleteConfirm: true` + 默认模型渠道 `deleteDisabledReason`；**详情侧栏的删除按钮要自己弹确认**，因为侧栏 footer 不是 `Popconfirm` 的宿主，且必须同样遵守 `deleteDisabledReason`） |
@@ -2795,12 +2852,12 @@ const existingModels = provider
 | **`actions.gatewayActions`** | 主操作**之前**的网关按钮组（代理/恢复直连/切换主渠道） | claudecode、codex、geminicli、grok、claudedesktop |
 | `actions.extraActions` | 头部图标按钮，在「更多」**之前** | zcode、omo_native、opencode（OpenCode 式）；Claude/Codex 式亦可 |
 | `actions.enabledStateLabel` | 「更多」菜单里启用开关的副标题 | claudecode、codex、kimi、geminicli、grok、claudedesktop |
-| `namePrefix` | 名称**之前**的节点（官方卡片的 🔗）；`nameTags` 只管名称之后 | codex、kimi、geminicli、grok |
-| `nameTags` | 名称右侧徽章（已应用/官方/代理/优先级/官方账号计数） | claudecode、codex、zcode、geminicli、grok、claudedesktop |
-| `metaEntries` | 第二行（`text` / `code` / `tag` 有序项；`tag` 渲染成真 `Tag`） | claudecode、codex、zcode、geminicli、grok、claudedesktop |
-| `inlineActions` | 第二行末尾（连通性测试、CLI 启动）；有 `inlineActions` 时这一行**不再要求**有 `metaEntries` | claudecode、codex、grok、claudedesktop |
-| `footer` | **头部两栏之下**、模型区之上（官方账号折叠区、只读模型目录、备注）；必须跨满卡片整宽 | codex（官方账号折叠区）、opencode（`auth.json` 合并的官方模型只读块）、geminicli / grok（官方账号折叠区）、claudedesktop（备注） |
-| `modelSection.*` | 见下方 `ModelListSection` 表 | codex、zcode、omo_native、opencode、grok |
+| `namePrefix` | 名称**之前**的节点（官方卡片的 🔗）；`nameTags` 只管名称之后 | codex、kimi、geminicli、grok、zcode（官方账号卡片） |
+| `nameTags` | 名称右侧徽章（已应用/官方/代理/优先级/官方账号计数/来源标签） | claudecode、claudedesktop、codex、dsh（内置目录 + `apiKeyEnv`）、geminicli、grok、kimi、oh_my_pi、pi、zcode |
+| `metaEntries` | 第二行（`text` / `code` / `tag` 有序项；`tag` 渲染成真 `Tag`） | claudecode、claudedesktop、codex、geminicli、grok、kimi |
+| `inlineActions` | 第二行末尾（连通性测试、CLI 启动）；有 `inlineActions` 时这一行**不再要求**有 `metaEntries` | claudecode、codex、kimi、claudedesktop。**Grok 刻意不传**：模型工具栏已是唯一入口，再加就是同一张卡片说两遍 |
+| `footer` | **头部两栏之下**、模型区之上（官方账号折叠区、只读模型目录、备注）；必须跨满卡片整宽 | codex / geminicli / grok / kimi（官方账号折叠区）、opencode（`auth.json` 合并的官方模型只读块）、claudecode / claudedesktop（备注） |
+| `modelSection.*` | 见下方 `ModelListSection` 表 | codex、dsh、grok、hermes、kimi、oh_my_pi、omo_native、openclaw、opencode、pi、zcode（均经 `ProviderModelSection` 触达） |
 
 > **加新 prop 的门槛**：先确认**至少两个**调用方需要它（判据与实例见 §4.2.1 的「样式能力不够时怎么办」）。**零消费方的 prop 当场删掉，不要留着「以后可能用到」**：2026-10-07 已删除 `metaEntries` 的 `kind: 'id'` / `'sdk'`（OpenCode 式自己按 `provider.id` / `sdkName` / `baseUrl` 拼第二行，另两种样式由调用方给 `metaEntries`）与 `ProviderCardModels.modelSourceTag`（只有 `components/common/ProviderCard` 渲染它，那是另一条链）。查零消费方的命令：
 > ```bash
@@ -2814,12 +2871,12 @@ const existingModels = provider
 
 | prop | 渲染出的东西 | 现有消费方 |
 |------|-------------|-----------|
-| `ProviderListSection.viewMode` / `onViewModeChange` | 工具栏的布局切换按钮；**两个都传才渲染**（见上表 `ProviderListSection` 段） | 九个 coding 页全部（claudecode、claudedesktop、codex、geminicli、grok、kimi、zcode、omo_native、opencode） |
-| `ProviderCompactCard.subtitle` | 第二行 `Label: value` 对，空数组/不传即整行不渲染。**只说一件事**：普通 provider 说模型，官方渠道说「当前登录: <账号>」 | claudecode（全部角色模型）、claudedesktop（角色路由）、codex（主模型 / 官方渠道的登录）、geminicli（主模型 / 当前登录）、grok（主模型 / 当前登录）、kimi、zcode（官方账号成员）、opencode / omo_native（默认模型，仅当该渠道拥有全局默认时；OmO 前面还有裸 npm 包名） |
-| `ProviderCompactCard.namePrefix` | 名称**之前**的节点（官方卡片的 🔗；`nameTags` 只管名称之后） | codex、kimi、zcode、geminicli、grok |
-| `ProviderCompactCard.launchAction` / `extraMenuItems` | footer 左侧的启动按钮；「更多」菜单里插在「分享」后的额外项 | claudecode（启动 + 模型测试）、codex（模型测试）、omo_native（模型测试） |
-| `ProviderCompactCard.detail` | 这张格子的详情侧栏：`{ title, statusTags, primaryActions, secondaryActions, sections }`。**传了才有点击目标**（不传 = 卡片不可点，也不画 `data-provider-card-clickable`），**抽屉与面板由卡片自己渲染**（2026-10-14 起：四个映射层曾各写一份逐字相同的 `<Drawer>`，#151） | claudecode、claudedesktop、codex、geminicli、grok、kimi、zcode、omo_native、opencode |
-| `ProviderCompactCard.actionPlacement` | 那组动作挂哪一行：`'footer'`（默认，底部隔断线下）或 `'subtitle'`（第二行末尾，`margin-left: auto`）。**两种形态渲染同一份动作节点**，只是位置不同；`'subtitle'` 时动作无条件渲染（第二行本身才是条件渲染的） | codex、opencode、geminicli、grok、omo_native（`subtitle`）；claudecode / claudedesktop 用默认 `footer`（动作多） |
+| `ProviderListSection.viewMode` / `onViewModeChange` | 工具栏的布局切换按钮；**两个都传才渲染**（见上表 `ProviderListSection` 段） | 14 个有供应商列表的 CLI 全部（claudecode、claudedesktop、codex、dsh、geminicli、grok、hermes、kimi、oh_my_pi、omo_native、openclaw、opencode、pi、zcode） |
+| `ProviderCompactCard.subtitle` | 第二行 `Label: value` 对，空数组/不传即整行不渲染。**只说一件事**：普通 provider 说模型，官方渠道说「当前登录: <账号>」 | claudecode（全部角色模型）、claudedesktop（角色路由）、codex（主模型 / 官方渠道的登录）、geminicli（主模型 / 当前登录）、grok（主模型 / 当前登录）、kimi、zcode（官方账号成员）、opencode / omo_native / pi / oh_my_pi / dsh（默认模型，仅当该渠道拥有全局默认时；前面还有裸 npm 包名） |
+| `ProviderCompactCard.namePrefix` | 名称**之前**的节点（官方卡片的 🔗；`nameTags` 只管名称之后） | codex、kimi、geminicli、grok、zcode（官方账号格子） |
+| `ProviderCompactCard.launchAction` / `extraMenuItems` | footer 左侧的启动按钮；「更多」菜单里插在「分享」后的额外项 | claudecode（启动 + 模型测试）、codex / kimi / grok / claudedesktop / omo_native / opencode（模型测试） |
+| `ProviderCompactCard.detail` | 这张格子的详情侧栏：`{ title, statusTags, primaryActions, secondaryActions, sections }`。**传了才有点击目标**（不传 = 卡片不可点，也不画 `data-provider-card-clickable`），**抽屉与面板由卡片自己渲染**（2026-10-14 起：四个映射层曾各写一份逐字相同的 `<Drawer>`，#151） | 14 个有供应商列表的 CLI 全部 |
+| `ProviderCompactCard.actionPlacement` | 那组动作挂哪一行：`'footer'`（默认，底部隔断线下）或 `'subtitle'`（第二行末尾，`margin-left: auto`）。**两种形态渲染同一份动作节点**，只是位置不同；`'subtitle'` 时动作无条件渲染（第二行本身才是条件渲染的） | codex、opencode、geminicli、grok、kimi、omo_native（`subtitle`）；claudecode / claudedesktop 用默认 `footer`（动作多）。ZCode 的映射层与官方账号格子也传 `subtitle` |
 | `ProviderCompactCard.cellControl` | 这张格子自己的控件，落在动作槽里、**主操作之前**（别的 CLI 放 应用 / 网关代理 的位置）。**插槽不是布尔**——卡片不决定一个 provider 的状态控件是什么，它的 CLI 决定；**传了它，「更多」菜单里那条启用项就让出来**（同一控件不在同一张卡片上说两遍） | zcode、opencode（`ProviderEnabledSwitch`；zcode 2026-10-15，opencode 2026-10-19） |
 | `ProviderDetailPanel.title` / `statusTags` / `primaryActions` / `secondaryActions` | 侧栏的标题行与两排动作；**动作由映射层传同一份渲染结果**（卡片与侧栏因此不可能提供不同的能力） | claudecode、claudedesktop、codex、geminicli、grok、omo_native、opencode |
 | `ProviderDetailPanel.sections` | 侧栏正文的分区数组。`fields` 的 `emptyText` 有无决定「缺值显示占位」还是「整行消失」；`copyable` / `elideMiddle` 是连接字段的两个开关；`content` 给自带标题的组件（模型目录、官方账号块） | claudecode、claudedesktop、codex、geminicli、grok、omo_native、opencode |
