@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod change_hook;
+pub mod codex_context_journal;
 pub mod health;
 pub mod helpers;
 pub mod migrations;
