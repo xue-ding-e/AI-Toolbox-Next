@@ -285,6 +285,22 @@ impl ResourcePermit<'_> {
         for lease in &self.leases { lease.ensure_current()?; }
         Ok(())
     }
+
+    /// Private fixed-config effect capability. The supplied writer must be the
+    /// exact writer borrowed by this resource permit, not another live owner.
+    /// The borrow retains both permits; callers must revalidate before effects.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn config_directory<'a>(
+        &'a self,
+        writer: &WriterPermit,
+        resource: &'a RuntimeResourceIdentity,
+    ) -> Result<&'a std::fs::File> {
+        if !std::ptr::eq(self.writer, writer) {
+            return Err(Error::StaleOwner);
+        }
+        self.require_resource(resource)?;
+        Ok(resource.0.directory.config_directory())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -373,6 +389,12 @@ pub(crate) mod linux {
     }
 
     impl CheckedDirectory {
+        // This descriptor is not a path-based filesystem API. Only the private
+        // permit-gated fixed-config effect borrows it from the owner boundary.
+        pub(super) fn config_directory(&self) -> &File {
+            &self.file
+        }
+
         pub(crate) fn profile(path: &Path) -> Result<Self> {
             require_absolute(path)?;
             let canonical = fs::canonicalize(path).map_err(|error| {

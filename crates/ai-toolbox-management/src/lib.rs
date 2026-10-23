@@ -3,6 +3,14 @@
 //! Linux is the only implemented transport. Windows named-pipe ACL and peer
 //! verification, and other platforms' native proofs, remain unsupported.
 
+// Private until the complete application writer admission map is connected.
+#[cfg(target_os = "linux")]
+mod codex_master;
+#[cfg(target_os = "linux")]
+mod config_file;
+#[cfg(target_os = "linux")]
+mod codex_service;
+
 pub mod coordination;
 pub mod owner;
 pub mod transport;
