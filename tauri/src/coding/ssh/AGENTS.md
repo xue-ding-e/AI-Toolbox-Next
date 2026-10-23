@@ -36,6 +36,8 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- Owner 协调 artifact 的递归上传过滤必须发生在 `metadata` 之前，且覆盖普通文件、目录、socket 和 dangling symlink，不能仅把 lock 加进“目录 excludes”。目录 replacement 在远端 mkdir/上传 staging 前预检，在 rm 前复检，与 WSL 共用精确 matcher/shell guard；single/pattern 和通用 write/delete 也拒绝保留路径。现有 artifact 拒绝不是远端 owner lease，TOCTOU、硬链接与 Skills 独立 replace-tree 仍需另行闭合，不能因此启用业务 CLI 写入口。
+
 - 不要把 SSH 写成“自动同步”模块。当前应明确为手动同步主模型；即使启用或切换连接时会跑一次全量同步，也不等于存在像 WSL 那样的事件驱动自动同步监听体系。
 - 同步设置保存只 patch 用户字段，不能回写表单里的历史状态或清掉 `last_sync_warnings`；配置、普通状态和警告写入均在同一次 SQLite 连接锁内完成。全量同步须把 Skills 阶段已收集警告合入返回结果与完成事件，包含该阶段最终失败的情况；同步哈希写入失败、目标目录无法解析也必须进入警告链路，不能只留日志或静默跳过。
 - SSH 设置页不会像 WSL 设置页那样按 `is_wsl_direct` 禁用模块。它只是把左侧本地路径显示成完整 UNC，真正同步仍由后端解析。

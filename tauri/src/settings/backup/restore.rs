@@ -264,6 +264,10 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
     skip_cli_custom_roots: bool,
 ) -> Result<RestoreResult, String> {
     let db_path = get_db_path(app_handle)?;
+    super::utils::preflight_backup_coordination_paths(archive)?;
+    super::utils::reject_coordination_output_path(&db_path)?;
+    ai_toolbox_management::coordination::ensure_replaceable_tree(&db_path)
+        .map_err(|error| error.to_string())?;
 
     // Check if this is a new format backup (with db/ prefix) or old format
     let is_new_format = (0..archive.len()).any(|i| {
@@ -312,6 +316,10 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
         );
     }
 
+    // Repeat immediately before destructive replacement. This is not an owner
+    // lease and cannot prevent a non-cooperating writer racing the check.
+    ai_toolbox_management::coordination::ensure_replaceable_tree(&db_path)
+        .map_err(|error| error.to_string())?;
     // Remove existing database directory
     if db_path.exists() {
         fs::remove_dir_all(&db_path)
@@ -534,6 +542,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
         // Normalize path separators for cross-platform compatibility
         // Windows backups may contain backslashes which need to be converted
         let file_name = normalize_restore_entry_name(file.name());
+        super::utils::reject_coordination_path(&file_name)?;
 
         // Skip the backup marker file
         if file_name == ".backup_marker" || file_name == "db/.backup_marker" {
@@ -557,6 +566,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                 }
 
                 let outpath = db_path.join(relative_path);
+                super::utils::reject_coordination_output_path(&outpath)?;
 
                 if file_name.ends_with('/') {
                     fs::create_dir_all(&outpath)
@@ -590,6 +600,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
 
                 if relative_path == "auth.json" {
                     let outpath = get_opencode_auth_restore_path(Some(&opencode_restore_dir))?;
+                    super::utils::reject_coordination_output_path(&outpath)?;
                     let auth_dir = outpath.parent().ok_or_else(|| {
                         "Failed to determine OpenCode auth parent directory".to_string()
                     })?;
@@ -644,6 +655,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                 } else {
                     claude_restore_dir.join(relative_path)
                 };
+                super::utils::reject_coordination_output_path(&outpath)?;
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {
@@ -673,6 +685,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                 }
 
                 let outpath = openclaw_restore_dir.join(relative_path);
+                super::utils::reject_coordination_output_path(&outpath)?;
                 let mut outfile =
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
@@ -701,6 +714,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                 }
 
                 let outpath = codex_restore_dir.join(relative_path);
+                super::utils::reject_coordination_output_path(&outpath)?;
 
                 // Just copy the file - MCP cmd /c normalization will be handled
                 // by mcp_sync_all during startup resync (triggered by .resync_required flag)
@@ -1253,6 +1267,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                 }
 
                 let outpath = image_assets_dir.join(relative_path);
+                super::utils::reject_coordination_output_path(&outpath)?;
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {
@@ -1268,6 +1283,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
         } else {
             // Old format: all files are database files
             let outpath = db_path.join(&file_name);
+            super::utils::reject_coordination_output_path(&outpath)?;
 
             if file_name.ends_with('/') {
                 fs::create_dir_all(&outpath)

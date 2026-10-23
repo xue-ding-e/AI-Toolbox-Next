@@ -437,10 +437,16 @@ impl SshSession {
         excluded_names: &[String],
         current_file_reporter: Option<&(dyn Fn(String) + Send + Sync)>,
     ) -> Result<(), String> {
+        reject_reserved_sync_path(local_path)?;
+        reject_reserved_sync_path(remote_path)?;
+        let resolved_source = tokio::fs::canonicalize(local_path).await
+            .map_err(|error| format!("Failed to resolve upload source: {error}"))?;
+        reject_reserved_sync_path(&resolved_source.to_string_lossy())?;
         let sftp = self.create_sftp_session().await?;
 
         // 将 ~ 展开为绝对路径
         let abs_remote_path = resolve_remote_path(&sftp, remote_path).await?;
+        reject_reserved_sync_path(&abs_remote_path)?;
         let excluded_names: HashSet<String> = excluded_names.iter().cloned().collect();
         let mut stats = DirectoryUploadStats::default();
         let local_root = std::path::Path::new(local_path);
@@ -576,12 +582,24 @@ pub async fn test_connection_capability(conn: &SSHConnection) -> SSHConnectionRe
     outcome.into_result()
 }
 
+pub(super) fn reject_reserved_sync_path(path: &str) -> Result<(), String> {
+    if ai_toolbox_management::coordination::contains_coordination_component(path) {
+        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
+    }
+    Ok(())
+}
+
 /// 通过已有 SFTP 会话上传单个文件
 pub async fn upload_file_via_sftp(
     sftp: &russh_sftp::client::SftpSession,
     local_path: &str,
     remote_path: &str,
 ) -> Result<(), String> {
+    reject_reserved_sync_path(local_path)?;
+    reject_reserved_sync_path(remote_path)?;
+    let resolved_source = tokio::fs::canonicalize(local_path).await
+        .map_err(|error| format!("Failed to resolve upload source: {error}"))?;
+    reject_reserved_sync_path(&resolved_source.to_string_lossy())?;
     // 读取本地文件
     let data = tokio::fs::read(local_path)
         .await
@@ -589,6 +607,7 @@ pub async fn upload_file_via_sftp(
 
     // 将 ~ 展开为绝对路径（SFTP 不支持 ~ 语法）
     let abs_remote_path = resolve_remote_path(sftp, remote_path).await?;
+    reject_reserved_sync_path(&abs_remote_path)?;
 
     // 确保远程父目录存在
     if let Some(parent) = parent_path(&abs_remote_path) {
@@ -666,7 +685,15 @@ async fn upload_dir_recursive(
         .await
         .map_err(|e| format!("读取目录项失败: {}", e))?
     {
+        // Filter every object type before metadata, including dangling links,
+        // sockets and directories. User directory excludes alone are insufficient.
+        if ai_toolbox_management::transport::is_reserved_coordination_name(&entry.file_name()) {
+            continue;
+        }
         let path = entry.path();
+        let resolved = tokio::fs::canonicalize(&path).await
+            .map_err(|error| format!("Failed to resolve upload source: {error}"))?;
+        reject_reserved_sync_path(&resolved.to_string_lossy())?;
         // 使用 metadata（而非 symlink_metadata）跟随符号链接，获取最终目标的类型
         let metadata = tokio::fs::metadata(&path)
             .await

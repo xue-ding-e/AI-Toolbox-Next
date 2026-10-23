@@ -92,6 +92,7 @@ name = "ai-toolbox"
 version = "1.2.0"
 dependencies = [
  "ai-toolbox-codex-config",
+ "ai-toolbox-management",
  "ai-toolbox-storage",
  "anyhow",
  "apple-native-keyring-store",
@@ -172,6 +173,19 @@ name = "ai-toolbox-codex-config"
 version = "0.1.0"
 dependencies = [
  "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "ai-toolbox-management"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "getrandom 0.3.4",
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]

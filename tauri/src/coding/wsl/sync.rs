@@ -1,9 +1,17 @@
+use ai_toolbox_management::coordination::{contains_coordination_component, posix_coordination_guard, quote_posix_sync_path, reserved_coordination_shell_globs};
 use super::types::{normalize_directory_excludes, FileMapping, SyncResult, WSLDetectResult};
 use std::path::Path;
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+
+fn reject_reserved_sync_path(path: &str) -> Result<(), String> {
+    if contains_coordination_component(path) {
+        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
+    }
+    Ok(())
+}
 
 /// Windows CREATE_NO_WINDOW flag to prevent console window from appearing
 #[cfg(target_os = "windows")]
@@ -338,15 +346,21 @@ pub fn sync_single_file(
     wsl_path: &str,
     distro: &str,
 ) -> Result<Vec<String>, String> {
+    reject_reserved_sync_path(windows_path)?;
+    reject_reserved_sync_path(wsl_path)?;
     let wsl_source_path = windows_to_wsl_path(windows_path)?;
 
     // Expand ~ in WSL path
     let wsl_target_path = wsl_path.replace("~", "$HOME");
 
-    // Create the WSL command
+    // Check expanded paths before mkdir or copying.
     let command = format!(
-        "mkdir -p \"$(dirname \"{}\")\" && cp -f \"{}\" \"{}\"",
-        wsl_target_path, wsl_source_path, wsl_target_path
+        "set -e; {guards}\nsource={source}; target={target}; \
+         ait_guard_path \"$source\"; ait_guard_path \"$target\"; \
+         mkdir -p \"$(dirname \"$target\")\"; cp -f -- \"$source\" \"$target\"",
+        guards = posix_coordination_guard(),
+        source = quote_posix_sync_path(&wsl_source_path),
+        target = quote_posix_sync_path(&wsl_target_path),
     );
 
     let output = create_wsl_command()
@@ -372,46 +386,36 @@ fn normalize_directory_target_path(path: &str) -> String {
 }
 
 fn build_directory_copy_command(wsl_source_path: &str, wsl_target_path: &str) -> String {
-    format!(
-        "set -e; \
-         source=\"{}\"; \
-         target=\"{}\"; \
-         parent=$(dirname \"$target\"); \
-         mkdir -p \"$parent\"; \
-         tmp=$(mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\"); \
-         trap 'rm -rf \"$tmp\"' EXIT; \
-         cp -R -P \"$source\"/. \"$tmp\"/; \
-         rm -rf \"$target\"; \
-         mv \"$tmp\" \"$target\"; \
-         trap - EXIT",
-        wsl_source_path, wsl_target_path
-    )
+    // Even an empty user exclude list must omit coordination artifacts.
+    build_directory_copy_command_with_excludes(wsl_source_path, wsl_target_path)
 }
 
-/// Build a directory copy command that excludes entries whose name matches any
-/// of the exclude list, at any nesting depth (recursive), matching the SSH
-/// semantic. Excludes are passed as bash positional parameters ($1..$n) and
-/// turned into `--exclude` args inside `tar`, so the command text itself needs
-/// no escaping; `--exclude=name` matches any path segment named `name`.
+/// Preserve symlinks and use exact reserved-name pruning regardless of user
+/// excludes. Destination scans protect only artifacts already observed, not a
+/// concurrent remote owner. A second scan is immediately before destructive swap.
 fn build_directory_copy_command_with_excludes(
     wsl_source_path: &str,
     wsl_target_path: &str,
 ) -> String {
+    let reserved = reserved_coordination_shell_globs().iter()
+        .map(|pattern| format!("--exclude={}", quote_posix_sync_path(pattern)))
+        .collect::<Vec<_>>().join(" ");
     format!(
-        "set -e; set -o pipefail; \
-         source=\"{}\"; \
-         target=\"{}\"; \
+        "set -e; set -o pipefail; {guards}\n\
+         source={source}; target={target}; \
+         ait_guard_path \"$source\"; ait_guard_tree \"$target\"; \
          parent=$(dirname \"$target\"); \
          mkdir -p \"$parent\"; \
          tmp=$(mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\"); \
-         trap 'rm -rf \"$tmp\"' EXIT; \
-         excl_args=(); \
+         trap 'ait_guard_tree \"$tmp\" && rm -rf \"$tmp\"' EXIT; \
+         excl_args=({reserved}); \
          for excl in \"$@\"; do excl_args+=(--exclude=\"$excl\"); done; \
          tar -C \"$source\" \"${{excl_args[@]}}\" -cf - . | tar -C \"$tmp\" -xf -; \
-         rm -rf \"$target\"; \
-         mv \"$tmp\" \"$target\"; \
-         trap - EXIT",
-        wsl_source_path, wsl_target_path
+         ait_guard_tree \"$target\"; \
+         rm -rf \"$target\"; mv \"$tmp\" \"$target\"; trap - EXIT",
+        guards = posix_coordination_guard(),
+        source = quote_posix_sync_path(wsl_source_path),
+        target = quote_posix_sync_path(wsl_target_path),
     )
 }
 
@@ -432,6 +436,8 @@ pub fn sync_directory_with_excludes(
     distro: &str,
     directory_excludes: &[String],
 ) -> Result<Vec<String>, String> {
+    reject_reserved_sync_path(windows_path)?;
+    reject_reserved_sync_path(wsl_path)?;
     let wsl_source_path = windows_to_wsl_path(windows_path)?;
 
     // Expand ~ in WSL path
@@ -439,8 +445,8 @@ pub fn sync_directory_with_excludes(
 
     // First, check if source path exists in WSL
     let check_command = format!(
-        "if [ -e \"{}\" ]; then echo exists; else echo notfound; fi",
-        wsl_source_path
+        "if [ -e {} ]; then echo exists; else echo notfound; fi",
+        quote_posix_sync_path(&wsl_source_path)
     );
     let check_output = create_wsl_command()
         .args(["-d", distro, "--exec", "bash", "-c", &check_command])
@@ -516,6 +522,109 @@ pub fn sync_directory_with_excludes(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    mod shell_fixture {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/ai-toolbox-management/tests/support/bounded_shell.rs"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn directory_shell_fixture_rejects_target_artifacts_before_staging() {
+        use std::os::unix::fs::MetadataExt;
+        for name in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let source = fixture.path().join("source");
+            let target = fixture.path().join("target");
+            std::fs::create_dir(&source).unwrap();
+            std::fs::create_dir(&target).unwrap();
+            std::fs::write(source.join("ordinary"), b"new").unwrap();
+            let lock = target.join(name);
+            std::fs::write(&lock, b"old coordination").unwrap();
+            let inode = std::fs::metadata(&lock).unwrap().ino();
+            let command = build_directory_copy_command(source.to_str().unwrap(), target.to_str().unwrap());
+            let (fixture, output) = shell_fixture::run("bash", &command, fixture);
+            assert!(!output.status.success());
+            assert_eq!(std::fs::read(&lock).unwrap(), b"old coordination");
+            assert_eq!(std::fs::metadata(&lock).unwrap().ino(), inode);
+            assert!(!target.join("ordinary").exists());
+            assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 2);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn directory_shell_fixture_excludes_all_reserved_source_types_and_preserves_controls() {
+        let fixture = tempfile::tempdir().unwrap();
+        let source = fixture.path().join("source");
+        let target = fixture.path().join("target");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("old"), b"replace ordinary target").unwrap();
+        std::fs::write(source.join(".env"), b"ordinary").unwrap();
+        std::os::unix::fs::symlink(".env", source.join("ordinary-link")).unwrap();
+        std::fs::write(source.join(".mcp.json"), b"{}").unwrap();
+        std::fs::write(source.join(".ai-toolbox-owner-note.sock"), b"keep").unwrap();
+        std::fs::write(source.join(".ai-toolbox-owner.lock"), b"exclude").unwrap();
+        std::fs::create_dir(source.join(".ai-toolbox-runtime.lock")).unwrap();
+        std::fs::create_dir(source.join("nested")).unwrap();
+        std::os::unix::fs::symlink("missing", source.join("nested/.ai-toolbox-owner.lock")).unwrap();
+        let socket = source.join(".ai-toolbox-owner-0000000000000001-0000000000000002.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let command = build_directory_copy_command(source.to_str().unwrap(), target.to_str().unwrap());
+        let (_fixture, output) = shell_fixture::run("bash", &command, fixture);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(std::fs::read(target.join(".env")).unwrap(), b"ordinary");
+        assert!(target.join(".mcp.json").exists());
+        assert_eq!(std::fs::read_link(target.join("ordinary-link")).unwrap(), std::path::Path::new(".env"));
+        assert!(target.join(".ai-toolbox-owner-note.sock").exists());
+        assert!(!target.join("old").exists());
+        assert!(!target.join(".ai-toolbox-owner.lock").exists());
+        assert!(!target.join(".ai-toolbox-runtime.lock").exists());
+        assert!(std::fs::symlink_metadata(target.join("nested/.ai-toolbox-owner.lock")).is_err());
+        assert!(!target.join(socket.file_name().unwrap()).exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn directory_replace_preserves_parent_lease_and_refuses_non_directory_targets() {
+        use std::os::unix::fs::MetadataExt;
+        for kind in ["directory", "file", "symlink"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let source = fixture.path().join("source");
+            let target = fixture.path().join("target");
+            let real = fixture.path().join("real");
+            std::fs::create_dir(&source).unwrap();
+            std::fs::create_dir(&real).unwrap();
+            std::fs::write(source.join("new"), b"new").unwrap();
+            let lock = fixture.path().join(".ai-toolbox-owner.lock");
+            let real_lock = real.join(".ai-toolbox-runtime.lock");
+            std::fs::write(&lock, b"parent lease").unwrap();
+            std::fs::write(&real_lock, b"referent lease").unwrap();
+            let inode = std::fs::metadata(&lock).unwrap().ino();
+            let real_inode = std::fs::metadata(&real_lock).unwrap().ino();
+            match kind {
+                "directory" => std::fs::create_dir(&target).unwrap(),
+                "file" => std::fs::write(&target, b"ordinary file").unwrap(),
+                _ => std::os::unix::fs::symlink(&real, &target).unwrap(),
+            }
+            let target_inode = std::fs::symlink_metadata(&target).unwrap().ino();
+            let command = build_directory_copy_command(source.to_str().unwrap(), target.to_str().unwrap());
+            let (fixture, output) = shell_fixture::run("bash", &command, fixture);
+            assert_eq!(output.status.success(), kind == "directory", "{kind}: {}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(std::fs::metadata(&lock).unwrap().ino(), inode);
+            assert_eq!(std::fs::read(&lock).unwrap(), b"parent lease");
+            assert_eq!(std::fs::metadata(&real_lock).unwrap().ino(), real_inode);
+            assert_eq!(std::fs::read(&real_lock).unwrap(), b"referent lease");
+            if kind == "directory" {
+                assert_eq!(std::fs::read(target.join("new")).unwrap(), b"new");
+            } else {
+                assert_eq!(std::fs::symlink_metadata(&target).unwrap().ino(), target_inode);
+                assert!(String::from_utf8_lossy(&output.stderr).contains("OWNER_REPLACEMENT_ROOT_UNSAFE"));
+            }
+            assert!(!std::fs::read_dir(fixture.path()).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".ai-toolbox-sync.")));
+        }
+    }
+
     #[test]
     fn normalize_directory_target_path_trims_trailing_slashes() {
         assert_eq!(
@@ -533,11 +642,17 @@ mod tests {
         );
 
         assert!(command.contains("mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\""));
-        assert!(command.contains("cp -R -P \"$source\"/. \"$tmp\"/"));
-        assert!(!command.contains("-L"));
+        assert!(command.contains("tar -C \"$source\""));
+        assert!(!command.contains("tar -h"));
+        let preflight = command.find("ait_guard_tree \"$target\"").unwrap();
+        let mkdir = command.find("mkdir -p").unwrap();
+        assert!(preflight < mkdir);
+        assert_eq!(command.matches("ait_guard_tree \"$target\"").count(), 2);
+        assert!(command.contains(".ai-toolbox-owner.lock"));
+        assert!(command.contains(".ai-toolbox-runtime.lock"));
         assert!(command.contains("rm -rf \"$target\"; mv \"$tmp\" \"$target\""));
 
-        let copy_index = command.find("cp -R -P").expect("copy command");
+        let copy_index = command.find("tar -C").expect("copy command");
         let replace_index = command.find("rm -rf \"$target\"").expect("replace command");
         assert!(copy_index < replace_index);
     }
@@ -562,6 +677,8 @@ pub fn sync_pattern_files(
     wsl_target_dir: &str,
     distro: &str,
 ) -> Result<Vec<String>, String> {
+    reject_reserved_sync_path(windows_pattern)?;
+    reject_reserved_sync_path(wsl_target_dir)?;
     // Convert Windows path to WSL path
     let wsl_source_dir = windows_to_wsl_path(windows_pattern)?;
 
@@ -577,28 +694,23 @@ pub fn sync_pattern_files(
     // Expand ~ in WSL path
     let wsl_target_dir_expanded = wsl_target_dir.replace("~", "$HOME");
 
-    // Create the WSL command to sync pattern files
+    // The glob is data, not interpolated shell syntax. Each expanded source is
+    // filtered before metadata, and its final destination is checked before cp.
     let command = format!(
-        "mkdir -p \"{}\" && \
-         if [ -f \"{}\"/{} ]; then \
-             cp -f \"{}\"/{} \"{}\" && \
-             echo \"synced\"; \
-         else \
-             shopt -s nullglob dotglob; \
-             files=\"{}\"/{}; \
-             if [ -n \"$files\" ]; then \
-                 cp -f $files \"{}\" 2>/dev/null && echo \"synced\" || true; \
-             fi; \
-         fi",
-        wsl_target_dir_expanded,
-        wsl_source_base,
-        pattern,
-        wsl_source_base,
-        pattern,
-        wsl_target_dir_expanded,
-        wsl_source_base,
-        pattern,
-        wsl_target_dir_expanded
+        "set -e; {guards}\nbase={base}; pattern={pattern}; target={target}; \
+         ait_guard_path \"$base\"; ait_guard_path \"$target\"; \
+         shopt -s nullglob dotglob; IFS=; files=(\"$base\"/$pattern); \
+         mkdir -p \"$target\"; \
+         for file in \"${{files[@]}}\"; do \
+             name=${{file##*/}}; if ait_reserved_name \"$name\"; then continue; fi; \
+             [ -f \"$file\" ] || continue; \
+             ait_guard_path \"$target/$name\"; \
+             if cp -f -- \"$file\" \"$target/$name\" 2>/dev/null; then echo synced; fi; \
+         done",
+        guards = posix_coordination_guard(),
+        base = quote_posix_sync_path(wsl_source_base),
+        pattern = quote_posix_sync_path(pattern),
+        target = quote_posix_sync_path(&wsl_target_dir_expanded),
     );
 
     let output = create_wsl_command()
@@ -807,12 +919,14 @@ pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
 
 /// Write content to a WSL file
 pub fn write_wsl_file(distro: &str, wsl_path: &str, content: &str) -> Result<(), String> {
+    reject_reserved_sync_path(wsl_path)?;
     let wsl_target = wsl_path.replace("~", "$HOME");
 
-    // Use heredoc to write content, avoiding escape issues
+    // Content still goes through stdin; validate the expanded destination first.
     let command = format!(
-        "mkdir -p \"$(dirname \"{}\")\" && cat > \"{}\"",
-        wsl_target, wsl_target
+        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
+         mkdir -p \"$(dirname \"$target\")\"; cat > \"$target\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(&wsl_target),
     );
 
     let mut child = create_wsl_command()
@@ -841,6 +955,7 @@ pub fn write_wsl_file(distro: &str, wsl_path: &str, content: &str) -> Result<(),
 
 /// Remove a file or directory in WSL
 pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
+    reject_reserved_sync_path(wsl_path)?;
     // 安全检查：禁止删除空路径或根路径
     let trimmed = wsl_path.trim();
     if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
@@ -848,7 +963,12 @@ pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
     }
 
     let wsl_target = wsl_path.replace("~", "$HOME");
-    let command = format!("rm -rf \"{}\"", wsl_target);
+    let command = format!(
+        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
+         if [ -d \"$target\" ] && [ ! -L \"$target\" ]; then ait_guard_tree \"$target\"; fi; \
+         rm -rf -- \"$target\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(&wsl_target),
+    );
 
     let output = create_wsl_command()
         .args(["-d", distro, "--exec", "bash", "-c", &command])

@@ -36,6 +36,8 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- Owner 协调 artifact 的源排除与目标保护不可混为一谈：空用户 excludes 也必须排除精确两个 lock 名和固定宽度 socket 名；目标 replace-tree 在 mkdir/staging 前、紧邻 rm 前都调用共享 `management::coordination` shell guard。Single/pattern 与通用 write/delete 也校验保留组件；所有新增 shell 路径只按数据引用。扫描只保护已观察到的 artifact，不能称为远端活 owner 互斥，TOCTOU、硬链接与 Skills 独立 replace-tree 的门禁仍未闭合。
+
 - 不要把 WSL 自动同步理解成“保存数据库就自动发生”。真正触发点是事件监听器。
 - 同步设置保存只 patch 用户字段，`last_sync_warnings` 只能由 Skills 链路替换；配置、普通状态和警告写入都在同一次 SQLite 连接锁内完成，避免旧表单或其它链路清掉诊断。全量同步必须把 Skills 阶段警告合入返回结果与完成事件，失败时也保留已经收集的警告；WSL 孤立中央目录清理失败同样属于非致命警告。
 - 恢复期间不能同时依赖启动同步、业务事件同步和恢复收尾同步。三条链路并发会让旧文件、半完成配置和新配置互相覆盖；恢复专用入口应抑制中间事件，启动同步应识别 restore flag，最终只保留恢复收尾的一次串行同步。

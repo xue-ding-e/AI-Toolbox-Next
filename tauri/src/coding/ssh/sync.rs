@@ -1,4 +1,5 @@
-use super::session::{self, upload_file_via_sftp, SshSession};
+use ai_toolbox_management::coordination::{posix_coordination_guard, quote_posix_sync_path};
+use super::session::{self, reject_reserved_sync_path, upload_file_via_sftp, SshSession};
 use super::types::{
     normalize_directory_excludes, SSHConnection, SSHConnectionResult, SSHFileMapping, SyncResult,
 };
@@ -124,6 +125,8 @@ pub async fn sync_single_file_with_progress(
     current_file_reporter: Option<CurrentFileReporter<'_>>,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_path)?;
+    reject_reserved_sync_path(&expanded)?;
+    reject_reserved_sync_path(remote_path)?;
     log::trace!(
         "SSH single file sync start: local_path={}, expanded_local_path={}, remote_path={}",
         local_path,
@@ -147,8 +150,11 @@ pub async fn sync_single_file_with_progress(
 
     let remote_target = remote_path.replace("~", "$HOME");
 
-    // 创建远程目录
-    let mkdir_cmd = format!("mkdir -p \"$(dirname \"{}\")\"", remote_target);
+    // Guard the expanded remote path before the first filesystem write.
+    let mkdir_cmd = format!(
+        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; mkdir -p \"$(dirname \"$target\")\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(&remote_target),
+    );
     session.exec_command(&mkdir_cmd).await?;
 
     // SFTP 上传文件
@@ -162,6 +168,34 @@ pub async fn sync_single_file_with_progress(
     Ok(vec![format!("{} -> {}", local_path, remote_path)])
 }
 
+fn build_remote_directory_prepare_command(remote_path: &str) -> String {
+    format!(
+        "set -e; {guards}\ntarget={target}; ait_guard_tree \"$target\"; \
+         mkdir -p \"$(dirname \"$target\")\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(remote_path),
+    )
+}
+
+fn build_remote_directory_swap_command(remote_path: &str, temporary_path: &str) -> String {
+    // Preflight and this second scan are compatibility checks, not remote owner
+    // admission. An uncooperative writer can still race the following deletion.
+    format!(
+        "set -e; {guards}\ntarget={target}; tmp={temporary}; \
+         ait_guard_tree \"$target\"; rm -rf -- \"$target\"; mv -- \"$tmp\" \"$target\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(remote_path),
+        temporary = quote_posix_sync_path(temporary_path),
+    )
+}
+
+fn build_remote_remove_command(remote_path: &str) -> String {
+    format!(
+        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
+         if [ -d \"$target\" ] && [ ! -L \"$target\" ]; then ait_guard_tree \"$target\"; fi; \
+         rm -rf -- \"$target\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(remote_path),
+    )
+}
+
 /// 同步整个目录到远程（通过 SFTP）
 /// 使用临时目录 + mv 实现原子替换，防止上传中断导致数据丢失
 pub async fn sync_directory_with_progress(
@@ -172,6 +206,8 @@ pub async fn sync_directory_with_progress(
     current_file_reporter: Option<CurrentFileReporter<'_>>,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_path)?;
+    reject_reserved_sync_path(&expanded)?;
+    reject_reserved_sync_path(remote_path)?;
     let directory_excludes = normalize_directory_excludes(directory_excludes);
     log::trace!(
         "SSH directory sync start: local_path={}, expanded_local_path={}, remote_path={}, directory_excludes={:?}",
@@ -191,8 +227,6 @@ pub async fn sync_directory_with_progress(
         return Ok(vec![]);
     }
 
-    let remote_target = remote_path.replace("~", "$HOME");
-
     // 安全检查：禁止对根路径或家目录执行操作
     let trimmed = remote_path.trim();
     if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
@@ -205,10 +239,9 @@ pub async fn sync_directory_with_progress(
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let tmp_remote_path = format!("{}.tmp_{}", remote_path, tmp_suffix);
-    let tmp_remote_target = format!("{}.tmp_{}", remote_target, tmp_suffix);
 
     // 创建远程父目录
-    let mkdir_cmd = format!("mkdir -p \"$(dirname \"{}\")\"", remote_target);
+    let mkdir_cmd = build_remote_directory_prepare_command(remote_path);
     session.exec_command(&mkdir_cmd).await?;
 
     // SFTP 递归上传到临时目录（upload_dir 内部会展开 ~ 和 $HOME）
@@ -221,15 +254,12 @@ pub async fn sync_directory_with_progress(
         )
         .await?;
 
-    // 原子替换：rm 旧目录 + mv 临时目录到目标
-    let swap_cmd = format!(
-        "rm -rf \"{}\" && mv \"{}\" \"{}\"",
-        remote_target, tmp_remote_target, remote_target
-    );
+    // Repeat the guard immediately before the destructive replacement.
+    let swap_cmd = build_remote_directory_swap_command(remote_path, &tmp_remote_path);
     if let Err(e) = session.exec_command(&swap_cmd).await {
         // 替换失败，清理临时目录
         let _ = session
-            .exec_command(&format!("rm -rf \"{}\"", tmp_remote_target))
+            .exec_command(&build_remote_remove_command(&tmp_remote_path))
             .await;
         return Err(format!("目录替换失败: {}", e));
     }
@@ -252,6 +282,8 @@ pub async fn sync_pattern_files_with_progress(
     current_file_reporter: Option<CurrentFileReporter<'_>>,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_pattern)?;
+    reject_reserved_sync_path(&expanded)?;
+    reject_reserved_sync_path(remote_dir)?;
     log::trace!(
         "SSH pattern sync start: local_pattern={}, expanded_pattern={}, remote_dir={}",
         local_pattern,
@@ -263,6 +295,7 @@ pub async fn sync_pattern_files_with_progress(
     let matches: Vec<_> = glob::glob(&expanded)
         .map_err(|e| format!("无效的 glob 模式: {}", e))?
         .filter_map(|entry| entry.ok())
+        .filter(|path| !ai_toolbox_management::coordination::contains_coordination_component(&path.to_string_lossy()))
         .collect();
 
     if matches.is_empty() {
@@ -277,8 +310,19 @@ pub async fn sync_pattern_files_with_progress(
 
     let remote_target = remote_dir.replace("~", "$HOME");
 
-    // 创建远程目录
-    let mkdir_cmd = format!("mkdir -p \"{}\"", remote_target);
+    // Validate all matched source aliases before creating the destination.
+    for source in &matches {
+        // Ordinary missing/unreadable matches retain the existing per-file
+        // best-effort handling below. A resolvable coordination alias still
+        // rejects before destination creation; upload revalidates each source.
+        if let Ok(resolved) = std::fs::canonicalize(source) {
+            reject_reserved_sync_path(&resolved.to_string_lossy())?;
+        }
+    }
+    let mkdir_cmd = format!(
+        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; mkdir -p \"$target\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(&remote_target),
+    );
     session.exec_command(&mkdir_cmd).await?;
 
     // 复用同一个 SFTP session 上传所有文件
@@ -588,11 +632,12 @@ pub async fn write_remote_file(
     path: &str,
     content: &str,
 ) -> Result<(), String> {
+    reject_reserved_sync_path(path)?;
     let remote_path = path.replace("~", "$HOME");
-
     let command = format!(
-        "mkdir -p \"$(dirname \"{}\")\" && cat > \"{}\"",
-        remote_path, remote_path
+        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
+         mkdir -p \"$(dirname \"$target\")\"; cat > \"$target\"",
+        guards = posix_coordination_guard(), target = quote_posix_sync_path(&remote_path),
     );
 
     session
@@ -602,6 +647,7 @@ pub async fn write_remote_file(
 
 /// 删除远程文件或目录
 pub async fn remove_remote_path(session: &SshSession, path: &str) -> Result<(), String> {
+    reject_reserved_sync_path(path)?;
     // 安全检查：禁止删除空路径或根路径
     let trimmed = path.trim();
     if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
@@ -609,7 +655,7 @@ pub async fn remove_remote_path(session: &SshSession, path: &str) -> Result<(), 
     }
 
     let remote_path = path.replace("~", "$HOME");
-    let command = format!("rm -rf \"{}\"", remote_path);
+    let command = build_remote_remove_command(&remote_path);
 
     session.exec_command(&command).await?;
     Ok(())
@@ -636,6 +682,75 @@ pub async fn list_remote_dir(session: &SshSession, path: &str) -> Result<Vec<Str
 mod tests {
     use super::pattern_file_display_path;
     use std::path::Path;
+
+    #[cfg(target_os = "linux")]
+    mod shell_fixture {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/ai-toolbox-management/tests/support/bounded_shell.rs"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn remote_replace_and_remove_preserve_lease_inodes_in_local_shell_fixture() {
+        use std::os::unix::fs::MetadataExt;
+        for kind in ["directory", "protected", "file", "symlink"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let target = fixture.path().join("target");
+            let stage = fixture.path().join("stage");
+            let real = fixture.path().join("real");
+            std::fs::create_dir(&stage).unwrap();
+            std::fs::create_dir(&real).unwrap();
+            std::fs::write(stage.join("new"), b"new").unwrap();
+            let parent_lock = fixture.path().join(".ai-toolbox-owner.lock");
+            let real_lock = real.join(".ai-toolbox-runtime.lock");
+            std::fs::write(&parent_lock, b"parent").unwrap();
+            std::fs::write(&real_lock, b"referent").unwrap();
+            let parent_inode = std::fs::metadata(&parent_lock).unwrap().ino();
+            let real_inode = std::fs::metadata(&real_lock).unwrap().ino();
+            match kind {
+                "file" => std::fs::write(&target, b"ordinary").unwrap(),
+                "symlink" => std::os::unix::fs::symlink(&real, &target).unwrap(),
+                _ => std::fs::create_dir(&target).unwrap(),
+            }
+            if kind == "protected" { std::fs::write(target.join(".ai-toolbox-owner.lock"), b"target lease").unwrap(); }
+            let protected_inode = (kind == "protected").then(|| std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino());
+            let before = std::fs::symlink_metadata(&target).unwrap().ino();
+            let prepare = super::build_remote_directory_prepare_command(target.to_str().unwrap());
+            let (fixture, output) = shell_fixture::run("sh", &prepare, fixture);
+            assert_eq!(output.status.success(), kind == "directory", "prepare {kind}");
+            if let Some(inode) = protected_inode { assert_eq!(std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino(), inode); }
+            let swap = super::build_remote_directory_swap_command(target.to_str().unwrap(), stage.to_str().unwrap());
+            let (fixture, output) = shell_fixture::run("sh", &swap, fixture);
+            assert_eq!(output.status.success(), kind == "directory", "swap {kind}");
+            if let Some(inode) = protected_inode { assert_eq!(std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino(), inode); }
+            if kind == "directory" { assert_eq!(std::fs::read(target.join("new")).unwrap(), b"new"); }
+            else { assert_eq!(std::fs::symlink_metadata(&target).unwrap().ino(), before); assert!(stage.join("new").exists()); }
+            let remove = super::build_remote_remove_command(target.to_str().unwrap());
+            let (_fixture, output) = shell_fixture::run("sh", &remove, fixture);
+            assert_eq!(output.status.success(), kind != "protected", "remove {kind}");
+            if let Some(inode) = protected_inode { assert_eq!(std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino(), inode); }
+            if kind == "protected" { assert_eq!(std::fs::read(target.join(".ai-toolbox-owner.lock")).unwrap(), b"target lease"); }
+            else { assert!(std::fs::symlink_metadata(&target).is_err()); }
+            assert_eq!(std::fs::metadata(&parent_lock).unwrap().ino(), parent_inode);
+            assert_eq!(std::fs::read(&parent_lock).unwrap(), b"parent");
+            assert_eq!(std::fs::metadata(&real_lock).unwrap().ino(), real_inode);
+            assert_eq!(std::fs::read(&real_lock).unwrap(), b"referent");
+        }
+    }
+
+    #[test]
+    fn remote_tree_checks_precede_staging_and_destructive_swap() {
+        let prepare = super::build_remote_directory_prepare_command("~/synthetic fixture");
+        assert!(prepare.find("ait_guard_tree \"$target\"").unwrap() < prepare.find("mkdir -p").unwrap());
+        let swap = super::build_remote_directory_swap_command("~/synthetic fixture", "~/fixture staging");
+        assert!(swap.find("ait_guard_tree \"$target\"").unwrap() < swap.find("rm -rf --").unwrap());
+        assert!(swap.contains(".ai-toolbox-owner.lock"));
+        assert!(swap.contains(".ai-toolbox-runtime.lock"));
+        assert!(!swap.contains(".ai-toolbox-owner-*.sock"));
+        let remove = super::build_remote_remove_command("~/ordinary-file");
+        assert!(remove.contains("ait_guard_path \"$target\";"));
+        assert!(remove.contains("if [ -d \"$target\" ] && [ ! -L \"$target\" ]; then ait_guard_tree \"$target\"; fi;"));
+        assert!(remove.find("ait_guard_path \"$target\"").unwrap() < remove.find("rm -rf --").unwrap());
+    }
 
     #[test]
     fn pattern_file_display_path_uses_static_glob_root() {

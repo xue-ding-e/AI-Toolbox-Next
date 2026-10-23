@@ -277,6 +277,8 @@ pub fn restore_latest(codex_home: &Path) -> Result<CodexHistoryRestoreResult, St
         .last()
         .cloned()
         .ok_or_else(|| "No Codex history backup found".to_string())?;
+    // Reject a forged sidecar before creating the safety backup or restoring DB.
+    load_validated_metadata_sidecar(&paths, &latest_backup)?;
     let safety_backup = make_backup(&paths, "pre-restore")?;
     let restore_db =
         retry_sqlite_operation(|| restore_database_from_backup(&paths.db_path, &latest_backup))?;
@@ -1033,21 +1035,39 @@ fn restore_database_from_backup(db_path: &Path, backup_path: &Path) -> Result<()
         .map_err(|error| format!("Failed to restore Codex history database: {error}"))
 }
 
+fn load_validated_metadata_sidecar(
+    paths: &Paths,
+    backup_path: &Path,
+) -> Result<Vec<SessionMetaBackupEntry>, String> {
+    use ai_toolbox_management::coordination::contains_coordination_component;
+    if contains_coordination_component(&paths.codex_home.to_string_lossy()) {
+        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
+    }
+    let meta_backup = session_meta_backup_path(backup_path);
+    let content = match fs::read_to_string(&meta_backup) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("Failed to read Codex session metadata backup: {error}")),
+    };
+    let entries: Vec<SessionMetaBackupEntry> = serde_json::from_str(&content)
+        .map_err(|error| format!("Failed to parse Codex session metadata backup: {error}"))?;
+    for entry in &entries {
+        // Check both separators even on Unix, before any sidecar is rewritten.
+        if contains_coordination_component(&entry.relative_path) {
+            return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
+        }
+    }
+    Ok(entries)
+}
+
 fn restore_metadata_sidecars(paths: &Paths, backup_path: &Path) -> Result<(usize, usize), String> {
+    let entries = load_validated_metadata_sidecar(paths, backup_path)?;
     let index_backup = session_index_backup_path(backup_path);
     if index_backup.exists() {
         let text = fs::read(&index_backup)
             .map_err(|error| format!("Failed to read Codex session index backup: {error}"))?;
         write_atomic_with_retry(&paths.session_index_path, &text)?;
     }
-    let meta_backup = session_meta_backup_path(backup_path);
-    if !meta_backup.exists() {
-        return Ok((0, 0));
-    }
-    let content = fs::read_to_string(&meta_backup)
-        .map_err(|error| format!("Failed to read Codex session metadata backup: {error}"))?;
-    let entries: Vec<SessionMetaBackupEntry> = serde_json::from_str(&content)
-        .map_err(|error| format!("Failed to parse Codex session metadata backup: {error}"))?;
     let mut restored = 0;
     let mut skipped = 0;
     for entry in entries {
@@ -1070,6 +1090,11 @@ fn restore_metadata_sidecars(paths: &Paths, backup_path: &Path) -> Result<(usize
 }
 
 fn join_safe_relative(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    if ai_toolbox_management::coordination::contains_coordination_component(relative_path)
+        || ai_toolbox_management::coordination::contains_coordination_component(&root.to_string_lossy())
+    {
+        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
+    }
     let mut path = root.to_path_buf();
     for component in Path::new(relative_path).components() {
         match component {
@@ -1387,6 +1412,35 @@ model = "gpt-new"
         assert_eq!(result.value, 42);
         assert_eq!(result.attempts, 3);
         assert!(result.lock_wait_ms > 0);
+    }
+
+    #[test]
+    fn forged_sidecar_preserves_database_index_lock_inode_and_backup_set() {
+        for reserved in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
+            let env = TestCodexHistory::new();
+            env.create_db(true);
+            backup(&env.root, "manual").unwrap();
+            let paths = super::resolve_paths(&env.root);
+            let backups = super::list_backup_files(&paths.backup_dir).unwrap();
+            let latest = backups.last().unwrap();
+            let lock = env.root.join(reserved);
+            fs::write(&lock, b"fixed inode").unwrap();
+            let before = fs::metadata(&lock).unwrap();
+            let db_before = fs::read(&paths.db_path).unwrap();
+            fs::write(&paths.session_index_path, b"index unchanged").unwrap();
+            fs::write(super::session_meta_backup_path(latest), serde_json::json!([{
+                "relativePath": reserved, "firstLine": "forged"
+            }]).to_string()).unwrap();
+            assert_eq!(restore_latest(&env.root).unwrap_err(), "OWNER_COORDINATION_PATH_RESERVED");
+            assert_eq!(fs::read(&lock).unwrap(), b"fixed inode");
+            assert_eq!(fs::read(&paths.db_path).unwrap(), db_before);
+            assert_eq!(fs::read(&paths.session_index_path).unwrap(), b"index unchanged");
+            assert_eq!(super::list_backup_files(&paths.backup_dir).unwrap(), backups);
+            #[cfg(unix)] {
+                use std::os::unix::fs::MetadataExt;
+                assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
+            }
+        }
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use ai_toolbox_management::coordination::contains_coordination_component;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -1218,7 +1219,7 @@ pub async fn list_backup_file_filter_path_options(
             let credentials_dir = host_path.join(kimi::constants::KIMI_CREDENTIALS_DIR);
             let mut relative_paths = Vec::new();
             if credentials_dir.is_dir() {
-                for entry in WalkDir::new(&credentials_dir) {
+                for entry in WalkDir::new(&credentials_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
                     let Ok(entry) = entry else {
                         continue;
                     };
@@ -1257,7 +1258,7 @@ pub async fn list_backup_file_filter_path_options(
         push_backup_filter_option(&mut options, &mut seen, "geminicli", "oauth_creds.json");
     }
     if let Some(tmp_dir) = get_gemini_cli_tmp_dir_from_db(db).await? {
-        for entry in WalkDir::new(&tmp_dir) {
+        for entry in WalkDir::new(&tmp_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
             let entry = entry.map_err(|e| format!("Failed to read Gemini CLI tmp entry: {}", e))?;
             let path = entry.path();
             if !path.is_file() || should_skip_system_file(path) {
@@ -1312,7 +1313,7 @@ pub async fn list_backup_file_filter_path_options(
         );
     }
     if let Some(skills_dir) = get_zcode_skills_dir_from_db(db).await? {
-        for entry in WalkDir::new(&skills_dir) {
+        for entry in WalkDir::new(&skills_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
             let entry =
                 entry.map_err(|e| format!("Failed to read ZCode skills entry: {}", e))?;
             let path = entry.path();
@@ -1334,7 +1335,7 @@ pub async fn list_backup_file_filter_path_options(
         }
     }
     if let Some(tmp_dir) = get_antigravity_tmp_dir_from_db(db).await? {
-        for entry in WalkDir::new(&tmp_dir) {
+        for entry in WalkDir::new(&tmp_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
             let entry =
                 entry.map_err(|e| format!("Failed to read Antigravity tmp entry: {}", e))?;
             let path = entry.path();
@@ -1450,7 +1451,7 @@ pub async fn list_backup_file_filter_path_options(
             );
         }
         if config_library_path.exists() {
-            for entry in WalkDir::new(&config_library_path) {
+            for entry in WalkDir::new(&config_library_path).into_iter().filter_entry(backup_walk_entry_allowed) {
                 let entry = entry
                     .map_err(|e| format!("Failed to read Claude Desktop config library: {}", e))?;
                 let path = entry.path();
@@ -1852,6 +1853,7 @@ pub fn resolve_skills_restore_output_path(
     }
 
     let fallback_path = skills_dir.join(&normalized_relative);
+    reject_coordination_output_path(&fallback_path)?;
     let warning = if normalized_segments[0] != segments[0] {
         Some(RestoreWarning {
             tool: "skills".to_string(),
@@ -1869,6 +1871,8 @@ pub fn resolve_external_config_restore_output_path(
     restore_dir: &Path,
     relative_path: &str,
 ) -> Result<Option<PathBuf>, String> {
+    reject_coordination_path(&restore_dir.to_string_lossy())?;
+    reject_coordination_path(relative_path)?;
     let normalized = normalize_restore_entry_name(relative_path);
     let trimmed_relative = normalized.trim_start_matches('/');
     if trimmed_relative.is_empty() {
@@ -1909,6 +1913,7 @@ pub fn resolve_external_config_restore_output_path(
     }
 
     if has_segment {
+        reject_coordination_output_path(&output_path)?;
         Ok(Some(output_path))
     } else {
         Ok(None)
@@ -2116,6 +2121,46 @@ pub fn get_gateway_provider_profiles_cache_file() -> Option<PathBuf> {
         .filter(|p| p.exists())
 }
 
+/// The matcher is shared with the owner protocol. This checks path spelling,
+/// not arbitrary hard-link aliases or concurrent writers.
+pub(crate) fn reject_coordination_path(path: &str) -> Result<(), String> {
+    if contains_coordination_component(path) {
+        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
+    }
+    Ok(())
+}
+
+/// Resolve the nearest existing destination ancestor without creating it. This
+/// catches ordinary symlink aliases to a reserved component, but not hard links.
+pub(crate) fn reject_coordination_output_path(path: &Path) -> Result<(), String> {
+    reject_coordination_path(&path.to_string_lossy())?;
+    let mut existing = path;
+    loop {
+        match std::fs::canonicalize(existing) {
+            Ok(resolved) => return reject_coordination_path(&resolved.to_string_lossy()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match std::fs::symlink_metadata(existing) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        return Err("OWNER_REPLACEMENT_ROOT_UNSAFE".to_string());
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(format!("Failed to inspect restore path: {error}")),
+                }
+                match existing.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                    Some(parent) => existing = parent,
+                    None => return Ok(()),
+                }
+            }
+            Err(error) => return Err(format!("Failed to resolve restore path: {error}")),
+        }
+    }
+}
+
+fn backup_walk_entry_allowed(entry: &walkdir::DirEntry) -> bool {
+    !contains_coordination_component(&entry.path().to_string_lossy())
+}
+
 /// Add a file to zip archive with a specific path
 fn add_file_to_zip<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
@@ -2123,6 +2168,11 @@ fn add_file_to_zip<W: Write + std::io::Seek>(
     zip_path: &str,
     options: SimpleFileOptions,
 ) -> Result<(), String> {
+    reject_coordination_path(&file_path.to_string_lossy())?;
+    reject_coordination_path(zip_path)?;
+    let resolved = std::fs::canonicalize(file_path)
+        .map_err(|e| format!("Failed to resolve backup source: {e}"))?;
+    reject_coordination_path(&resolved.to_string_lossy())?;
     let mut file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)
@@ -2377,6 +2427,9 @@ fn relative_path_for_zip(path: &Path, base_path: &Path) -> Result<Option<String>
 }
 
 fn should_skip_system_file(path: &Path) -> bool {
+    if contains_coordination_component(&path.to_string_lossy()) {
+        return true;
+    }
     path.file_name()
         .map(|file_name| {
             let name = file_name.to_string_lossy();
@@ -2440,11 +2493,17 @@ pub fn add_custom_backup_entries_to_zip<W: Write + std::io::Seek>(
         }
 
         let source_path = resolve_backup_storage_path(&entry.source_path)?;
+        reject_coordination_path(&source_path.to_string_lossy())?;
+        let canonical_source = std::fs::canonicalize(&source_path)
+            .map_err(|error| format!("Failed to resolve custom backup source: {error}"))?;
+        reject_coordination_path(&canonical_source.to_string_lossy())?;
         let restore_path = entry
             .restore_path
             .clone()
             .filter(|path| !path.trim().is_empty())
             .unwrap_or_else(|| entry.source_path.clone());
+        reject_coordination_path(&restore_path)?;
+        reject_coordination_path(&resolve_backup_storage_path(&restore_path)?.to_string_lossy())?;
         let payload_base = custom_backup_payload_base(index, &entry.id);
 
         match entry.entry_type {
@@ -2503,6 +2562,9 @@ pub fn add_custom_backup_entries_to_zip<W: Write + std::io::Seek>(
                 let walker = WalkDir::new(&source_path)
                     .into_iter()
                     .filter_entry(|file_entry| {
+                        if !backup_walk_entry_allowed(file_entry) {
+                            return false;
+                        }
                         if file_entry.depth() == 0 || exclude_regexes.is_empty() {
                             return true;
                         }
@@ -2584,6 +2646,8 @@ fn copy_zip_entry_to_path<R: Read + std::io::Seek>(
     raw_entry_name: &str,
     output_path: &Path,
 ) -> Result<(), String> {
+    reject_coordination_path(raw_entry_name)?;
+    reject_coordination_output_path(output_path)?;
     if let Some(parent) = output_path.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent)
@@ -2602,9 +2666,80 @@ fn copy_zip_entry_to_path<R: Read + std::io::Seek>(
     Ok(())
 }
 
+// Only these exact entries are consumed as root overrides by restore.rs.
+// Arbitrarily named root-dir.txt payloads remain ordinary, potentially binary data.
+fn is_external_root_override_entry(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("external-configs/") else { return false; };
+    let Some(tool) = rest.strip_suffix("/root-dir.txt") else { return false; };
+    matches!(tool, "opencode" | "claude" | "codex" | "grok" | "kimi" |
+        "openclaw" | "geminicli" | "antigravity" | "zcode" | "pi" |
+        "oh_my_pi" | "hermes" | "dsh" | "omo_native")
+}
+
+/// Read-only validation must precede DB restore, staging, mkdir and extraction.
+/// A normal payload name may still be remapped to a reserved manifest target.
+pub(crate) fn preflight_backup_coordination_paths<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+) -> Result<(), String> {
+    let mut manifest_content = None;
+    let mut names = Vec::new();
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index)
+            .map_err(|e| format!("Failed to inspect backup entry: {e}"))?;
+        let name = normalize_restore_entry_name(file.name());
+        reject_coordination_path(&name)?;
+        if let Some(normalized) = safe_relative_zip_path(&name)? {
+            reject_coordination_path(&normalized)?;
+        }
+        if name == CUSTOM_BACKUP_MANIFEST_PATH || is_external_root_override_entry(&name) {
+            // Restore selects the first normalized manifest. Reject ambiguity
+            // instead of validating a later entry that restore would not use.
+            if name == CUSTOM_BACKUP_MANIFEST_PATH && manifest_content.is_some() {
+                return Err("OWNER_CUSTOM_MANIFEST_AMBIGUOUS".to_string());
+            }
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .map_err(|e| format!("Failed to inspect backup metadata: {e}"))?;
+            if name == CUSTOM_BACKUP_MANIFEST_PATH {
+                manifest_content = Some(content);
+            } else {
+                reject_coordination_path(content.trim())?;
+            }
+        }
+        names.push(name);
+    }
+    if let Some(content) = manifest_content {
+        let manifest: CustomBackupManifest = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse custom backup manifest: {e}"))?;
+        if manifest.version != 1 {
+            return Err(format!("Unsupported custom backup manifest version: {}", manifest.version));
+        }
+        for entry in manifest.entries {
+            let target = resolve_backup_storage_path(&entry.restore_path)?;
+            reject_coordination_path(&entry.restore_path)?;
+            reject_coordination_output_path(&target)?;
+            let payload = normalize_restore_entry_name(&entry.payload_path);
+            reject_coordination_path(&payload)?;
+            safe_relative_zip_path(&payload)?;
+            if matches!(entry.entry_type, BackupCustomEntryType::Directory) {
+                let prefix = format!("{}/", payload.trim_end_matches('/'));
+                for name in &names {
+                    if let Some(relative) = name.strip_prefix(&prefix) {
+                        if let Some(relative) = safe_relative_zip_path(relative)? {
+                            reject_coordination_output_path(&target.join(relative))?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn restore_custom_backup_entries<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<(), String> {
+    preflight_backup_coordination_paths(archive)?;
     let manifest_raw_name =
         match find_zip_entry_by_normalized_name(archive, CUSTOM_BACKUP_MANIFEST_PATH) {
             Some(name) => name,
@@ -2740,6 +2875,7 @@ pub fn add_image_assets_to_zip<W: Write + std::io::Seek>(
     options: SimpleFileOptions,
 ) -> Result<(), String> {
     let image_assets_dir = get_image_assets_dir(app_handle)?;
+    reject_coordination_path(&image_assets_dir.to_string_lossy())?;
     if !image_assets_dir.exists() {
         return Ok(());
     }
@@ -2747,7 +2883,7 @@ pub fn add_image_assets_to_zip<W: Write + std::io::Seek>(
     zip.add_directory("image-studio/assets/", options)
         .map_err(|e| format!("Failed to add image assets directory: {}", e))?;
 
-    for entry in WalkDir::new(&image_assets_dir) {
+    for entry in WalkDir::new(&image_assets_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
         let entry = entry.map_err(|e| format!("Failed to read image asset entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -2782,6 +2918,7 @@ pub fn add_directory_contents_to_zip<W: Write + std::io::Seek>(
     zip_prefix: &str,
     options: SimpleFileOptions,
 ) -> Result<(), String> {
+    reject_coordination_path(&source_dir.to_string_lossy())?;
     if !source_dir.is_dir() {
         return Ok(());
     }
@@ -2790,7 +2927,7 @@ pub fn add_directory_contents_to_zip<W: Write + std::io::Seek>(
     zip.add_directory(format!("{}/", normalized_prefix), options)
         .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
 
-    for entry in WalkDir::new(source_dir) {
+    for entry in WalkDir::new(source_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -2841,6 +2978,7 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
     db_path: &Path,
     options: SimpleFileOptions,
 ) -> Result<bool, String> {
+    reject_coordination_path(&db_path.to_string_lossy())?;
     if !db_path.exists() {
         return Ok(false);
     }
@@ -2855,7 +2993,7 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
     let mut has_files = false;
 
     // Add database files under db/ prefix
-    for entry in WalkDir::new(db_path) {
+    for entry in WalkDir::new(db_path).into_iter().filter_entry(backup_walk_entry_allowed) {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -2878,15 +3016,7 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
             // Use forward slashes for cross-platform compatibility in zip files
             let relative_str = relative_path.to_string_lossy().replace('\\', "/");
             let name = format!("db/{}", relative_str);
-            zip.start_file(name, options)
-                .map_err(|e| format!("Failed to start file in zip: {}", e))?;
-
-            let mut file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
-            let mut file_buffer = Vec::new();
-            file.read_to_end(&mut file_buffer)
-                .map_err(|e| format!("Failed to read file: {}", e))?;
-            zip.write_all(&file_buffer)
-                .map_err(|e| format!("Failed to write to zip: {}", e))?;
+            add_file_to_zip(zip, path, &name, options)?;
         } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
             // Use forward slashes for cross-platform compatibility in zip files
             let relative_str = relative_path.to_string_lossy().replace('\\', "/");
@@ -2974,6 +3104,9 @@ pub fn should_filter_external_config_entry(
     relative_path: &str,
 ) -> bool {
     let normalized_path = normalize_restore_entry_name(relative_path);
+    if contains_coordination_component(&normalized_path) {
+        return true;
+    }
     let file_name = normalized_path.trim_start_matches('/').trim();
     if file_name.is_empty() || file_name == "root-dir.txt" {
         return false;
@@ -3016,6 +3149,7 @@ fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
     filter_rules: &[BackupFileFilterRule],
     options: SimpleFileOptions,
 ) -> Result<(), String> {
+    reject_coordination_path(&source_dir.to_string_lossy())?;
     if !source_dir.is_dir() {
         return Ok(());
     }
@@ -3026,7 +3160,7 @@ fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
     zip.add_directory(format!("{}/", normalized_zip_prefix), options)
         .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
 
-    for entry in WalkDir::new(source_dir) {
+    for entry in WalkDir::new(source_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -4019,11 +4153,12 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
 
     // Backup skills directory if exists
     let skills_dir = get_skills_dir(app_handle)?;
+    reject_coordination_path(&skills_dir.to_string_lossy())?;
     if skills_dir.exists() {
         zip.add_directory("skills/", options)
             .map_err(|e| format!("Failed to add skills directory: {}", e))?;
 
-        for entry in WalkDir::new(&skills_dir) {
+        for entry in WalkDir::new(&skills_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
             let entry = entry.map_err(|e| format!("Failed to read skills entry: {}", e))?;
             let path = entry.path();
             let relative_path = path
@@ -4153,6 +4288,147 @@ mod tests {
     use std::path::Path;
     use zip::write::SimpleFileOptions;
     use zip::{ZipArchive, ZipWriter};
+
+    #[test]
+    fn coordination_source_pruning_keeps_ordinary_dotfiles_and_near_matches() {
+        let source = tempfile::tempdir().unwrap();
+        for name in [".env", ".mcp.json", ".ai-toolbox-owner-note.sock", ".ai-toolbox-runtime.lock.backup"] {
+            fs::write(source.path().join(name), b"ordinary").unwrap();
+        }
+        fs::write(source.path().join(".ai-toolbox-owner.lock"), b"private").unwrap();
+        let nested = source.path().join(".ai-toolbox-runtime.lock");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("never-copy"), b"private").unwrap();
+        fs::write(source.path().join(".ai-toolbox-owner-0000000000000001-0000000000000002.sock"), b"private").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("missing", source.path().join("nested-link")).unwrap();
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        super::add_directory_contents_to_zip(&mut zip, source.path(), "fixture", SimpleFileOptions::default()).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let names: Vec<_> = (0..archive.len()).map(|index| archive.by_index(index).unwrap().name().to_string()).collect();
+        assert!(names.iter().all(|name| !ai_toolbox_management::coordination::contains_coordination_component(name)));
+        for name in [".env", ".mcp.json", ".ai-toolbox-owner-note.sock", ".ai-toolbox-runtime.lock.backup"] {
+            assert!(names.contains(&format!("fixture/{name}")));
+        }
+    }
+
+    #[test]
+    fn forged_archive_and_custom_target_are_rejected_before_any_write() {
+        for reserved in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
+            let target = tempfile::tempdir().unwrap();
+            let lock = target.path().join(reserved);
+            fs::write(&lock, b"unchanged coordination").unwrap();
+            let before = fs::metadata(&lock).unwrap();
+            let manifest = serde_json::json!({"version": 1, "entries": [{
+                "id": "forged", "name": "fixture", "entry_type": "file",
+                "source_path": "synthetic", "restore_path": lock.to_string_lossy(),
+                "payload_path": "custom-backup/payload/ordinary"
+            }]}).to_string();
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            add_text_to_zip(&mut zip, CUSTOM_BACKUP_MANIFEST_PATH, &manifest, SimpleFileOptions::default()).unwrap();
+            add_text_to_zip(&mut zip, "custom-backup/payload/ordinary", "replacement", SimpleFileOptions::default()).unwrap();
+            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            assert_eq!(restore_custom_backup_entries(&mut archive).unwrap_err(), "OWNER_COORDINATION_PATH_RESERVED");
+            assert_eq!(fs::read(&lock).unwrap(), b"unchanged coordination");
+            #[cfg(unix)] {
+                use std::os::unix::fs::MetadataExt;
+                assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
+            }
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            add_text_to_zip(&mut zip, &format!("db\\{reserved}\\payload"), "forged", SimpleFileOptions::default()).unwrap();
+            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            assert!(super::preflight_backup_coordination_paths(&mut archive).is_err());
+        }
+    }
+
+    #[test]
+    fn ordinary_binary_root_dir_payload_restores_without_metadata_interpretation() {
+        use std::io::Write;
+        let fixture = tempfile::tempdir().unwrap();
+        let source = fixture.path().join("root-dir.txt");
+        let target = fixture.path().join("restored/root-dir.txt");
+        let bytes = b"\xff\x00 ordinary .ai-toolbox-owner.lock data";
+        fs::write(&source, bytes).unwrap();
+        let entries = vec![BackupCustomEntry {
+            id: "binary-root-name".into(), name: "Synthetic binary".into(),
+            source_path: source.to_string_lossy().into_owned(),
+            restore_path: Some(target.to_string_lossy().into_owned()),
+            entry_type: BackupCustomEntryType::File, enabled: true,
+            exclude_patterns: Vec::new(),
+        }];
+        let mut archive = ZipArchive::new(Cursor::new(build_zip(&entries))).unwrap();
+        restore_custom_backup_entries(&mut archive).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+        for name in ["skills/ordinary/root-dir.txt", "external-configs/codex/nested/root-dir.txt",
+                     "external-configs/unknown/root-dir.txt", "external-configs/claude_desktop/root-dir.txt"] {
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            zip.start_file(name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(bytes).unwrap();
+            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            super::preflight_backup_coordination_paths(&mut archive).unwrap();
+        }
+        for tool in ["opencode", "claude", "codex", "grok", "kimi", "openclaw", "geminicli",
+                     "antigravity", "zcode", "pi", "oh_my_pi", "hermes", "dsh", "omo_native"] {
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            add_text_to_zip(&mut zip, &format!("external-configs/{tool}/root-dir.txt"),
+                "/synthetic/.ai-toolbox-owner.lock", SimpleFileOptions::default()).unwrap();
+            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            assert_eq!(super::preflight_backup_coordination_paths(&mut archive).unwrap_err(),
+                "OWNER_COORDINATION_PATH_RESERVED");
+        }
+    }
+
+    #[test]
+    fn duplicate_normalized_manifests_block_synthetic_database_sink() {
+        for names in [
+            [CUSTOM_BACKUP_MANIFEST_PATH, "custom-backup\\manifest.json"],
+            ["custom-backup\\manifest.json", CUSTOM_BACKUP_MANIFEST_PATH],
+        ] {
+            for malicious_first in [true, false] {
+                let target = tempfile::tempdir().unwrap();
+                let database = target.path().join("synthetic-database");
+                let lock = target.path().join(".ai-toolbox-owner.lock");
+                fs::write(&database, b"unchanged database").unwrap();
+                fs::write(&lock, b"unchanged coordination").unwrap();
+                let before = fs::metadata(&lock).unwrap();
+                let malicious = serde_json::json!({"version": 1, "entries": [{
+                    "id": "forged", "name": "fixture", "entry_type": "file",
+                    "source_path": "synthetic", "restore_path": lock.to_string_lossy(),
+                    "payload_path": "custom-backup/payload/ordinary"
+                }]}).to_string();
+                let benign = serde_json::json!({"version": 1, "entries": []}).to_string();
+                let contents = if malicious_first {
+                    [&malicious, &benign]
+                } else {
+                    [&benign, &malicious]
+                };
+                let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+                for (name, content) in names.into_iter().zip(contents) {
+                    add_text_to_zip(&mut zip, name, content, SimpleFileOptions::default()).unwrap();
+                }
+                let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+                assert_eq!(archive.len(), 2);
+                for (index, expected) in names.into_iter().enumerate() {
+                    assert_eq!(archive.by_index(index).unwrap().name(), expected);
+                }
+                assert_eq!(super::find_zip_entry_by_normalized_name(&mut archive, CUSTOM_BACKUP_MANIFEST_PATH), Some(names[0].to_string()));
+                // The production restore invokes this preflight before SQLite
+                // restore; this local sink proves that rejection short-circuits.
+                let result = super::preflight_backup_coordination_paths(&mut archive)
+                    .and_then(|()| fs::write(&database, b"must not restore")
+                        .map_err(|error| error.to_string()));
+                assert_eq!(result.unwrap_err(), "OWNER_CUSTOM_MANIFEST_AMBIGUOUS");
+                assert_eq!(restore_custom_backup_entries(&mut archive).unwrap_err(), "OWNER_CUSTOM_MANIFEST_AMBIGUOUS");
+                assert_eq!(fs::read(&database).unwrap(), b"unchanged database");
+                assert_eq!(fs::read(&lock).unwrap(), b"unchanged coordination");
+                #[cfg(unix)] {
+                    use std::os::unix::fs::MetadataExt;
+                    assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
+                }
+            }
+        }
+    }
 
     fn build_zip(entries: &[BackupCustomEntry]) -> Vec<u8> {
         let mut buffer = Cursor::new(Vec::new());
