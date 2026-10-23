@@ -14,7 +14,7 @@ FIXTURE=None
 FIXTURE_ID=None
 LAST_SCAN=0
 BASE='55f70695e0bbd6921cf49b32006ab7fa9556b4f2'
-MANIFEST_SHA='9933c333abe63505057fadf0af8ee1dd600d29d5ca72d9754fe822f9bbc674eb'
+MANIFEST_SHA='d6e395ad10abc895d9bf44d2cdc7e35f38307e8b09e32756ba7586e883a779c1'
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -286,8 +286,9 @@ def main():
         head=os.environ['EXPECTED_SHA'];require(re.fullmatch('[0-9a-f]{40}',head) and head==os.environ['GITHUB_SHA'],'exact SHA required')
         envroot=rt/'owner-isolation';envroot.mkdir();env=safe_env(envroot)
         def git(label,args,cwd=checkout):return run(label,['git',*args],15,cwd,env)
-        require(git('parents',['rev-list','--parents','-n','1','HEAD']).decode().split()==[head,'5e6ae2866da01c3088f0869215dd35d0ccf8993c'],'exact previous harness parent required')
-        require(git('original-parent',['rev-list','--parents','-n','1','HEAD^']).decode().split()==['5e6ae2866da01c3088f0869215dd35d0ccf8993c',BASE],'original single parent base required')
+        require(git('parents',['rev-list','--parents','-n','1','HEAD']).decode().split()==[head,'12a536bf975b1fcfcaae957908bc35302882f140'],'exact previous harness parent required')
+        require(git('previous-parent',['rev-list','--parents','-n','1','HEAD^']).decode().split()==['12a536bf975b1fcfcaae957908bc35302882f140','5e6ae2866da01c3088f0869215dd35d0ccf8993c'],'previous exact parent required')
+        require(git('original-parent',['rev-list','--parents','-n','1','HEAD^^']).decode().split()==['5e6ae2866da01c3088f0869215dd35d0ccf8993c',BASE],'original single parent base required')
         require(not git('initial-status',['status','--porcelain']).strip(),'dirty harness checkout')
         scope=git('harness-scope',['diff','--name-only',BASE,'HEAD']).decode().splitlines()
         require(set(scope)=={'.github/workflows/maintenance-validation.yml','scripts/owner-validation/validate.py','scripts/owner-validation/candidate.json','scripts/owner-validation/candidate.patch'},'unexpected harness scope')
@@ -315,9 +316,10 @@ def main():
         launch=[sys.executable,'-c','import os,resource,sys; resource.setrlimit(resource.RLIMIT_FSIZE,(16384,16384)); os.execv(sys.argv[1],sys.argv[1:])']
         out=run('lib-tests',launch+[str(bins['lib']),'--test-threads=1','--show-output'],60,source,tenv);check_pass(out,12,0)
         out=run('owner-tests',launch+[str(bins['owner']),'--test-threads=1','--show-output'],180,source,tenv);txt=out.decode();require(len(re.findall(r'^test result: ok\. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;',txt,re.M))==1,'owner pass count mismatch')
-        require(len(re.findall(r'^verified actor execution: ',txt,re.M))==13,'expected thirteen internally verified actor executions')
+        require(len(re.findall(r'^verified actor execution: ',txt,re.M))==12,'expected twelve normal actor test completions')
+        require(re.findall(r'^verified abrupt actor execution: (.+)$',txt,re.M)==['stale'],'expected one deliberate abrupt owner exit')
         check_fixture_budget();require(not list(FIXTURE.iterdir()),'fixture leaked artifacts despite test success')
-        result.update(ok=True,ordinary_passed=23,ignored_actor_entry=1,actual_actor_invocations=13,binaries={k:file_digest(b) for k,b in bins.items()})
+        result.update(ok=True,ordinary_passed=23,ignored_actor_entry=1,actual_actor_invocations=13,normal_actor_test_passes=12,abrupt_actor_exits=1,binaries={k:file_digest(b) for k,b in bins.items()})
     except BaseException as e:result['error']=f'{type(e).__name__}: {e}'
     finally:
         try:
