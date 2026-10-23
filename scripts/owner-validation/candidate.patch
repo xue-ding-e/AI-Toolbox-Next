@@ -1793,10 +1793,10 @@ index 0000000000000000000000000000000000000000..839593fb737a00f137074c61cea7ec3a
 +}
 diff --git a/crates/ai-toolbox-management/tests/owner_process.rs b/crates/ai-toolbox-management/tests/owner_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab5a6fa7c43f08e4e91b3429f3389d97601e3647
+index 0000000000000000000000000000000000000000..94be194c11565239384393d606845a98250e98a6
 --- /dev/null
 +++ b/crates/ai-toolbox-management/tests/owner_process.rs
-@@ -0,0 +1,533 @@
+@@ -0,0 +1,537 @@
 +//! Linux-only synthetic acceptance drafts. These exercise this test executable,
 +//! NOT the installed GUI/CLI or a different operating-system user's session.
 +//! Each parent explicitly launches the ignored actor and verifies its completion
@@ -1808,7 +1808,7 @@ index 0000000000000000000000000000000000000000..ab5a6fa7c43f08e4e91b3429f3389d97
 +use std::fs::{self, DirBuilder, File, OpenOptions};
 +use std::future::Future;
 +use std::io::{self, Read, Write};
-+use std::os::unix::fs::{symlink, DirBuilderExt, MetadataExt, OpenOptionsExt};
++use std::os::unix::fs::{symlink, DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 +use std::os::unix::net::UnixStream as StdUnixStream;
 +use std::path::{Path, PathBuf};
 +use std::process::{Child, Command, Stdio};
@@ -1852,7 +1852,11 @@ index 0000000000000000000000000000000000000000..ab5a6fa7c43f08e4e91b3429f3389d97
 +impl Fixture {
 +    fn new() -> Self {
 +        let serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-+        let root = tempfile::Builder::new().prefix("ao-").tempdir().unwrap();
++        let root = tempfile::Builder::new().prefix("ao-")
++            .permissions(fs::Permissions::from_mode(0o700)).tempdir().unwrap();
++        let root_mode = fs::metadata(root.path()).unwrap().permissions().mode() & 0o7777;
++        assert_eq!(root_mode, 0o700, "synthetic runtime root must start private");
++        eprintln!("synthetic runtime root mode: {root_mode:o}");
 +        let path = root.path().to_path_buf();
 +        // No global set_var/umask/chmod/chown/ACL changes. Child overrides below
 +        // isolate its temporary, data and home locations under this owned root.

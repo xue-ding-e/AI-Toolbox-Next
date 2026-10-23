@@ -23,7 +23,7 @@ jobs:
         timeout-minutes: 2
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         timeout-minutes: 3
