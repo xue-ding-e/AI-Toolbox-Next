@@ -22,9 +22,9 @@ import time
 
 BASE = '1b128c8a8fdfef51fe465c3a884d9adcd8594318'
 REPO = "xue-ding-e/AI-Toolbox-Next"
-MANIFEST_SHA256 = 'c58352ebe44cbafefb7d3dc992fd5bcd34ca8934b76c3d9c69fce44f3c379c8f'
-CANDIDATE = '414bf7e9639376ca5d503983b8c23e2436f41330'
-PATCH_SHA256 = 'b644312a61b4b6250408c0e5f3e98d34e6adb51375bf59df11dc208f8cb0aa8b'
+MANIFEST_SHA256 = '83aab74c65929a4991a3fee418a294cc8ae62887af220755fdaa058efc96aa44'
+CANDIDATE = '55f70695e0bbd6921cf49b32006ab7fa9556b4f2'
+PATCH_SHA256 = 'b2c1e0b6fba3be1352e3a37136b11e1948ec54430079355ad8d2e2d30abb0aac'
 BRANCH = "refs/heads/validation/codex-operation-journal"
 CONTROL_PATHS = {
     ".github/workflows/maintenance-validation.yml",
@@ -273,7 +273,9 @@ def source_check(root, manifest):
     head = git("head", ["rev-parse", "HEAD"]).decode().strip()
     require(head == sha, "checkout does not match github.sha")
     parents = git("single-parent", ["rev-list", "--parents", "-n", "1", "HEAD"]).decode().split()
-    require(parents == [head, BASE], "validation HEAD must have exactly the fixed base as its sole parent")
+    require(parents == [head, "6d5dee0ffa35ce319b98648313720ede391f851b"], "validation retry must retain exact previous harness parent")
+    previous = git("previous-parent", ["rev-list", "--parents", "-n", "1", "HEAD^"]).decode().split()
+    require(previous == ["6d5dee0ffa35ce319b98648313720ede391f851b", BASE], "previous harness must retain fixed product base")
     require(not git("clean-checkout", ["status", "--porcelain", "--untracked-files=all"]).strip(), "checkout is dirty")
     changed = set(git("changed-paths", ["diff", "--no-renames", "--name-only", BASE, "HEAD"]).decode().splitlines())
     require(changed == CONTROL_PATHS, "validation branch must change exactly the four harness files")
@@ -425,7 +427,7 @@ def validate(checkout, manifest):
                 listed = run(label + "-list", [str(binary), "--list", "--test-threads=1"], 15, isolated, test_env)
                 require(inventory(listed) == names, "exact inventory mismatch: " + suite)
                 selected[suite] = {"binary": str(binary), "sha256": file_digest(binary), "tests": names}
-                output = run(label + "-tests", [str(binary), "--test-threads=1"], 90, isolated, test_env)
+                output = run(label + "-tests", [str(binary), "--test-threads=1", *(["--show-output"] if suite == "core_sqlite" else [])], 90, isolated, test_env)
                 check_pass(output, len(names), 0)
         require(sum(len(selected[k]["tests"]) for k in ["core_unit", "core_sqlite", "core_journal"]) == 19,
                 "exact nineteen shared storage tests required")

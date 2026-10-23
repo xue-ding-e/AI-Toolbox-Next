@@ -1,5 +1,5 @@
 {
-  "candidate_commit": "414bf7e9639376ca5d503983b8c23e2436f41330",
+  "candidate_commit": "55f70695e0bbd6921cf49b32006ab7fa9556b4f2",
   "candidate_files": {
     "crates/ai-toolbox-storage/AGENTS.md": "d1657da4feca0aa597df1fba7596971442b3201d1458160ea44d1a2f88457410",
     "crates/ai-toolbox-storage/src/codex_context_journal.rs": "8fd6431b629bc9770df72d1474aa42a9803a1d9c2a5f73b30b233c68521c76b8",
@@ -7,7 +7,7 @@
     "crates/ai-toolbox-storage/src/migrations.rs": "2a1d581a536badf77d1062cd97081084692040a31adfc92db7ab8757c592185a",
     "crates/ai-toolbox-storage/src/schema.rs": "8de8d63a464d25147716f5d5a52809fb0060330312d912e045eb4b7cf84923b9",
     "crates/ai-toolbox-storage/tests/codex_context_journal.rs": "e94103a12fc7102d0fb00edf493abe4533aede68602d39041d385dbb3074c630",
-    "crates/ai-toolbox-storage/tests/sqlite_jsonb.rs": "a36041feb9166afa131c2a8c6981bdf69ada0a2c374ceb9751655185d3455a09"
+    "crates/ai-toolbox-storage/tests/sqlite_jsonb.rs": "cb391577e4b99130993c9a8a6c43777e4dfb8d4352f3d3ef1f81c87d66f5688d"
   },
   "candidate_statuses": {
     "crates/ai-toolbox-storage/AGENTS.md": "M",
@@ -102,7 +102,7 @@
       "v29_migration_rebuilds_rollups_with_the_project_column"
     ]
   },
-  "patch_sha256": "b644312a61b4b6250408c0e5f3e98d34e6adb51375bf59df11dc208f8cb0aa8b",
+  "patch_sha256": "b2c1e0b6fba3be1352e3a37136b11e1948ec54430079355ad8d2e2d30abb0aac",
   "preserved_files": {
     "crates/ai-toolbox-storage/Cargo.lock": "cb14e4cabd3e074917823d8a33a86916540b8d26cbffc6a32cf5020e00ccdaf8",
     "crates/ai-toolbox-storage/Cargo.toml": "782019fd09158703e481c4b05e5d70b6cef0dfd9c8fae0ab433df82b0286d9c8",
