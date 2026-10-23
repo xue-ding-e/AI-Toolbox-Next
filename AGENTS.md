@@ -35,6 +35,7 @@ This document provides essential information for AI coding agents working on thi
 
 | 模块目录 | 说明 |
 |---------|------|
+| `crates/ai-toolbox-management/` | Linux 本地 owner 与协调保护原语；尚未接入 GUI/CLI 业务写入口，Windows 与完整 writer 门待完成 |
 | `crates/ai-toolbox-codex-config/` | Codex 现有 TOML 合并实现与纯配置计划；不负责 owner、数据库或文件投影 |
 | `crates/ai-toolbox-automation/` | 独立管理 console 入口与共享协议；未实现能力必须明确失败，不等于桌面业务覆盖 |
 | `scripts/` | 维护检查脚本与业务入口盘点门；库存一致性不等于 CLI/MCP 功能完成 |
