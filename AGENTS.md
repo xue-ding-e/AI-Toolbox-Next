@@ -35,6 +35,7 @@ This document provides essential information for AI coding agents working on thi
 
 | 模块目录 | 说明 |
 |---------|------|
+| `crates/ai-toolbox-automation/` | 独立管理 console 入口与共享协议；未实现能力必须明确失败，不等于桌面业务覆盖 |
 | `scripts/` | 维护检查脚本与业务入口盘点门；库存一致性不等于 CLI/MCP 功能完成 |
 | `tauri/src/coding/` | Coding 域共享规则：runtime location、事件驱动托盘、WSL Direct、跨工具 CLI/路径语义 |
 | `tauri/src/coding/deeplink/` | 供应商跨工具分享、通用连接适配、确认导入与原有保存链路 |

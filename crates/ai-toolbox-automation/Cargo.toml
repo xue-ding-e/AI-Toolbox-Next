@@ -1,0 +1,17 @@
+[package]
+name = "ai-toolbox-automation"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Headless automation contract and console foundation for AI Toolbox"
+publish = false
+
+[lib]
+name = "ai_toolbox_automation"
+
+[[bin]]
+name = "ai-toolbox-cli"
+path = "src/main.rs"
+
+# Intentionally independent of the desktop graph: discovery must not initialize Tauri.
+[workspace]
