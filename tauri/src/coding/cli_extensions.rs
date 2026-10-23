@@ -862,6 +862,19 @@ fn effective_package_entry<'a>(
         .find(|entry| package_entry_source(entry) == Some(source))
 }
 
+/// 某个包 source 在给定 `settings.json` 里是否**实际加载**。
+///
+/// 只看「出现在 `packages` 里」不够：本页的开关就是把条目写成四类 `[]` 来禁用，
+/// 被禁用的包仍在 `packages` 里却不加载。给 MCP 同步判定 Pi 的内置/adapter
+/// 归属时，必须按这个语义读，否则用户禁用 adapter 后我们仍会以为它在。
+pub fn package_source_is_active(spec: &CliExtensionSpec, settings: &Value, source: &str) -> bool {
+    let packages = settings.get("packages").and_then(Value::as_array);
+    match effective_package_entry(packages, source) {
+        Some(entry) => !is_disabled_package_entry(spec, entry),
+        None => false,
+    }
+}
+
 /// 镜像上游 `isEnabledByOverrides`：先 `!` 排除，再 `+` 强制包含，最后 `-` 强制排除。
 fn is_local_extension_enabled(top_level_entries: Option<&Value>, pattern: &str) -> bool {
     let Some(entries) = top_level_entries.and_then(Value::as_array) else {
