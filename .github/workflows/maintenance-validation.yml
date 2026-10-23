@@ -1,622 +1,78 @@
+# DRAFT: 2+2+3+8+25+3 = 43 minutes of step ceilings, below the 45 minute job.
+# DRAFT: replace the registered workflow ONLY on the isolated validation branch.
+# This intentionally does not validate frontend/UI, install the app, or publish.
 name: Maintenance validation
 on:
-  push:
-    branches: [validation/cloud-checks]
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed validation branch commit SHA (40 lowercase hex)
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
   group: ai-toolbox-maintenance-validation
   cancel-in-progress: false
 jobs:
-  frontend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-password-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-success-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-confirm-options') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-routes') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-errors') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-request-export-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/provider-card-migration')
+  storage-core-core:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/shared-storage-core' && github.event_name == 'workflow_dispatch' && inputs.expected_sha == github.sha
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Record toolchain and available browser
-        run: |
-          node --version
-          pnpm --version
-          command -v google-chrome || command -v chromium || command -v chromium-browser
-          df -h
-      - name: Install locked frontend dependencies
-        id: install
-        run: pnpm install --frozen-lockfile
-      - name: TypeScript check
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: pnpm exec tsc --noEmit
-      - name: Run applicable frontend regressions
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        env:
-          VALIDATION_REF: ${{ github.ref }}
-        run: |
-          set -euo pipefail
-          if [ "$VALIDATION_REF" = "refs/heads/test/restore-orchestration" ]; then
-            # This topic changes restore orchestration, not unrelated account browser fixtures.
-            node --import ./scripts/register-node-ts-extension-loader.mjs --test --test-reporter=tap web/test/features/settings/utils/*.test.ts | tee /tmp/restore-utils-tests.tap
-            grep -Fx "# tests 36" /tmp/restore-utils-tests.tap
-            grep -Fx "# pass 36" /tmp/restore-utils-tests.tap
-            grep -Fx "# fail 0" /tmp/restore-utils-tests.tap
-            node scripts/verify-form-modal-layout.mjs
-            node scripts/verify-provider-card-layout.mjs
-            node scripts/verify-official-accounts-shared.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/test/gateway-request-export-lifecycle" ]; then
-            result=0
-            for scenario in success cancel export-pending picker-rejected picker-pending; do
-              echo "EXPORT_SCENARIO=$scenario"
-              GATEWAY_REQUEST_EXPORT_CASE="$scenario" node scripts/verify-gateway-request-export.mjs || result=1
-            done
-            node scripts/verify-gateway-request-export-ownership.mjs || result=1
-            node scripts/verify-gateway-request-observations.mjs || result=1
-            exit "$result"
-          elif [ "$VALIDATION_REF" = "refs/heads/maintenance/provider-card-migration" ]; then
-            result=0
-            pnpm run test:web || result=1
-            node scripts/verify-form-modal-layout.mjs || result=1
-            node scripts/verify-provider-card-layout.mjs || result=1
-            node scripts/verify-official-accounts-shared.mjs || result=1
-            node scripts/verify-migrated-provider-cards.mjs || result=1
-            node scripts/verify-provider-card-view.mjs || result=1
-            node scripts/verify-provider-card-spacing.mjs || result=1
-            node scripts/verify-kimi-official-account-card.mjs || result=1
-            node scripts/verify-gemini-account-pending.mjs || result=1
-            node scripts/verify-official-account-pending.mjs || result=1
-            exit "$result"
-          elif [ "$VALIDATION_REF" = "refs/heads/test/settings-restore-errors" ]; then
-            SETTINGS_RESTORE_CHECK_GROUP=error-recovery node scripts/verify-settings-restore-routes.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/test/settings-restore-routes" ]; then
-            node scripts/verify-settings-restore-routes.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/test/restore-confirm-options" ]; then
-            node --import ./scripts/register-node-ts-extension-loader.mjs --test web/test/features/settings/utils/restoreFlow.test.ts
-            BACKUP_SETTINGS_CHECK_GROUP=restore-confirm node scripts/verify-backup-settings.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/test/restore-success-dialog" ]; then
-            node --import ./scripts/register-node-ts-extension-loader.mjs --test web/test/features/settings/utils/restoreFlow.test.ts
-            BACKUP_SETTINGS_CHECK_GROUP=restore-success node scripts/verify-backup-settings.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/test/restore-password-dialog" ]; then
-            node --import ./scripts/register-node-ts-extension-loader.mjs --test web/test/features/settings/utils/restoreFlow.test.ts
-            BACKUP_SETTINGS_CHECK_GROUP=restore-password node scripts/verify-backup-settings.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/test/remote-backup-delete-lifecycle" ]; then
-            BACKUP_SETTINGS_CHECK_GROUP=remote-delete-lifecycle node scripts/verify-backup-settings.mjs
-            BACKUP_SETTINGS_CHECK_GROUP=remote-lifecycle node scripts/verify-backup-settings.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/test/remote-backup-lifecycle" ]; then
-            # Exercise only the real remote-backup Modal lifecycle fixture.
-            BACKUP_SETTINGS_CHECK_GROUP=remote-lifecycle node scripts/verify-backup-settings.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/fix/opencode-auth-write-guard" ]; then
-            pnpm run test:web
-            node scripts/verify-auth-config-guard.mjs
-            node scripts/verify-form-modal-layout.mjs
-            node scripts/verify-provider-card-layout.mjs
-            node scripts/verify-official-accounts-shared.mjs
-          elif [ "$VALIDATION_REF" = "refs/heads/maintenance/sync-opencode-backup-20261019" ]; then
-            pnpm run test:web
-            node scripts/verify-form-modal-layout.mjs
-            node scripts/verify-provider-card-layout.mjs
-            node scripts/verify-official-accounts-shared.mjs
-          else
-            pnpm test
-          fi
-      - name: Frontend production build
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: pnpm build
-  rust:
-    needs: frontend
-    if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory') }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 2
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
           persist-credentials: false
+      - name: Verify reviewed source before setup
+        timeout-minutes: 2
+        run: python3 scripts/storage-core-validation/validate.py --phase preflight --manifest scripts/storage-core-validation/candidate.json
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record toolchain and disk
-        run: |
-          rustc --version
-          cargo --version
-          df -h
-      - name: Full upstream Rust suite
-        run: cargo test --locked --manifest-path tauri/Cargo.toml
-  dsh-regression:
-    # Deliberately scoped to the reviewed DSH synchronization candidate only.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-dsh-021-20261018'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
+        timeout-minutes: 3
         with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record exact source and toolchain
-        run: |
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify all six new DSH regressions are selected
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::session_manager::dsh -- --list > /tmp/dsh-session-tests.txt
-          cat /tmp/dsh-session-tests.txt
-          for name in scan_hides_subagent_and_blank_sessions v4_tool_result_pairs_with_its_call v4_tool_result_reads_is_error_from_the_message v3_tool_result_reads_is_error_from_the_wrapper v4_tool_result_keeps_image_blocks_as_placeholders v4_query_scan_matches_tool_output; do
-            grep -Fx "coding::session_manager::dsh::tests::${name}: test" /tmp/dsh-session-tests.txt
-          done
-      - name: Run DSH session parsing regressions
-        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::session_manager::dsh -- --nocapture
-      - name: Run DSH configuration and catalog regressions
-        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::dsh -- --nocapture
-  opencode-2032-regression:
-    # Only the independently reviewed OpenCode 2.0.32 synchronization candidate.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-2032-20261019'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record exact source and toolchain
-        run: |
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify all 29 migration regressions are selected
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --list > /tmp/opencode-2032-tests.txt
-          cat /tmp/opencode-2032-tests.txt
-          test "$(grep -c '^coding::open_code::v2_migration::tests::.*: test$' /tmp/opencode-2032-tests.txt)" -eq 29
-          for name in provider_and_model_compatibility_survive_a_round_trip thinking_block_binding_folds_into_model_compatibility object_model_selection_folds_into_the_v1_reference mcp_oauth_false_round_trips package_specifier_writes_aisdk_for_npm_packages_only mcp_oauth_unknown_keys_survive_the_conversion empty_enabled_providers_denies_every_provider generated_policies_precede_native_policies commands_round_trip_model_variant_and_subtask unchanged_small_model_keeps_the_title_variant v1_provider_migrates_to_official_v2_provider_and_model_shapes v1_agent_mode_and_small_model_migrate_to_v2_agents v1_mcp_nests_oauth_and_bounds_every_timeout_phase v1_top_level_names_and_skills_migrate disabled_and_enabled_providers_round_trip_through_policies v1_anthropic_provider_keeps_its_key_in_settings v2_auth_headers_lift_back_into_provider_options v2_explicit_api_key_wins_over_auth_header model_capabilities_round_trip_reasoning_and_temperature untouched_model_writes_no_capabilities_block model_level_provider_api_becomes_flat_settings_base_url mcp_timeout_overrides_experimental_mcp_timeout released_v2_flat_provider_restores_the_v1_editor_shape dual_shape_provider_survives_a_read_write_round_trip v2_provider_agent_and_mcp_restore_v1_editor_shapes set_mode_restores_the_original_v1_bytes enabling_v2_renames_a_legacy_config_json enabling_v2_refuses_to_overwrite_an_existing_opencode_json explicit_provider_header_overrides_generated_auth_header; do
-            grep -Fx "coding::open_code::v2_migration::tests::${name}: test" /tmp/opencode-2032-tests.txt
-          done
-      - name: Run migration and affected neighboring regressions serially
-        shell: bash
-        run: |
-          set -euo pipefail
-          for module in coding::open_code::v2_migration coding::open_code::free_models coding::open_code::commands coding::open_code::markdown_agents coding::open_code::tray_support coding::mcp::config_sync coding::runtime_location settings::backup::utils tray::tests; do
-            cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
-          done
-  opencode-rename-regression:
-    # Only the independently reviewed legacy config rename regression candidate.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/validate-opencode-rename-20261019'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record exact source and toolchain
-        run: |
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify all five source-mode regressions are selected
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --list > /tmp/rename-tests.txt
-          cat /tmp/rename-tests.txt
-          test "$(grep -c '^coding::open_code::v2_migration::tests::source_mode_.*: test$' /tmp/rename-tests.txt)" -eq 5
-          for name in source_mode_invalid_json_preserves_legacy_path_and_bytes source_mode_semantic_conflict_preserves_legacy_path_and_bytes source_mode_success_renames_and_preserves_restorable_bytes source_mode_existing_target_preserves_both_files source_mode_explicit_legacy_path_is_not_renamed; do
-            grep -Fx "coding::open_code::v2_migration::tests::${name}: test" /tmp/rename-tests.txt
-          done
-      - name: Run actual migration and command contracts serially
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --test-threads=1
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands -- --test-threads=1
-  codex-response-identity-regression:
-    # Synthetic session/proxy identity regression only; no live credentials.
-    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/maintenance/validate-codex-response-identity-20261019' || github.ref == 'refs/heads/test/codex-incomplete-proxy-regression')
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      VALIDATION_REF: ${{ github.ref }}
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record exact source and toolchain
-        run: |
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify exact response identity regression selection
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --list > /tmp/codex-response-identity-tests.txt
-          cat /tmp/codex-response-identity-tests.txt
-          expected_count=6
-          if [ "$VALIDATION_REF" = "refs/heads/test/codex-incomplete-proxy-regression" ]; then
-            expected_count=7
-            grep -Fx "coding::proxy_gateway::session_import::tests::codex_response_identity_converges_with_an_incomplete_proxy_row: test" /tmp/codex-response-identity-tests.txt
-          fi
-          test "$(grep -c '^coding::proxy_gateway::session_import::tests::codex_response_identity_.*: test$' /tmp/codex-response-identity-tests.txt)" -eq "$expected_count"
-          for name in codex_response_identity_record_first_matches_only_its_proxy codex_response_identity_legacy_first_matches_only_its_proxy codex_response_identity_unmatched_response_preserves_independent_call codex_response_identity_revision6_rescan_repairs_rows_and_matches codex_response_identity_revision6_rescan_does_not_resurrect_pruned_rows codex_response_identity_missing_response_id_keeps_unique_usage_fallback; do
-            grep -Fx "coding::proxy_gateway::session_import::tests::${name}: test" /tmp/codex-response-identity-tests.txt
-          done
-      - name: Run scoped identity regressions serially
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "$VALIDATION_REF" = "refs/heads/test/codex-incomplete-proxy-regression" ]; then
-            cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --test-threads=1
-          else
-            cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests:: -- --test-threads=1
-          fi
-  opencode-backup-sync:
-    # Run only after the exact synchronization candidate passes frontend validation.
-    needs: frontend
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record exact source and toolchain
-        run: |
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify marker and retained regression test selection
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib -- --list > /tmp/opencode-backup-tests.txt
-          for name in opencode_v2_marker_is_packaged_next_to_its_config opencode_v2_marker_helper_respects_real_config_filter_and_file_type opencode_v2_marker_zip_helpers_preserve_migration_rollback_bytes opencode_v2_marker_restore_path_helper_rejects_unsafe_names opencode_v2_marker_filter_helpers_characterize_independent_entry_rules; do
-            grep -Fx "settings::backup::utils::tests::${name}: test" /tmp/opencode-backup-tests.txt
-          done
-          test "$(grep -c '^settings::backup::utils::tests::opencode_v2_marker_.*: test$' /tmp/opencode-backup-tests.txt)" -eq 5
-          test "$(grep -c '^coding::open_code::v2_migration::tests::source_mode_.*: test$' /tmp/opencode-backup-tests.txt)" -eq 5
-          test "$(grep -c '^coding::open_code::free_models::tests::credential_reader_.*: test$' /tmp/opencode-backup-tests.txt)" -eq 5
-          test "$(grep -c '^coding::proxy_gateway::session_import::tests::codex_response_identity_.*: test$' /tmp/opencode-backup-tests.txt)" -eq 6
-      - name: Run backup migration model and retained identity regressions serially
-        shell: bash
-        run: |
-          set -euo pipefail
-          for module in settings::backup::utils settings::backup::restore coding::open_code::v2_migration coding::open_code::commands coding::open_code::free_models coding::preset_models db::model_pricing_seed every_published_preset_model_resolves_to_model_pricing coding::proxy_gateway::session_import::tests; do
-            cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
-          done
-
-  opencode-auth-write-guard:
-    # Synthetic files only. This focused tests-first branch intentionally goes red.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/opencode-auth-write-guard'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Verify exact source and six regression selections
-        shell: bash
-        run: |
-          set -euo pipefail
-          git rev-parse HEAD
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands::auth_write_guard_tests -- --list > /tmp/auth-guard-tests.txt
-          cat /tmp/auth-guard-tests.txt
-          test "$(grep -c '^coding::open_code::commands::auth_write_guard_tests::auth_write_guard_.*: test$' /tmp/auth-guard-tests.txt)" -eq 6
-          for name in v2_preserves_auth_and_credential_database_bytes v2_does_not_create_missing_auth_directory v1_preserves_refreshed_and_new_entries invalid_marker_type_preserves_auth failed_mode_probe_preserves_auth v1_rejects_non_object_without_creating_auth; do
-            grep -Fx "coding::open_code::commands::auth_write_guard_tests::auth_write_guard_${name}: test" /tmp/auth-guard-tests.txt
-          done
-      - name: Run real auth save regressions
-        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands::auth_write_guard_tests -- --test-threads=1
-
-  opencode-auth-write-guard-green:
-    needs: frontend
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Verify real auth write and migration lock tests are selected
-        shell: bash
-        run: |
-          set -euo pipefail
-          git rev-parse HEAD
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib -- --list > /tmp/auth-guard-green-tests.txt
-          test "$(grep -c '^coding::open_code::commands::auth_write_guard_tests::auth_write_guard_.*: test$' /tmp/auth-guard-green-tests.txt)" -eq 7
-          test "$(grep -c '^coding::open_code::v2_migration::mode_write_guard_tests::mode_write_guard_.*: test$' /tmp/auth-guard-green-tests.txt)" -eq 3
-          test "$(grep -c '^coding::open_code::v2_migration::tests::source_mode_.*: test$' /tmp/auth-guard-green-tests.txt)" -eq 5
-          for name in v2_preserves_auth_and_credential_database_bytes v2_does_not_create_missing_auth_directory v1_preserves_refreshed_and_new_entries invalid_marker_type_preserves_auth failed_mode_probe_preserves_auth v1_rejects_non_object_without_creating_auth rechecks_mode_after_waiting_for_migration_lock; do
-            grep -Fx "coding::open_code::commands::auth_write_guard_tests::auth_write_guard_${name}: test" /tmp/auth-guard-green-tests.txt
-          done
-          for name in serializes_both_migration_entry_points poison_blocks_the_operation dangling_marker_is_unknown_not_v1; do
-            grep -Fx "coding::open_code::v2_migration::mode_write_guard_tests::mode_write_guard_${name}: test" /tmp/auth-guard-green-tests.txt
-          done
-      - name: Run auth save, migration and credential read neighbors serially
-        shell: bash
-        run: |
-          set -euo pipefail
-          for module in coding::open_code::commands coding::open_code::v2_migration coding::open_code::free_models; do
-            cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
-          done
-  gateway-observations-regression:
-    # Synthetic loopback HTTP/SSE and temporary export files only.
-    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/test/gateway-observations-regression' || github.ref == 'refs/heads/test/gateway-observation-privacy-red' || github.ref == 'refs/heads/fix/gateway-observations-reviewed')
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record exact source and toolchain
-        run: |
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          df -h
-      - name: Verify exact HTTP and export regression selection
-        if: github.ref == 'refs/heads/test/gateway-observations-regression'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway::native_tools_http:: -- --list > /tmp/gateway-observations-http.txt
-          cat /tmp/gateway-observations-http.txt
-          test "$(grep -c '^proxy_gateway::native_tools_http::.*: test$' /tmp/gateway-observations-http.txt)" -eq 8
-          for name in a_native_search_is_marked_declared_forwarded_and_used a_tool_dropped_by_protocol_conversion_is_marked_filtered detail_only_markers_do_not_exist_without_request_logging streaming_native_search_keeps_declared_forwarded_and_used_without_bodies streaming_filtered_search_keeps_the_request_rewrite_without_bodies streaming_used_search_is_observed_before_response_conversion_without_bodies streaming_text_marker_is_not_tool_usage privacy_lossy_observations_do_not_persist_secrets_without_bodies; do
-            grep -Fx "proxy_gateway::native_tools_http::${name}: test" /tmp/gateway-observations-http.txt
-          done
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies -- --exact --list > /tmp/gateway-observations-export.txt
-          cat /tmp/gateway-observations-export.txt
-          test "$(grep -c ': test$' /tmp/gateway-observations-export.txt)" -eq 1
-          grep -Fx 'coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies: test' /tmp/gateway-observations-export.txt
-      - name: Run both regression groups serially and retain failures
-        if: github.ref == 'refs/heads/test/gateway-observations-regression'
+          toolchain: 1.99.1
+      - name: Install existing Linux compile prerequisites only
+        timeout-minutes: 8
+        # Existing official apt prerequisites only. Root GNU timeout handles
+        # apt timeout cleanup; the job is the final containment boundary. This
+        # is NOT the unprivileged build/test owned-process evidence guarantee.
         shell: bash
         run: |
           set -uo pipefail
-          http_status=0
-          export_status=0
-          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway::native_tools_http:: -- --test-threads=1 || http_status=$?
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies -- --exact --test-threads=1 || export_status=$?
-          printf 'HTTP regression exit: %s; export regression exit: %s\n' "$http_status" "$export_status"
-          test "$http_status" -eq 0 && test "$export_status" -eq 0
-      - name: Verify and run only the synthetic JSONL privacy regression
-        if: github.ref == 'refs/heads/test/gateway-observation-privacy-red'
-        shell: bash
-        run: |
-          set -euo pipefail
-          name=proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies
-          cargo test --locked --manifest-path tauri/Cargo.toml --test coding "$name" -- --exact --list > /tmp/gateway-privacy-test.txt
-          cat /tmp/gateway-privacy-test.txt
-          test "$(grep -c ': test$' /tmp/gateway-privacy-test.txt)" -eq 1
-          grep -Fx "${name}: test" /tmp/gateway-privacy-test.txt
-          cargo test --locked --manifest-path tauri/Cargo.toml --test coding "$name" -- --exact --test-threads=1
-      - name: Verify GREEN regression names and run gateway neighbors serially
-        if: github.ref == 'refs/heads/fix/gateway-observations-reviewed'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway:: -- --list > /tmp/gateway-green-lib.txt
-          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway:: -- --list > /tmp/gateway-green-http.txt
-          cat /tmp/gateway-green-lib.txt /tmp/gateway-green-http.txt
-          test "$(grep -c '^proxy_gateway::native_tools_http::.*: test$' /tmp/gateway-green-http.txt)" -eq 8
-          grep -Fx "proxy_gateway::native_tools_http::a_native_search_is_marked_declared_forwarded_and_used: test" /tmp/gateway-green-http.txt
-          grep -Fx "proxy_gateway::native_tools_http::a_tool_dropped_by_protocol_conversion_is_marked_filtered: test" /tmp/gateway-green-http.txt
-          grep -Fx "proxy_gateway::native_tools_http::detail_only_markers_do_not_exist_without_request_logging: test" /tmp/gateway-green-http.txt
-          grep -Fx "proxy_gateway::native_tools_http::streaming_native_search_keeps_declared_forwarded_and_used_without_bodies: test" /tmp/gateway-green-http.txt
-          grep -Fx "proxy_gateway::native_tools_http::streaming_filtered_search_keeps_the_request_rewrite_without_bodies: test" /tmp/gateway-green-http.txt
-          grep -Fx "proxy_gateway::native_tools_http::streaming_used_search_is_observed_before_response_conversion_without_bodies: test" /tmp/gateway-green-http.txt
-          grep -Fx "proxy_gateway::native_tools_http::streaming_text_marker_is_not_tool_usage: test" /tmp/gateway-green-http.txt
-          grep -Fx "proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies: test" /tmp/gateway-green-http.txt
-          grep -Fx "coding::proxy_gateway::commands::tests::privacy_lossy_observations_are_redacted_on_export_without_bodies: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::commands::tests::privacy_lossy_observations_from_old_logs_are_safe_for_display_and_export: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::request_log::tests::privacy_lossy_observation_summaries_are_allowlisted_and_idempotent: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::request_log::tests::privacy_lossy_observation_sanitization_preserves_other_rewrites: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::http_io::tests::header_write_failure_keeps_preread_native_tool_observations: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::privacy_lossy_warnings_never_copy_request_values_into_observations: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_handles_split_utf8_multiline_and_mixed_delimiters: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_ignores_text_and_other_protocol_markers: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_recognizes_anthropic_and_gemini_native_events: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_bounds_oversized_events_and_recovers_after_the_delimiter: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_handles_complete_eof_and_flattened_events_without_guessing: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_scanner_flushes_flattened_events_when_the_cap_splits_utf8: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_observer_is_lazy_and_preserves_chunks_errors_and_request_markers: test" /tmp/gateway-green-lib.txt
-          grep -Fx "coding::proxy_gateway::runtime::observations::tests::stream_observer_drop_keeps_received_markers_and_stops_reading: test" /tmp/gateway-green-lib.txt
-          lib_status=0
-          http_status=0
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway:: -- --test-threads=1 || lib_status=$?
-          cargo test --locked --manifest-path tauri/Cargo.toml --test coding proxy_gateway:: -- --test-threads=1 || http_status=$?
-          printf 'Gateway lib exit: %s; gateway integration exit: %s\n' "$lib_status" "$http_status"
-          test "$lib_status" -eq 0 && test "$http_status" -eq 0
-  gateway-observations-acceptance:
-    # Full Rust acceptance and the synthetic request-detail UI run serially.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-observations-acceptance'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-      NODE_OPTIONS: --max-old-space-size=4096
-    steps:
-      - uses: actions/checkout@v4
+          evidence="$RUNNER_TEMP/storage-core-evidence"
+          ulimit -f 32768
+          update_status=null
+          install_status=null
+          trap 'printf "{\"update_exit\":%s,\"install_exit\":%s,\"cleanup_boundary\":\"root GNU timeout and job hard limit; not independently verified\"}\n" "$update_status" "$install_status" > "$evidence/dependencies-summary.json"' EXIT
+          sudo -n timeout --signal=TERM --kill-after=10s 120s apt-get update > "$evidence/dependencies-apt-update.stdout.log" 2> "$evidence/dependencies-apt-update.stderr.log"
+          update_status=$?
+          test "$update_status" -eq 0 || exit "$update_status"
+          sudo -n timeout --signal=TERM --kill-after=10s 300s apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev > "$evidence/dependencies-apt-install.stdout.log" 2> "$evidence/dependencies-apt-install.stderr.log"
+          install_status=$?
+          exit "$install_status"
+      - name: Compile shared storage and real desktop regression tests serially
+        timeout-minutes: 25
+        run: python3 scripts/storage-core-validation/validate.py --phase validation --manifest scripts/storage-core-validation/candidate.json
+      - name: Upload whitelisted evidence, never target or credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 3
         with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Record source and Rust test inventory
-        run: |
-          set -euo pipefail
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          df -h
-          cargo test --locked --manifest-path tauri/Cargo.toml -- --list > /tmp/gateway-acceptance-rust-list.txt
-          cat /tmp/gateway-acceptance-rust-list.txt
-          grep -F 'proxy_gateway::native_tools_http::privacy_lossy_observations_do_not_persist_secrets_without_bodies: test' /tmp/gateway-acceptance-rust-list.txt
-          grep -F 'coding::proxy_gateway::runtime::observations::tests::stream_observer_drop_keeps_received_markers_and_stops_reading: test' /tmp/gateway-acceptance-rust-list.txt
-      - name: Full Rust suite including integration and documentation targets
-        run: cargo test --locked --manifest-path tauri/Cargo.toml -- --test-threads=1
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install locked frontend dependencies
-        run: pnpm install --frozen-lockfile
-      - name: TypeScript check
-        run: pnpm exec tsc --noEmit
-      - name: Full Node suite and existing structure guards
-        run: |
-          pnpm run test:web
-          node scripts/verify-form-modal-layout.mjs
-          node scripts/verify-provider-card-layout.mjs
-          node scripts/verify-official-accounts-shared.mjs
-      - name: Real request detail observation markers with synthetic service data
-        run: |
-          set -euo pipefail
-          node scripts/verify-gateway-request-observations.mjs | tee /tmp/gateway-observations-dom.log
-          grep -F 'Passed 12 localized request-observation scenarios (92 assertions).' /tmp/gateway-observations-dom.log
-          grep -F 'Passed 92 browser checks.' /tmp/gateway-observations-dom.log
-      - name: Frontend production build
-        run: pnpm build
-  skills-legacy-group-migration:
-    # Only synthetic records in temporary SQLite files; no installed CLI data.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/skills-legacy-group-migration'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 2
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
-      - name: Verify exact legacy group regression selection
-        run: |
-          set -euo pipefail
-          git rev-parse HEAD
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests::legacy_group_migration_ -- --list > /tmp/skills-legacy-group-tests.txt
-          cat /tmp/skills-legacy-group-tests.txt
-          test "$(grep -c '^coding::skills::skill_store::tests::legacy_group_migration_.*: test$' /tmp/skills-legacy-group-tests.txt)" -eq 3
-          for name in legacy_group_migration_preserves_source_metadata_and_survives_reopen legacy_group_migration_reuses_existing_case_insensitive_registry legacy_group_migration_does_not_invent_custom_groups_for_repository_sources; do
-            grep -Fx "coding::skills::skill_store::tests::$name: test" /tmp/skills-legacy-group-tests.txt
-          done
-      - name: Run migration and neighboring preferences tests serially
-        run: |
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
+          name: storage-core-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/storage-core-evidence/preflight-*.json
+            ${{ runner.temp }}/storage-core-evidence/dependencies-*.json
+            ${{ runner.temp }}/storage-core-evidence/validation-*.json
+            ${{ runner.temp }}/storage-core-evidence/preflight-*.log
+            ${{ runner.temp }}/storage-core-evidence/dependencies-*.log
+            ${{ runner.temp }}/storage-core-evidence/validation-*.log
+          if-no-files-found: error
+          retention-days: 7
