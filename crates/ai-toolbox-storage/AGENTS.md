@@ -14,6 +14,12 @@
 - CACHE_DIR 是进程级 OnceLock，当前生命周期仅支持启动时设置一次的单 profile。不要把同一进程内反复调用 set_cache_dir 当作切换 profile；不能据此宣称多 profile 隔离已经实现。
 - 该抽取不是进程 owner、daemon、CLI 管理入口或只读访问模式。open 仍可能设置 WAL、迁移并补 seed，不能用于承诺无文件变更的读取命令。WAL/SHM 与跨进程所有权方案须独立设计验证。
 - 不用通用 callback/no-op seed 替换原初始化，不把备份、安全检查或错误传播变成调用方可跳过的默认选项。
+- v30 新增 Codex context 专用 JSONB 操作账本；fresh 库的 v1 通过 `ALL_TABLES` 建好表，v30 幂等建表是为升级既有 v29 库，不修改已发布迁移。真实文件升级仍须经过原快照与未来版本拒绝路径。
+- 账本接口只接受有限长安全标识、固定长度摘要、正整数结果和封闭阶段/错误枚举，不保存原始配置、认证、路径或任意错误文本。它不执行投影或声明回滚，不用其它业务表代替。
+- 同 request_id 必须先查指纹再检查 revision 或修改主数据；SavedOnly 的插入与主数据 patch 同事务，重复请求不再次修改主数据。所有账本写接口接收调用方事务并复用现有 helper，不重新开库或嵌套事务。
+- 只有新的 Advanced→ProjectionStarted 已成功提交，才允许调用方尝试一次文件写；提交失败禁止写，Replay 不授权重写。重启后遗留 ProjectionStarted 只能解释为 ProjectionUncertain；不能倒退成 SavedOnly 或自动 resume。封闭失败标记只可补记一次，不能清除来隐式重试。
+- `live_changed=false` 仍须实际读回后才可从 SavedOnly 进入 Verified；读回失败或不匹配只保留 SavedOnly 并记对应封闭错误，不虚构文件写入。`live_changed=true` 的 SavedOnly 不允许记录读回阶段错误，读取和推进均验证此约束。
+- 字符串格式校验不等于能判断其是否含秘密；只有可信业务服务可生成摘要、解析 provider ID 并构造账本输入，不能直接接收和持久化客户端提供的账本对象。
 
 ## 最小验证
 

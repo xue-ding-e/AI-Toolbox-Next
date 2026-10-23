@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 29;
+pub const TARGET_SCHEMA_VERSION: i32 = 30;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -94,6 +94,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 29 {
         run_migration_step(conn, 29, migrate_v29)?;
+    }
+    if current_version < 30 {
+        run_migration_step(conn, 30, migrate_v30)?;
     }
 
     Ok(())
@@ -661,6 +664,12 @@ fn migrate_v29(conn: &Connection) -> Result<(), String> {
     .map_err(|error| format!("Failed to rebuild usage rollups for project dimension: {error}"))
 }
 
+fn migrate_v30(conn: &Connection) -> Result<(), String> {
+    // Fresh databases already create ALL_TABLES in v1. This idempotent step
+    // also upgrades existing v29 databases without changing frozen migrations.
+    create_jsonb_table(conn, DbTable::CodexContextOperation)
+}
+
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
     let table_name = table.name();
     conn.execute_batch(&format!(
@@ -1200,4 +1209,29 @@ fn create_column_index(conn: &Connection, table: DbTable, column: &str) -> Resul
         "CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({column});"
     ))
     .map_err(|error| format!("Failed to create SQLite index {index_name}: {error}"))
+}
+
+#[cfg(test)]
+mod journal_migration_tests {
+    use super::*;
+
+    #[test]
+    fn v30_step_failure_rolls_back_table_creation_and_schema_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        set_user_version(&conn, 29).unwrap();
+        let error = run_migration_step(&conn, 30, |conn| {
+            migrate_v30(conn)?;
+            Err("synthetic failure after journal creation".to_string())
+        })
+        .unwrap_err();
+        assert!(error.contains("synthetic failure"));
+        assert_eq!(get_user_version(&conn).unwrap(), 29);
+        assert!(crate::helpers::db_count(&conn, DbTable::CodexContextOperation).is_err());
+        run_migration_step(&conn, 30, migrate_v30).unwrap();
+        assert_eq!(get_user_version(&conn).unwrap(), 30);
+        assert_eq!(
+            crate::helpers::db_count(&conn, DbTable::CodexContextOperation).unwrap(),
+            0
+        );
+    }
 }
