@@ -170,6 +170,13 @@ pub struct OwnerPermit {
 }
 
 impl OwnerPermit {
+    // Preserve the allocation identity, not just an epoch/profile label. The
+    // storage crate retains this lease without depending on management types.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn lifetime_owner(&self) -> Arc<dyn Send + Sync> {
+        self.inner.clone()
+    }
+
     pub fn profile(&self) -> &ProfileIdentity {
         &self.inner.profile
     }

@@ -4,7 +4,7 @@ use std::{fs, path::Path, os::unix::fs::MetadataExt};
 use ai_toolbox_codex_config::plan::{plan_context_projection, ContextPatch, Target};
 use ai_toolbox_storage::{SqliteDbState, SQLITE_DATABASE_FILE, codex_context_journal as journal};
 use journal::{AdvanceResult, FailureCode, InsertResult, JournalEntry, JournalInput, Lookup, Phase};
-use rusqlite::Transaction;
+use rusqlite::{Connection, Transaction};
 use sha2::{Digest, Sha256};
 use crate::{
     codex_master::{read_master, patch_master, MasterSnapshot, MasterError},
@@ -99,7 +99,8 @@ enum Checkpoint {
     ReplaceDrift,
 }
 
-// Declaration order closes SQLite before dropping the lifetime profile lease.
+// Declaration order drops this DB reference before this owner reference. The
+// shared connection also retains the owner, including for external DB clones.
 pub(crate) struct ContextService {
     db: SqliteDbState,
     owner: OwnerPermit,
@@ -170,6 +171,70 @@ fn database_identity(path: &Path) -> Result<(u64, u64), ServiceError> {
     Ok((m.dev(), m.ino()))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DatabaseIdentity {
+    main: (u64, u64),
+    sidecars: [Option<(u64, u64)>; 3],
+}
+
+impl DatabaseIdentity {
+    fn existing(path: &Path) -> Result<Self, ServiceError> {
+        let main = database_identity(path)?;
+        let mut sidecars = [None; 3];
+        for (slot, suffix) in sidecars.iter_mut().zip(["-wal", "-shm", "-journal"]) {
+            let side = path.with_file_name(format!("{SQLITE_DATABASE_FILE}{suffix}"));
+            match fs::symlink_metadata(&side) {
+                Ok(_) => *slot = Some(database_identity(&side)?),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(_) => return Err(ServiceError::Storage),
+            }
+        }
+        Ok(Self { main, sidecars })
+    }
+
+    fn validate_connection(
+        owner: &OwnerPermit,
+        db: &SqliteDbState,
+        connection: &Connection,
+    ) -> Result<Self, ServiceError> {
+        owner.ensure_current().map_err(|_| ServiceError::Ownership)?;
+        let expected = owner.profile().canonical_path().join(SQLITE_DATABASE_FILE);
+        let before = Self::existing(&expected)?;
+        // db_path is cached input, not evidence of the connection's current
+        // main database. Validate both it and SQLite's own main filename.
+        let actual = Path::new(connection.path().ok_or(ServiceError::Storage)?);
+        for path in [db.db_path(), actual] {
+            if !path.is_absolute()
+                || fs::canonicalize(path).map_err(|_| ServiceError::Storage)? != expected
+                || database_identity(path)? != before.main
+            {
+                return Err(ServiceError::Storage);
+            }
+        }
+        let mut moved: std::ffi::c_int = 1;
+        // SAFETY: The storage callback holds its mutex for this entire
+        // validation. The live handle is borrowed, the fixed main name is NUL
+        // terminated, and HAS_MOVED writes exactly one c_int. No pointer or
+        // callback escapes. Unsupported VFS implementations fail closed.
+        let result = unsafe {
+            rusqlite::ffi::sqlite3_file_control(
+                connection.handle(),
+                b"main\0".as_ptr().cast(),
+                rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
+                (&mut moved as *mut std::ffi::c_int).cast(),
+            )
+        };
+        if result != rusqlite::ffi::SQLITE_OK || moved != 0 {
+            return Err(ServiceError::Storage);
+        }
+        owner.ensure_current().map_err(|_| ServiceError::Ownership)?;
+        if Self::existing(&expected)? != before {
+            return Err(ServiceError::Storage);
+        }
+        Ok(before)
+    }
+}
+
 impl ContextService {
     /// Writer initialization only, not a read-command implementation. Requires
     /// an existing file database; shared storage initialization may seed/migrate.
@@ -177,47 +242,58 @@ impl ContextService {
         let identity = ProfileIdentity::existing(profile).map_err(|_| ServiceError::Ownership)?;
         let owner = ProfileOwner::acquire(identity).map_err(|_| ServiceError::Ownership)?;
         let path = owner.profile().canonical_path().join(SQLITE_DATABASE_FILE);
-        let database_inode = database_identity(&path)?;
-        for suffix in ["-wal", "-shm"] {
-            let side = path.with_file_name(format!("{SQLITE_DATABASE_FILE}{suffix}"));
-            match fs::symlink_metadata(&side) {
-                Ok(_) => {
-                    database_identity(&side)?;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                Err(_) => return Err(ServiceError::Storage),
-            }
-        }
+        let before = DatabaseIdentity::existing(&path)?;
         owner
             .ensure_current()
             .map_err(|_| ServiceError::Ownership)?;
         let db = SqliteDbState::open(path.clone()).map_err(|_| ServiceError::Storage)?;
-        owner
-            .ensure_current()
-            .map_err(|_| ServiceError::Ownership)?;
-        if database_identity(&path)? != database_inode {
+        if database_identity(&path)? != before.main {
             return Err(ServiceError::Storage);
         }
+        Self::attach(&owner, &db)
+    }
+
+    /// Attach only to an existing owner's already initialized shared state.
+    /// No owner acquisition, database open, schema work or seed is performed.
+    /// This cannot retroactively prove owner-before-open for the caller; that
+    /// startup ordering and the full writer admission map remain prerequisites.
+    /// Callers must honor storage's retained-connection no-replacement contract;
+    /// same-path/inode checks cannot identify a reopened connection as original.
+    pub(crate) fn attach(owner: &OwnerPermit, db: &SqliteDbState) -> Result<Self, ServiceError> {
+        let database_inode = db
+            .retain_lifetime_owner_checked(owner.lifetime_owner(), |connection| {
+                DatabaseIdentity::validate_connection(owner, db, connection).map(|identity| identity.main)
+            })
+            .map_err(|error| match error {
+                ai_toolbox_storage::sqlite_state::LifetimeOwnerError::Unavailable => ServiceError::Storage,
+                ai_toolbox_storage::sqlite_state::LifetimeOwnerError::DifferentOwner => ServiceError::Ownership,
+                ai_toolbox_storage::sqlite_state::LifetimeOwnerError::Validation(error) => error,
+            })?;
         Ok(Self {
-            db,
-            owner,
+            db: db.clone(),
+            owner: owner.clone(),
             database_inode,
         })
     }
     fn ensure_current(&self) -> Result<(), ServiceError> {
-        self.owner
-            .ensure_current()
-            .map_err(|_| ServiceError::Ownership)?;
-        if database_identity(self.db.db_path())? != self.database_inode {
+        self.db.with_conn(|connection| Ok(self.validate_current_connection(connection)))
+            .map_err(|_| ServiceError::Storage)?
+    }
+    fn validate_current_connection(&self, connection: &Connection) -> Result<(), ServiceError> {
+        let current = DatabaseIdentity::validate_connection(&self.owner, &self.db, connection)?;
+        // SQLite may legitimately create/remove sidecars between operations.
+        // Their safety and single-validation stability are checked above;
+        // only the main DB inode is pinned for this service's lifetime.
+        if current.main != self.database_inode {
             return Err(ServiceError::Storage);
         }
         Ok(())
     }
     fn master(&self) -> Result<MasterSnapshot, ServiceError> {
         self.db
-            .with_conn(|c| Ok(read_master(c)))
+            .with_conn(|c| Ok(self.validate_current_connection(c)
+                .and_then(|_| read_master(c).map_err(master_error))))
             .map_err(|_| ServiceError::Storage)?
-            .map_err(master_error)
     }
     fn runtime(master: &MasterSnapshot) -> Result<RuntimeResourceIdentity, ServiceError> {
         RuntimeResourceIdentity::existing(
@@ -291,9 +367,9 @@ impl ContextService {
     }
     fn lookup(&self, r: &ContextRequest, fingerprint: &str) -> Result<Lookup, ServiceError> {
         self.db
-            .with_conn(|c| Ok(journal::lookup(c, &r.request_id, fingerprint)))
+            .with_conn(|c| Ok(self.validate_current_connection(c)
+                .and_then(|_| journal::lookup(c, &r.request_id, fingerprint).map_err(journal_error))))
             .map_err(|_| ServiceError::Storage)?
-            .map_err(journal_error)
     }
     /// Only successful typed operations commit. In particular never pass
     /// Ok(Err(..)) to helpers::db_transaction, whose Ok branch commits.
@@ -304,6 +380,7 @@ impl ContextService {
         self.db
             .with_conn_mut(|c| {
                 let outcome = (|| {
+                    self.validate_current_connection(c)?;
                     let tx = c.transaction().map_err(|_| ServiceError::Storage)?;
                     let result = operation(&tx)?;
                     tx.commit()
@@ -520,7 +597,15 @@ impl ContextService {
         }
         // Any failure after the durable start is conservatively uncertain; no
         // automatic retry or rollback can assume rename did not happen.
-        match project(committed_start, file, plan.live_candidate.as_bytes()) {
+        // A trusted caller can replace a Connection through with_conn_mut.
+        // Recheck under that same mutex before the file effect as well, without
+        // allowing such a replacement between validation and publication.
+        let projection = self.db.with_conn(|c| {
+            Ok(self.validate_current_connection(c).map(|_| {
+                project(committed_start, file, plan.live_candidate.as_bytes())
+            }))
+        }).map_err(|_| ServiceError::Storage)??;
+        match projection {
             Ok(_) => (),
             Err(_) => {
                 return self
@@ -581,6 +666,10 @@ impl ContextService {
         .map(|e| ContextStatus::from_entry(e, false))
     }
 }
+
+#[cfg(test)]
+#[path = "codex_service/attach_tests.rs"]
+mod attach_tests;
 
 #[cfg(test)]
 mod tests {
