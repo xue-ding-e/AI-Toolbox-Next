@@ -1,0 +1,118 @@
+{
+  "candidate_commit": "414bf7e9639376ca5d503983b8c23e2436f41330",
+  "candidate_files": {
+    "crates/ai-toolbox-storage/AGENTS.md": "d1657da4feca0aa597df1fba7596971442b3201d1458160ea44d1a2f88457410",
+    "crates/ai-toolbox-storage/src/codex_context_journal.rs": "8fd6431b629bc9770df72d1474aa42a9803a1d9c2a5f73b30b233c68521c76b8",
+    "crates/ai-toolbox-storage/src/lib.rs": "86d9bdb60a8a220e7cf55d665382bb85882ea7b5dd81ffe91b0da10c64b25b42",
+    "crates/ai-toolbox-storage/src/migrations.rs": "2a1d581a536badf77d1062cd97081084692040a31adfc92db7ab8757c592185a",
+    "crates/ai-toolbox-storage/src/schema.rs": "8de8d63a464d25147716f5d5a52809fb0060330312d912e045eb4b7cf84923b9",
+    "crates/ai-toolbox-storage/tests/codex_context_journal.rs": "e94103a12fc7102d0fb00edf493abe4533aede68602d39041d385dbb3074c630",
+    "crates/ai-toolbox-storage/tests/sqlite_jsonb.rs": "a36041feb9166afa131c2a8c6981bdf69ada0a2c374ceb9751655185d3455a09"
+  },
+  "candidate_statuses": {
+    "crates/ai-toolbox-storage/AGENTS.md": "M",
+    "crates/ai-toolbox-storage/src/codex_context_journal.rs": "A",
+    "crates/ai-toolbox-storage/src/lib.rs": "M",
+    "crates/ai-toolbox-storage/src/migrations.rs": "M",
+    "crates/ai-toolbox-storage/src/schema.rs": "M",
+    "crates/ai-toolbox-storage/tests/codex_context_journal.rs": "A",
+    "crates/ai-toolbox-storage/tests/sqlite_jsonb.rs": "M"
+  },
+  "core_tests": [
+    "closed_failures_can_be_recorded_but_never_cleared_for_an_implicit_retry",
+    "failed_projection_start_transaction_never_grants_a_durable_start",
+    "interrupted_projection_is_durable_and_replay_is_uncertain",
+    "invalid_identifiers_digests_and_numbers_never_create_entries",
+    "master_data_and_journal_insert_roll_back_in_the_same_transaction",
+    "matching_replay_does_not_write_and_mismatched_fingerprint_fails",
+    "migrations::journal_migration_tests::v30_step_failure_rolls_back_table_creation_and_schema_version",
+    "model_pricing_seed::tests::bundled_model_pricing_includes_gpt_5_6_and_grok_4_5",
+    "model_pricing_seed::tests::bundled_model_pricing_json_is_valid",
+    "model_pricing_seed::tests::seed_inserts_missing_rows_and_preserves_existing_rows",
+    "model_pricing_seed::tests::seed_rejects_duplicate_model_ids",
+    "no_file_change_can_be_verified_without_claiming_a_write",
+    "standalone_file_open_rejects_future_schema_without_modifying_bytes",
+    "standalone_state_initializes_schema_jsonb_and_bundled_pricing",
+    "stored_schema_rejects_unknown_payloads_versions_and_invalid_phases",
+    "uncertain_projection_is_terminal_and_cannot_be_called_saved_only",
+    "v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records",
+    "v29_upgrade_snapshot_failure_blocks_schema_changes",
+    "valid_phase_progression_rejects_backwards_and_stale_updates"
+  ],
+  "inventories": {
+    "core_journal": [
+      "closed_failures_can_be_recorded_but_never_cleared_for_an_implicit_retry",
+      "failed_projection_start_transaction_never_grants_a_durable_start",
+      "interrupted_projection_is_durable_and_replay_is_uncertain",
+      "invalid_identifiers_digests_and_numbers_never_create_entries",
+      "master_data_and_journal_insert_roll_back_in_the_same_transaction",
+      "matching_replay_does_not_write_and_mismatched_fingerprint_fails",
+      "no_file_change_can_be_verified_without_claiming_a_write",
+      "stored_schema_rejects_unknown_payloads_versions_and_invalid_phases",
+      "uncertain_projection_is_terminal_and_cannot_be_called_saved_only",
+      "valid_phase_progression_rejects_backwards_and_stale_updates"
+    ],
+    "core_sqlite": [
+      "standalone_file_open_rejects_future_schema_without_modifying_bytes",
+      "standalone_state_initializes_schema_jsonb_and_bundled_pricing",
+      "v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records",
+      "v29_upgrade_snapshot_failure_blocks_schema_changes"
+    ],
+    "core_unit": [
+      "migrations::journal_migration_tests::v30_step_failure_rolls_back_table_creation_and_schema_version",
+      "model_pricing_seed::tests::bundled_model_pricing_includes_gpt_5_6_and_grok_4_5",
+      "model_pricing_seed::tests::bundled_model_pricing_json_is_valid",
+      "model_pricing_seed::tests::seed_inserts_missing_rows_and_preserves_existing_rows",
+      "model_pricing_seed::tests::seed_rejects_duplicate_model_ids"
+    ],
+    "desktop_reexports": [
+      "desktop_reexports_share_storage_types_and_connection"
+    ],
+    "desktop_sqlite": [
+      "already_migrated_v18_with_latency_samples_preserves_existing_measurements",
+      "already_migrated_v18_without_latency_samples_is_repaired_with_backup",
+      "backup_api_creates_readable_sqlite_file",
+      "create_generates_clean_id_and_count_delete_work",
+      "delete_all_clears_only_target_table",
+      "future_backup_schema_message_is_user_facing_and_detectable",
+      "invalid_identifier_and_json_path_are_rejected",
+      "jsonb_probe_and_schema_migration_create_all_tables",
+      "list_orders_by_json_integer_then_column",
+      "patch_preserves_unknown_fields_and_supports_nested_paths",
+      "patch_where_bool_updates_all_matching_records",
+      "put_derives_columns_from_numeric_json_timestamps_without_changing_json_type",
+      "put_get_stores_jsonb_blob_and_injects_metadata",
+      "put_keeps_column_and_json_timestamps_aligned_on_update",
+      "query_by_bool_string_number_and_max_work",
+      "query_by_field_supports_array_and_object_values",
+      "schema_migration_rejects_future_user_version",
+      "session_usage_migrations_preserve_rollups_and_ledger_on_repeat",
+      "sqlite_state_limits_lock_scope_with_closure_api",
+      "sqlite_state_open_creates_pre_migration_backup_before_schema_upgrade",
+      "sqlite_state_open_rejects_future_user_version_before_file_initialization",
+      "transaction_rolls_back_on_error",
+      "update_applied_status_switches_records_inside_one_transaction",
+      "update_hook_records_changed_table_names",
+      "v17_migration_preserves_existing_request_logs_and_nullable_effort",
+      "v20_usage_metadata_upgrade_preserves_logs_rollups_and_import_ledger",
+      "v21_websocket_upgrade_defaults_old_logs_to_http_without_changing_usage",
+      "v27_migration_preserves_existing_request_logs_and_nullable_service_tier",
+      "v28_migration_preserves_existing_request_logs_and_nullable_compaction_mode",
+      "v29_adds_the_credits_columns_in_the_same_step_as_the_project_dimension",
+      "v29_migration_rebuilds_rollups_with_the_project_column"
+    ]
+  },
+  "patch_sha256": "b644312a61b4b6250408c0e5f3e98d34e6adb51375bf59df11dc208f8cb0aa8b",
+  "preserved_files": {
+    "crates/ai-toolbox-storage/Cargo.lock": "cb14e4cabd3e074917823d8a33a86916540b8d26cbffc6a32cf5020e00ccdaf8",
+    "crates/ai-toolbox-storage/Cargo.toml": "782019fd09158703e481c4b05e5d70b6cef0dfd9c8fae0ab433df82b0286d9c8",
+    "crates/ai-toolbox-storage/src/backup.rs": "c15dc55ad685d98281f64871af3450c1ea4db5ead97b93c985dca490af42515c",
+    "crates/ai-toolbox-storage/src/helpers.rs": "a090acb5c79b9ef150aebc41b27479695cbc48070d10e0751f8a8294c4d773ee",
+    "crates/ai-toolbox-storage/src/sqlite_state.rs": "148ac019639a4a70ce121ca0ccf5ac79fc809363de506f3ee509b74cd922b6a8",
+    "tauri/Cargo.lock": "c8b8a9092bbc4dc1a9c737e83df094410ae3a94777ec2c65712baa740baad623",
+    "tauri/Cargo.toml": "0ba5ce90b552cdb80abe97b82293105372e89c74c8d0b6ee65f88b78ba779a85",
+    "tauri/tests/sqlite_jsonb.rs": "a6453971d202847fcb43c0748493e2cd46dc6ced97821002c133c0c80ae2f103",
+    "tauri/tests/storage_reexports.rs": "6e63aa6c2d7a447356187d53cfd2205e45d6d491535da9467ea760442d4daa3f"
+  },
+  "source_base": "1b128c8a8fdfef51fe465c3a884d9adcd8594318"
+}
