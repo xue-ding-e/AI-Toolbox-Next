@@ -4,7 +4,7 @@
 
 ## 一句话职责
 
-- `db/` 是应用唯一的持久化底座：管理 SQLite JSONB 主库的连接/PRAGMA/迁移/健康检查，提供通用 JSONB 读写 helper，并托管模型定价的 seed 与远端同步。
+- `crates/ai-toolbox-storage/` 是应用唯一的持久化底座：管理 SQLite JSONB 主库的连接/PRAGMA/迁移/健康检查、通用 JSONB helper 与同步定价 seed；桌面 `db` 保持原路径 re-export，只有依赖应用代理设置的远端 HTTP 同步留在桌面。
 
 ## Source of Truth
 
@@ -14,6 +14,13 @@
 - 表名的唯一来源是 `schema::DbTable`（`ALL_TABLES` 是建表全集）；表名与 JSON 字段路径都要经过 identifier 校验（字母/数字/下划线，首字符必须是字母或下划线），外部输入不得直接 `format!` 进 SQL。
 - 少数**非 JSONB 的独立物理表**不在 `DbTable` 里：`proxy_request_logs`、`usage_daily_rollups`（网关用量，归 `proxy_gateway/`）与 `model_pricing`（模型定价，归 `proxy_gateway/pricing.rs` 与本文的 seed）。它们用列式 schema，读写走原生 SQL，不套 `db_get`/`db_put`。
 - 模型定价的默认数据按「app data 缓存文件 `model_pricing.json` → 内置 `resources/model_pricing.json`」逐条补齐，远端 URL 列表由后端独占维护（主源 + jsDelivr 镜像，顺序回退，前端不传 URL）。缓存文件只是远端数据的缓存；`model_pricing` 表里已有的行（用户可改）才是事实源，seed 只补不覆盖。
+
+## 共享存储边界
+
+- 共享 crate 是 unpublished 仓库组件，不依赖 Tauri、HTTP client 或应用设置。桌面 `db` re-export 同一个连接类型与模块，不保留第二份 SQL、迁移或 seed 实现。
+- 内置定价 JSON 仍唯一维护在 `tauri/resources/model_pricing.json`；共享 crate 用显式相对路径编译期嵌入，不能复制资源或把初始化 seed 改成 callback/no-op。
+- `CACHE_DIR` 的 `OnceLock` 仅存在于共享 crate。桌面远端同步继续按「统一代理 HTTP client → parse → 尝试写缓存 → 原连接 INSERT OR IGNORE」执行；共享 parser/insert/cache 函数只分离职责，不改变原错误传播或 best-effort 缓存语义。
+- 抽取不等于允许 CLI 直接开库，也不提供所谓只读启动模式。原 `open` 会设置 WAL、迁移与补 seed，不能用于承诺无写入的观测命令。
 
 ## 核心设计决策（Why）
 
@@ -68,6 +75,9 @@ sequenceDiagram
 - 新增表/索引：`DbTable` + `ALL_TABLES` + 一个新的 `migrate_vN`（建表 + `create_json_index`）；只加普通业务字段不需要迁移。
 
 ## 最小验证
+
+- `cargo test --manifest-path crates/ai-toolbox-storage/Cargo.toml`：独立构建不含 Tauri 的实际存储实现，覆盖原 seed 单测及 standalone 初始化/未来 schema 拒绝。
+- `cd tauri && cargo test --test storage_reexports --jobs 2`：验证桌面与共享 crate 连接和类型身份一致。原 `sqlite_jsonb` 完整集成测试仍保留在桌面，不能用新 smoke 代替。
 
 - `cd tauri && cargo test --test sqlite_jsonb --jobs 2`：覆盖 JSONB 探针、全表建表、迁移幂等与旧行保留、迁移前快照、过新版本拒绝、helper 语义（时间戳对齐、patch 保留未知字段、事务回滚、update hook）。
 - 改 helper 或迁移后至少验证：`user_version` 停在旧值且缺新字段的老库能升到 `TARGET_SCHEMA_VERSION`，已有行数据不变。

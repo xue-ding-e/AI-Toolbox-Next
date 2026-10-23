@@ -1,13 +1,8 @@
-pub mod backup;
-pub mod change_hook;
-pub mod health;
-pub mod helpers;
-pub mod migrations;
+// Preserve desktop import paths without a second storage implementation.
+pub use ai_toolbox_storage::{
+    backup, change_hook, health, helpers, migrations, schema, sqlite_state, SqliteDbState,
+    SQLITE_DATABASE_FILE,
+};
+
+// Only remote HTTP synchronization belongs to the desktop adapter.
 pub mod model_pricing_seed;
-pub mod schema;
-pub mod sqlite_state;
-
-/// Main SQLite database file name within the app data directory.
-pub const SQLITE_DATABASE_FILE: &str = "ai-toolbox.db";
-
-pub use sqlite_state::SqliteDbState;

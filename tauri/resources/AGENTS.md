@@ -8,7 +8,7 @@
 
 - `preset_models.json` 是预设模型默认数据的源码来源。`tauri/src/coding/preset_models.rs` 通过 `include_str!` 在编译期嵌入它；应用启动后前端先读 app data 里的缓存，再回退到这里的 bundled defaults，随后后台拉远端最新版本更新内存和缓存。
 - `models.dev.json` 是 OpenCode 免费/官方模型默认数据的源码来源。`tauri/src/coding/open_code/free_models.rs` 同样通过 `include_str!` 在编译期嵌入它；运行时 app data 里的 `models.dev.json` 只是缓存，不是本仓编辑入口。
-- `model_pricing.json` 是 Gateway 官方模型定价默认数据的源码来源。`tauri/src/db/model_pricing_seed.rs` 通过 `include_str!` 编译期嵌入它，并在 SQLite migration 后用 `INSERT OR IGNORE` 增量补齐 `model_pricing` 表。
+- `model_pricing.json` 是 Gateway 官方模型定价默认数据的源码来源。`crates/ai-toolbox-storage/src/model_pricing_seed.rs` 通过 `include_str!` 编译期嵌入它，并在 SQLite migration 后用 `INSERT OR IGNORE` 增量补齐 `model_pricing` 表。
 - `gateway_provider_profiles.json` 是 Gateway 内置供应商 endpoint 默认数据的源码来源。`tauri/src/coding/proxy_gateway/provider_profiles.rs` 通过 `include_str!` 编译期嵌入它；运行时 app data 里的同名文件是远端刷新缓存，用于前端启动后动态更新供应商列表、API 格式和 Base URL。
 - `dsh_builtin_models.json` 是 dsh（DeepSeek Harness）内置渠道默认模型的源码来源。`tauri/src/coding/dsh/builtin_models.rs` 通过 `include_str!` 编译期嵌入它。它是**已安装 `@earendil-works/pi-ai` catalog 投影到 dsh `llm-pi-ai` route model profile schema** 的结果（键：`id`/`name`/`api`/`baseURL`/`contextWindow`/`maxTokens`/`reasoning`/`input`/`reasoningEfforts`/`compat`），用来在 dsh 运行时不在场时也能展示与编辑该渠道的默认模型。上游 `thinkingLevelMap` 中值为 `null` 的档位在本文件里**不写键**（缺失即表示不支持）。
 - 备份/恢复里读写的 `preset_models.json`、`models.dev.json`、`model_pricing.json`、`gateway_provider_profiles.json` 都是 app data 缓存文件；不要把这些缓存链路误认为仓库内 `tauri/resources/*.json` 会被运行时直接原地改写。
@@ -66,7 +66,7 @@ sequenceDiagram
 - `tauri/src/coding/preset_models.rs` 依赖 `preset_models.json` 作为编译期默认数据，并向前端暴露加载缓存与远端刷新命令。
 - `tauri/src/coding/codex/commands.rs` 通过 `coding::preset_models::display_name_for_model_id` 用 bundled 预设的 `id -> name` 生成 Codex model catalog 的 `display_name` 回退（显式 `displayName` → 预设名称 → 原始 id）。该查询只读编译期 bundled 文件，不读 app data 缓存，保证 catalog 生成确定且离线可用；重复 id 按 JSON 分组顺序取先出现的 name。
 - `tauri/src/coding/open_code/free_models.rs` 依赖 `models.dev.json` 作为 OpenCode 默认模型数据。
-- `tauri/src/db/model_pricing_seed.rs` 依赖 `model_pricing.json` 作为 Gateway 官方模型定价默认数据；运行时远端同步只增量插入缺失行，不覆盖用户已有价格。
+- `crates/ai-toolbox-storage/src/model_pricing_seed.rs` 依赖 `model_pricing.json` 作为 Gateway 官方模型定价默认数据；运行时远端同步只增量插入缺失行，不覆盖用户已有价格。
 - `web/app/providers.tsx` 在启动时先加载 preset models / Gateway provider profiles 本地缓存，再异步拉远端并更新前端内存态。
 - 备份恢复模块会单独备份和恢复 app data 下的 `preset_models.json`、`models.dev.json`、`model_pricing.json` 与 `gateway_provider_profiles.json` 缓存文件。
 

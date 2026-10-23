@@ -15,6 +15,7 @@ tauri-build = { version = "2.7.0", features = [] }
 
 [dependencies]
 ai-toolbox-codex-config = { path = "../crates/ai-toolbox-codex-config" }
+ai-toolbox-storage = { path = "../crates/ai-toolbox-storage" }
 tauri = { version = "2.12.0", features = ["protocol-asset", "tray-icon", "image-png", "unstable"] }
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-fs = "2.4.5"

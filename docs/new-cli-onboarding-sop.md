@@ -135,8 +135,8 @@
 > **官方账号不是一个文件。** 参考实现（ZCode，2026-10-06）拆成三件，因为三件事的失败代价不同：**搬运**（`official_accounts.rs`，必须字节等价，不许失败）、**登录**（`oauth_login.rs`，可失败、有超时/取消）、**展示**（`credential_cipher.rs`，失败只损失一个显示名）。混在一个文件里最容易犯的错就是拿展示用的解析结果去驱动搬运逻辑（见 13.1 模式六）。
 
 - [ ] `tauri/src/coding/mod.rs` 加 `pub mod <tool>;`
-- [ ] `tauri/src/db/schema.rs` 的 `DbTable` 枚举加表名（`<tool>_provider` / `_common_config` / `_prompt_config` / `_official_account`，按需）
-- [ ] `tauri/src/db/migrations.rs` 注册建表
+- [ ] `crates/ai-toolbox-storage/src/schema.rs` 的 `DbTable` 枚举加表名（`<tool>_provider` / `_common_config` / `_prompt_config` / `_official_account`，按需）
+- [ ] `crates/ai-toolbox-storage/src/migrations.rs` 注册建表
 - [ ] 表结构遵循 `id + data(JSONB) + created_at + updated_at`，业务字段放 JSONB（普通字段增删无需 migration）
 - [ ] `apply_config_internal` 带 `from_tray` 参数（托盘与主窗口共用）
 - [ ] emit `config-changed` 事件，payload 区分 `"window"` / `"tray"`

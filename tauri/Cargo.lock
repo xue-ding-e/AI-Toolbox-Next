@@ -92,6 +92,7 @@ name = "ai-toolbox"
 version = "1.2.0"
 dependencies = [
  "ai-toolbox-codex-config",
+ "ai-toolbox-storage",
  "anyhow",
  "apple-native-keyring-store",
  "arboard",
@@ -171,6 +172,19 @@ name = "ai-toolbox-codex-config"
 version = "0.1.0"
 dependencies = [
  "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "ai-toolbox-storage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "log",
+ "rusqlite",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

@@ -1,0 +1,19 @@
+[package]
+name = "ai-toolbox-storage"
+version = "0.1.0"
+description = "Shared SQLite JSONB storage for AI Toolbox"
+license = "AGPL-3.0-or-later"
+edition = "2021"
+publish = false
+
+[dependencies]
+chrono = { version = "0.4.43", features = ["serde"] }
+log = "0.4"
+rusqlite = { version = "0.39.0", features = ["bundled", "backup", "hooks"] }
+rust_decimal = "1.39.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+uuid = { version = "1.19.0", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"
