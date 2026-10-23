@@ -1,0 +1,1512 @@
+diff --git a/tauri/Cargo.lock b/tauri/Cargo.lock
+index b0adb415949037083f7957b8fb9eb15e89f65c20..acc2824ea52bef9276b10abd4162f70741004a88 100644
+--- a/tauri/Cargo.lock
++++ b/tauri/Cargo.lock
+@@ -92,6 +92,7 @@ name = "ai-toolbox"
+ version = "1.2.0"
+ dependencies = [
+  "ai-toolbox-codex-config",
++ "ai-toolbox-management",
+  "ai-toolbox-storage",
+  "anyhow",
+  "apple-native-keyring-store",
+@@ -174,6 +175,20 @@ dependencies = [
+  "toml_edit 0.22.27",
+ ]
+ 
++[[package]]
++name = "ai-toolbox-management"
++version = "0.1.0"
++dependencies = [
++ "fs2",
++ "getrandom 0.3.4",
++ "libc",
++ "serde",
++ "serde_json",
++ "tempfile",
++ "thiserror 2.0.17",
++ "tokio",
++]
++
+ [[package]]
+ name = "ai-toolbox-storage"
+ version = "0.1.0"
+diff --git a/tauri/Cargo.toml b/tauri/Cargo.toml
+index 5018d144a9a13c32919eaeaba1478e0d3e56917b..1d9bdb90bae25b9baf8018ef6a5ff5716f221713 100644
+--- a/tauri/Cargo.toml
++++ b/tauri/Cargo.toml
+@@ -15,6 +15,7 @@ tauri-build = { version = "2.7.0", features = [] }
+ 
+ [dependencies]
+ ai-toolbox-codex-config = { path = "../crates/ai-toolbox-codex-config" }
++ai-toolbox-management = { path = "../crates/ai-toolbox-management" }
+ ai-toolbox-storage = { path = "../crates/ai-toolbox-storage" }
+ tauri = { version = "2.12.0", features = ["protocol-asset", "tray-icon", "image-png", "unstable"] }
+ tauri-plugin-dialog = "2.6.0"
+diff --git a/tauri/src/coding/codex/AGENTS.md b/tauri/src/coding/codex/AGENTS.md
+index 0c6bcce60859c7362dd06c5900e0c5bc39c76b1d..103069f42ca04b84e71dff2297d92755a7bbb71d 100644
+--- a/tauri/src/coding/codex/AGENTS.md
++++ b/tauri/src/coding/codex/AGENTS.md
+@@ -47,6 +47,8 @@ sequenceDiagram
+ 
+ ## 易错点与历史坑（Gotchas）
+ 
++- History restore 的 sidecar 是不可信路径元数据：整批校验必须在 `pre-restore` 备份和数据库恢复之前，并在 sidecar 写入前复用；逐条循环内才拒绝会让前面的 DB/index 已被改写。保留名按共享 coordination matcher 逐组件检查两种分隔符；这不是所有 runtime writer 已接 owner 的证明。
++
+ - Codex 无可委托的 `plugin marketplace add` CLI（不像 Grok/Claude 委托各自 CLI）。远程市场源（git 仓库 URL / GitHub `owner/repo` 简写 / `marketplace.json` 直链）由后端 `plugin_workspace::add_codex_plugin_workspace_root` 自行处理：git 源克隆到 `<codex_root>/.tmp/plugin-marketplaces/<id>`、JSON 源仅下载 `marketplace.json` 到该目录的 `.agents/plugins/`，再注册为 workspace root。LocalWindows 复用 `coding::skills::git_fetcher::clone_or_pull`（含代理 env + 超时）；WslDirect 走 `wsl -d <distro> --exec env <proxy> git clone` 到 Linux 路径、注册 UNC 等价路径。`marketplace.json` 直链仅下载单文件，插件可列但不可装（`source: { Local }` 相对路径无对应目录）。重复添加同一 URL 命中同一 `<id>` 缓存目录，触发 fetch+reset 刷新而非重建。删除 workspace root 时若路径位于受控缓存目录下，顺手清理克隆/下载的缓存。
+ - `extract_codex_common_config_from_current_file` 只能读当前根目录下的 `config.toml`，禁止复用 `read_codex_settings_from_disk`（会先读无关的 `auth.json`）。提取逻辑不需要 auth；WSL UNC / 网络路径上 `Path::exists` / `fs::read_to_string` 可能长时间阻塞，文件 I/O 必须走 `coding::file_io`（`spawn_blocking` + 超时），超时错误文案要带上实际路径。
+ - 不要对 `config.toml` 做纯文本拼接。遇到 table 合并必须走结构化 TOML merge。
+diff --git a/tauri/src/coding/codex/history_sync.rs b/tauri/src/coding/codex/history_sync.rs
+index eb2ad9dde1095d054093b983a57f5b273bf44a5d..1c592f9088f7a444bcc4d98a8c3e4b41f4fd9b9d 100644
+--- a/tauri/src/coding/codex/history_sync.rs
++++ b/tauri/src/coding/codex/history_sync.rs
+@@ -277,6 +277,8 @@ pub fn restore_latest(codex_home: &Path) -> Result<CodexHistoryRestoreResult, St
+         .last()
+         .cloned()
+         .ok_or_else(|| "No Codex history backup found".to_string())?;
++    // Reject a forged sidecar before creating the safety backup or restoring DB.
++    load_validated_metadata_sidecar(&paths, &latest_backup)?;
+     let safety_backup = make_backup(&paths, "pre-restore")?;
+     let restore_db =
+         retry_sqlite_operation(|| restore_database_from_backup(&paths.db_path, &latest_backup))?;
+@@ -1033,21 +1035,39 @@ fn restore_database_from_backup(db_path: &Path, backup_path: &Path) -> Result<()
+         .map_err(|error| format!("Failed to restore Codex history database: {error}"))
+ }
+ 
++fn load_validated_metadata_sidecar(
++    paths: &Paths,
++    backup_path: &Path,
++) -> Result<Vec<SessionMetaBackupEntry>, String> {
++    use ai_toolbox_management::coordination::contains_coordination_component;
++    if contains_coordination_component(&paths.codex_home.to_string_lossy()) {
++        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
++    }
++    let meta_backup = session_meta_backup_path(backup_path);
++    let content = match fs::read_to_string(&meta_backup) {
++        Ok(content) => content,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
++        Err(error) => return Err(format!("Failed to read Codex session metadata backup: {error}")),
++    };
++    let entries: Vec<SessionMetaBackupEntry> = serde_json::from_str(&content)
++        .map_err(|error| format!("Failed to parse Codex session metadata backup: {error}"))?;
++    for entry in &entries {
++        // Check both separators even on Unix, before any sidecar is rewritten.
++        if contains_coordination_component(&entry.relative_path) {
++            return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
++        }
++    }
++    Ok(entries)
++}
++
+ fn restore_metadata_sidecars(paths: &Paths, backup_path: &Path) -> Result<(usize, usize), String> {
++    let entries = load_validated_metadata_sidecar(paths, backup_path)?;
+     let index_backup = session_index_backup_path(backup_path);
+     if index_backup.exists() {
+         let text = fs::read(&index_backup)
+             .map_err(|error| format!("Failed to read Codex session index backup: {error}"))?;
+         write_atomic_with_retry(&paths.session_index_path, &text)?;
+     }
+-    let meta_backup = session_meta_backup_path(backup_path);
+-    if !meta_backup.exists() {
+-        return Ok((0, 0));
+-    }
+-    let content = fs::read_to_string(&meta_backup)
+-        .map_err(|error| format!("Failed to read Codex session metadata backup: {error}"))?;
+-    let entries: Vec<SessionMetaBackupEntry> = serde_json::from_str(&content)
+-        .map_err(|error| format!("Failed to parse Codex session metadata backup: {error}"))?;
+     let mut restored = 0;
+     let mut skipped = 0;
+     for entry in entries {
+@@ -1070,6 +1090,11 @@ fn restore_metadata_sidecars(paths: &Paths, backup_path: &Path) -> Result<(usize
+ }
+ 
+ fn join_safe_relative(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
++    if ai_toolbox_management::coordination::contains_coordination_component(relative_path)
++        || ai_toolbox_management::coordination::contains_coordination_component(&root.to_string_lossy())
++    {
++        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
++    }
+     let mut path = root.to_path_buf();
+     for component in Path::new(relative_path).components() {
+         match component {
+@@ -1389,6 +1414,35 @@ model = "gpt-new"
+         assert!(result.lock_wait_ms > 0);
+     }
+ 
++    #[test]
++    fn forged_sidecar_preserves_database_index_lock_inode_and_backup_set() {
++        for reserved in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
++            let env = TestCodexHistory::new();
++            env.create_db(true);
++            backup(&env.root, "manual").unwrap();
++            let paths = super::resolve_paths(&env.root);
++            let backups = super::list_backup_files(&paths.backup_dir).unwrap();
++            let latest = backups.last().unwrap();
++            let lock = env.root.join(reserved);
++            fs::write(&lock, b"fixed inode").unwrap();
++            let before = fs::metadata(&lock).unwrap();
++            let db_before = fs::read(&paths.db_path).unwrap();
++            fs::write(&paths.session_index_path, b"index unchanged").unwrap();
++            fs::write(super::session_meta_backup_path(latest), serde_json::json!([{
++                "relativePath": reserved, "firstLine": "forged"
++            }]).to_string()).unwrap();
++            assert_eq!(restore_latest(&env.root).unwrap_err(), "OWNER_COORDINATION_PATH_RESERVED");
++            assert_eq!(fs::read(&lock).unwrap(), b"fixed inode");
++            assert_eq!(fs::read(&paths.db_path).unwrap(), db_before);
++            assert_eq!(fs::read(&paths.session_index_path).unwrap(), b"index unchanged");
++            assert_eq!(super::list_backup_files(&paths.backup_dir).unwrap(), backups);
++            #[cfg(unix)] {
++                use std::os::unix::fs::MetadataExt;
++                assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
++            }
++        }
++    }
++
+     #[test]
+     fn restore_latest_restores_database_and_session_metadata() {
+         let env = TestCodexHistory::new();
+diff --git a/tauri/src/coding/ssh/AGENTS.md b/tauri/src/coding/ssh/AGENTS.md
+index 73d9c894a06a06a3e30e2d6137e32b871a2f51ba..a1effddfbbd8eeb5533b8637f4e984ceb4c8e33f 100644
+--- a/tauri/src/coding/ssh/AGENTS.md
++++ b/tauri/src/coding/ssh/AGENTS.md
+@@ -36,6 +36,8 @@ sequenceDiagram
+ 
+ ## 易错点与历史坑（Gotchas）
+ 
++- Owner 协调 artifact 的递归上传过滤必须发生在 `metadata` 之前，且覆盖普通文件、目录、socket 和 dangling symlink，不能仅把 lock 加进“目录 excludes”。目录 replacement 在远端 mkdir/上传 staging 前预检，在 rm 前复检，与 WSL 共用精确 matcher/shell guard；single/pattern 和通用 write/delete 也拒绝保留路径。现有 artifact 拒绝不是远端 owner lease，TOCTOU、硬链接与 Skills 独立 replace-tree 仍需另行闭合，不能因此启用业务 CLI 写入口。
++
+ - 不要把 SSH 写成“自动同步”模块。当前应明确为手动同步主模型；即使启用或切换连接时会跑一次全量同步，也不等于存在像 WSL 那样的事件驱动自动同步监听体系。
+ - 同步设置保存只 patch 用户字段，不能回写表单里的历史状态或清掉 `last_sync_warnings`；配置、普通状态和警告写入均在同一次 SQLite 连接锁内完成。全量同步须把 Skills 阶段已收集警告合入返回结果与完成事件，包含该阶段最终失败的情况；同步哈希写入失败、目标目录无法解析也必须进入警告链路，不能只留日志或静默跳过。
+ - SSH 设置页不会像 WSL 设置页那样按 `is_wsl_direct` 禁用模块。它只是把左侧本地路径显示成完整 UNC，真正同步仍由后端解析。
+diff --git a/tauri/src/coding/ssh/session.rs b/tauri/src/coding/ssh/session.rs
+index 9681cecf706e481db9372dd808178abe59f15548..f1fed3e0dbf1279b517a42fa498a47acabc6506f 100644
+--- a/tauri/src/coding/ssh/session.rs
++++ b/tauri/src/coding/ssh/session.rs
+@@ -437,10 +437,16 @@ impl SshSession {
+         excluded_names: &[String],
+         current_file_reporter: Option<&(dyn Fn(String) + Send + Sync)>,
+     ) -> Result<(), String> {
++        reject_reserved_sync_path(local_path)?;
++        reject_reserved_sync_path(remote_path)?;
++        let resolved_source = tokio::fs::canonicalize(local_path).await
++            .map_err(|error| format!("Failed to resolve upload source: {error}"))?;
++        reject_reserved_sync_path(&resolved_source.to_string_lossy())?;
+         let sftp = self.create_sftp_session().await?;
+ 
+         // 将 ~ 展开为绝对路径
+         let abs_remote_path = resolve_remote_path(&sftp, remote_path).await?;
++        reject_reserved_sync_path(&abs_remote_path)?;
+         let excluded_names: HashSet<String> = excluded_names.iter().cloned().collect();
+         let mut stats = DirectoryUploadStats::default();
+         let local_root = std::path::Path::new(local_path);
+@@ -576,12 +582,24 @@ pub async fn test_connection_capability(conn: &SSHConnection) -> SSHConnectionRe
+     outcome.into_result()
+ }
+ 
++pub(super) fn reject_reserved_sync_path(path: &str) -> Result<(), String> {
++    if ai_toolbox_management::coordination::contains_coordination_component(path) {
++        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
++    }
++    Ok(())
++}
++
+ /// 通过已有 SFTP 会话上传单个文件
+ pub async fn upload_file_via_sftp(
+     sftp: &russh_sftp::client::SftpSession,
+     local_path: &str,
+     remote_path: &str,
+ ) -> Result<(), String> {
++    reject_reserved_sync_path(local_path)?;
++    reject_reserved_sync_path(remote_path)?;
++    let resolved_source = tokio::fs::canonicalize(local_path).await
++        .map_err(|error| format!("Failed to resolve upload source: {error}"))?;
++    reject_reserved_sync_path(&resolved_source.to_string_lossy())?;
+     // 读取本地文件
+     let data = tokio::fs::read(local_path)
+         .await
+@@ -589,6 +607,7 @@ pub async fn upload_file_via_sftp(
+ 
+     // 将 ~ 展开为绝对路径（SFTP 不支持 ~ 语法）
+     let abs_remote_path = resolve_remote_path(sftp, remote_path).await?;
++    reject_reserved_sync_path(&abs_remote_path)?;
+ 
+     // 确保远程父目录存在
+     if let Some(parent) = parent_path(&abs_remote_path) {
+@@ -666,7 +685,15 @@ async fn upload_dir_recursive(
+         .await
+         .map_err(|e| format!("读取目录项失败: {}", e))?
+     {
++        // Filter every object type before metadata, including dangling links,
++        // sockets and directories. User directory excludes alone are insufficient.
++        if ai_toolbox_management::transport::is_reserved_coordination_name(&entry.file_name()) {
++            continue;
++        }
+         let path = entry.path();
++        let resolved = tokio::fs::canonicalize(&path).await
++            .map_err(|error| format!("Failed to resolve upload source: {error}"))?;
++        reject_reserved_sync_path(&resolved.to_string_lossy())?;
+         // 使用 metadata（而非 symlink_metadata）跟随符号链接，获取最终目标的类型
+         let metadata = tokio::fs::metadata(&path)
+             .await
+diff --git a/tauri/src/coding/ssh/sync.rs b/tauri/src/coding/ssh/sync.rs
+index b8d61a590c5fa7a7f7e1f1da67471e942153ffd8..712d364d53f4bacb190a6f5b1d03ffcad504cf8c 100644
+--- a/tauri/src/coding/ssh/sync.rs
++++ b/tauri/src/coding/ssh/sync.rs
+@@ -1,4 +1,5 @@
+-use super::session::{self, upload_file_via_sftp, SshSession};
++use ai_toolbox_management::coordination::{posix_coordination_guard, quote_posix_sync_path};
++use super::session::{self, reject_reserved_sync_path, upload_file_via_sftp, SshSession};
+ use super::types::{
+     normalize_directory_excludes, SSHConnection, SSHConnectionResult, SSHFileMapping, SyncResult,
+ };
+@@ -124,6 +125,8 @@ pub async fn sync_single_file_with_progress(
+     current_file_reporter: Option<CurrentFileReporter<'_>>,
+ ) -> Result<Vec<String>, String> {
+     let expanded = expand_local_path(local_path)?;
++    reject_reserved_sync_path(&expanded)?;
++    reject_reserved_sync_path(remote_path)?;
+     log::trace!(
+         "SSH single file sync start: local_path={}, expanded_local_path={}, remote_path={}",
+         local_path,
+@@ -147,8 +150,11 @@ pub async fn sync_single_file_with_progress(
+ 
+     let remote_target = remote_path.replace("~", "$HOME");
+ 
+-    // 创建远程目录
+-    let mkdir_cmd = format!("mkdir -p \"$(dirname \"{}\")\"", remote_target);
++    // Guard the expanded remote path before the first filesystem write.
++    let mkdir_cmd = format!(
++        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; mkdir -p \"$(dirname \"$target\")\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(&remote_target),
++    );
+     session.exec_command(&mkdir_cmd).await?;
+ 
+     // SFTP 上传文件
+@@ -162,6 +168,34 @@ pub async fn sync_single_file_with_progress(
+     Ok(vec![format!("{} -> {}", local_path, remote_path)])
+ }
+ 
++fn build_remote_directory_prepare_command(remote_path: &str) -> String {
++    format!(
++        "set -e; {guards}\ntarget={target}; ait_guard_tree \"$target\"; \
++         mkdir -p \"$(dirname \"$target\")\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(remote_path),
++    )
++}
++
++fn build_remote_directory_swap_command(remote_path: &str, temporary_path: &str) -> String {
++    // Preflight and this second scan are compatibility checks, not remote owner
++    // admission. An uncooperative writer can still race the following deletion.
++    format!(
++        "set -e; {guards}\ntarget={target}; tmp={temporary}; \
++         ait_guard_tree \"$target\"; rm -rf -- \"$target\"; mv -- \"$tmp\" \"$target\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(remote_path),
++        temporary = quote_posix_sync_path(temporary_path),
++    )
++}
++
++fn build_remote_remove_command(remote_path: &str) -> String {
++    format!(
++        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
++         if [ -d \"$target\" ] && [ ! -L \"$target\" ]; then ait_guard_tree \"$target\"; fi; \
++         rm -rf -- \"$target\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(remote_path),
++    )
++}
++
+ /// 同步整个目录到远程（通过 SFTP）
+ /// 使用临时目录 + mv 实现原子替换，防止上传中断导致数据丢失
+ pub async fn sync_directory_with_progress(
+@@ -172,6 +206,8 @@ pub async fn sync_directory_with_progress(
+     current_file_reporter: Option<CurrentFileReporter<'_>>,
+ ) -> Result<Vec<String>, String> {
+     let expanded = expand_local_path(local_path)?;
++    reject_reserved_sync_path(&expanded)?;
++    reject_reserved_sync_path(remote_path)?;
+     let directory_excludes = normalize_directory_excludes(directory_excludes);
+     log::trace!(
+         "SSH directory sync start: local_path={}, expanded_local_path={}, remote_path={}, directory_excludes={:?}",
+@@ -191,8 +227,6 @@ pub async fn sync_directory_with_progress(
+         return Ok(vec![]);
+     }
+ 
+-    let remote_target = remote_path.replace("~", "$HOME");
+-
+     // 安全检查：禁止对根路径或家目录执行操作
+     let trimmed = remote_path.trim();
+     if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
+@@ -205,10 +239,9 @@ pub async fn sync_directory_with_progress(
+         .map(|d| d.as_millis())
+         .unwrap_or(0);
+     let tmp_remote_path = format!("{}.tmp_{}", remote_path, tmp_suffix);
+-    let tmp_remote_target = format!("{}.tmp_{}", remote_target, tmp_suffix);
+ 
+     // 创建远程父目录
+-    let mkdir_cmd = format!("mkdir -p \"$(dirname \"{}\")\"", remote_target);
++    let mkdir_cmd = build_remote_directory_prepare_command(remote_path);
+     session.exec_command(&mkdir_cmd).await?;
+ 
+     // SFTP 递归上传到临时目录（upload_dir 内部会展开 ~ 和 $HOME）
+@@ -221,15 +254,12 @@ pub async fn sync_directory_with_progress(
+         )
+         .await?;
+ 
+-    // 原子替换：rm 旧目录 + mv 临时目录到目标
+-    let swap_cmd = format!(
+-        "rm -rf \"{}\" && mv \"{}\" \"{}\"",
+-        remote_target, tmp_remote_target, remote_target
+-    );
++    // Repeat the guard immediately before the destructive replacement.
++    let swap_cmd = build_remote_directory_swap_command(remote_path, &tmp_remote_path);
+     if let Err(e) = session.exec_command(&swap_cmd).await {
+         // 替换失败，清理临时目录
+         let _ = session
+-            .exec_command(&format!("rm -rf \"{}\"", tmp_remote_target))
++            .exec_command(&build_remote_remove_command(&tmp_remote_path))
+             .await;
+         return Err(format!("目录替换失败: {}", e));
+     }
+@@ -252,6 +282,8 @@ pub async fn sync_pattern_files_with_progress(
+     current_file_reporter: Option<CurrentFileReporter<'_>>,
+ ) -> Result<Vec<String>, String> {
+     let expanded = expand_local_path(local_pattern)?;
++    reject_reserved_sync_path(&expanded)?;
++    reject_reserved_sync_path(remote_dir)?;
+     log::trace!(
+         "SSH pattern sync start: local_pattern={}, expanded_pattern={}, remote_dir={}",
+         local_pattern,
+@@ -263,6 +295,7 @@ pub async fn sync_pattern_files_with_progress(
+     let matches: Vec<_> = glob::glob(&expanded)
+         .map_err(|e| format!("无效的 glob 模式: {}", e))?
+         .filter_map(|entry| entry.ok())
++        .filter(|path| !ai_toolbox_management::coordination::contains_coordination_component(&path.to_string_lossy()))
+         .collect();
+ 
+     if matches.is_empty() {
+@@ -277,8 +310,19 @@ pub async fn sync_pattern_files_with_progress(
+ 
+     let remote_target = remote_dir.replace("~", "$HOME");
+ 
+-    // 创建远程目录
+-    let mkdir_cmd = format!("mkdir -p \"{}\"", remote_target);
++    // Validate all matched source aliases before creating the destination.
++    for source in &matches {
++        // Ordinary missing/unreadable matches retain the existing per-file
++        // best-effort handling below. A resolvable coordination alias still
++        // rejects before destination creation; upload revalidates each source.
++        if let Ok(resolved) = std::fs::canonicalize(source) {
++            reject_reserved_sync_path(&resolved.to_string_lossy())?;
++        }
++    }
++    let mkdir_cmd = format!(
++        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; mkdir -p \"$target\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(&remote_target),
++    );
+     session.exec_command(&mkdir_cmd).await?;
+ 
+     // 复用同一个 SFTP session 上传所有文件
+@@ -588,11 +632,12 @@ pub async fn write_remote_file(
+     path: &str,
+     content: &str,
+ ) -> Result<(), String> {
++    reject_reserved_sync_path(path)?;
+     let remote_path = path.replace("~", "$HOME");
+-
+     let command = format!(
+-        "mkdir -p \"$(dirname \"{}\")\" && cat > \"{}\"",
+-        remote_path, remote_path
++        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
++         mkdir -p \"$(dirname \"$target\")\"; cat > \"$target\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(&remote_path),
+     );
+ 
+     session
+@@ -602,6 +647,7 @@ pub async fn write_remote_file(
+ 
+ /// 删除远程文件或目录
+ pub async fn remove_remote_path(session: &SshSession, path: &str) -> Result<(), String> {
++    reject_reserved_sync_path(path)?;
+     // 安全检查：禁止删除空路径或根路径
+     let trimmed = path.trim();
+     if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
+@@ -609,7 +655,7 @@ pub async fn remove_remote_path(session: &SshSession, path: &str) -> Result<(),
+     }
+ 
+     let remote_path = path.replace("~", "$HOME");
+-    let command = format!("rm -rf \"{}\"", remote_path);
++    let command = build_remote_remove_command(&remote_path);
+ 
+     session.exec_command(&command).await?;
+     Ok(())
+@@ -637,6 +683,75 @@ mod tests {
+     use super::pattern_file_display_path;
+     use std::path::Path;
+ 
++    #[cfg(target_os = "linux")]
++    mod shell_fixture {
++        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/ai-toolbox-management/tests/support/bounded_shell.rs"));
++    }
++
++    #[cfg(target_os = "linux")]
++    #[test]
++    fn remote_replace_and_remove_preserve_lease_inodes_in_local_shell_fixture() {
++        use std::os::unix::fs::MetadataExt;
++        for kind in ["directory", "protected", "file", "symlink"] {
++            let fixture = tempfile::tempdir().unwrap();
++            let target = fixture.path().join("target");
++            let stage = fixture.path().join("stage");
++            let real = fixture.path().join("real");
++            std::fs::create_dir(&stage).unwrap();
++            std::fs::create_dir(&real).unwrap();
++            std::fs::write(stage.join("new"), b"new").unwrap();
++            let parent_lock = fixture.path().join(".ai-toolbox-owner.lock");
++            let real_lock = real.join(".ai-toolbox-runtime.lock");
++            std::fs::write(&parent_lock, b"parent").unwrap();
++            std::fs::write(&real_lock, b"referent").unwrap();
++            let parent_inode = std::fs::metadata(&parent_lock).unwrap().ino();
++            let real_inode = std::fs::metadata(&real_lock).unwrap().ino();
++            match kind {
++                "file" => std::fs::write(&target, b"ordinary").unwrap(),
++                "symlink" => std::os::unix::fs::symlink(&real, &target).unwrap(),
++                _ => std::fs::create_dir(&target).unwrap(),
++            }
++            if kind == "protected" { std::fs::write(target.join(".ai-toolbox-owner.lock"), b"target lease").unwrap(); }
++            let protected_inode = (kind == "protected").then(|| std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino());
++            let before = std::fs::symlink_metadata(&target).unwrap().ino();
++            let prepare = super::build_remote_directory_prepare_command(target.to_str().unwrap());
++            let (fixture, output) = shell_fixture::run("sh", &prepare, fixture);
++            assert_eq!(output.status.success(), kind == "directory", "prepare {kind}");
++            if let Some(inode) = protected_inode { assert_eq!(std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino(), inode); }
++            let swap = super::build_remote_directory_swap_command(target.to_str().unwrap(), stage.to_str().unwrap());
++            let (fixture, output) = shell_fixture::run("sh", &swap, fixture);
++            assert_eq!(output.status.success(), kind == "directory", "swap {kind}");
++            if let Some(inode) = protected_inode { assert_eq!(std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino(), inode); }
++            if kind == "directory" { assert_eq!(std::fs::read(target.join("new")).unwrap(), b"new"); }
++            else { assert_eq!(std::fs::symlink_metadata(&target).unwrap().ino(), before); assert!(stage.join("new").exists()); }
++            let remove = super::build_remote_remove_command(target.to_str().unwrap());
++            let (_fixture, output) = shell_fixture::run("sh", &remove, fixture);
++            assert_eq!(output.status.success(), kind != "protected", "remove {kind}");
++            if let Some(inode) = protected_inode { assert_eq!(std::fs::metadata(target.join(".ai-toolbox-owner.lock")).unwrap().ino(), inode); }
++            if kind == "protected" { assert_eq!(std::fs::read(target.join(".ai-toolbox-owner.lock")).unwrap(), b"target lease"); }
++            else { assert!(std::fs::symlink_metadata(&target).is_err()); }
++            assert_eq!(std::fs::metadata(&parent_lock).unwrap().ino(), parent_inode);
++            assert_eq!(std::fs::read(&parent_lock).unwrap(), b"parent");
++            assert_eq!(std::fs::metadata(&real_lock).unwrap().ino(), real_inode);
++            assert_eq!(std::fs::read(&real_lock).unwrap(), b"referent");
++        }
++    }
++
++    #[test]
++    fn remote_tree_checks_precede_staging_and_destructive_swap() {
++        let prepare = super::build_remote_directory_prepare_command("~/synthetic fixture");
++        assert!(prepare.find("ait_guard_tree \"$target\"").unwrap() < prepare.find("mkdir -p").unwrap());
++        let swap = super::build_remote_directory_swap_command("~/synthetic fixture", "~/fixture staging");
++        assert!(swap.find("ait_guard_tree \"$target\"").unwrap() < swap.find("rm -rf --").unwrap());
++        assert!(swap.contains(".ai-toolbox-owner.lock"));
++        assert!(swap.contains(".ai-toolbox-runtime.lock"));
++        assert!(!swap.contains(".ai-toolbox-owner-*.sock"));
++        let remove = super::build_remote_remove_command("~/ordinary-file");
++        assert!(remove.contains("ait_guard_path \"$target\";"));
++        assert!(remove.contains("if [ -d \"$target\" ] && [ ! -L \"$target\" ]; then ait_guard_tree \"$target\"; fi;"));
++        assert!(remove.find("ait_guard_path \"$target\"").unwrap() < remove.find("rm -rf --").unwrap());
++    }
++
+     #[test]
+     fn pattern_file_display_path_uses_static_glob_root() {
+         let pattern = "/home/me/.config/opencode/*.mjs";
+diff --git a/tauri/src/coding/wsl/AGENTS.md b/tauri/src/coding/wsl/AGENTS.md
+index d496e4b8a05072bb8983c042523a883d18699df0..5a1d0e22a55e5246170ab656dced9fcdae47f6e5 100644
+--- a/tauri/src/coding/wsl/AGENTS.md
++++ b/tauri/src/coding/wsl/AGENTS.md
+@@ -36,6 +36,8 @@ sequenceDiagram
+ 
+ ## 易错点与历史坑（Gotchas）
+ 
++- Owner 协调 artifact 的源排除与目标保护不可混为一谈：空用户 excludes 也必须排除精确两个 lock 名和固定宽度 socket 名；目标 replace-tree 在 mkdir/staging 前、紧邻 rm 前都调用共享 `management::coordination` shell guard。Single/pattern 与通用 write/delete 也校验保留组件；所有新增 shell 路径只按数据引用。扫描只保护已观察到的 artifact，不能称为远端活 owner 互斥，TOCTOU、硬链接与 Skills 独立 replace-tree 的门禁仍未闭合。
++
+ - 不要把 WSL 自动同步理解成“保存数据库就自动发生”。真正触发点是事件监听器。
+ - 同步设置保存只 patch 用户字段，`last_sync_warnings` 只能由 Skills 链路替换；配置、普通状态和警告写入都在同一次 SQLite 连接锁内完成，避免旧表单或其它链路清掉诊断。全量同步必须把 Skills 阶段警告合入返回结果与完成事件，失败时也保留已经收集的警告；WSL 孤立中央目录清理失败同样属于非致命警告。
+ - 恢复期间不能同时依赖启动同步、业务事件同步和恢复收尾同步。三条链路并发会让旧文件、半完成配置和新配置互相覆盖；恢复专用入口应抑制中间事件，启动同步应识别 restore flag，最终只保留恢复收尾的一次串行同步。
+diff --git a/tauri/src/coding/wsl/sync.rs b/tauri/src/coding/wsl/sync.rs
+index 96e128ecb3fac9ec32726950b27d348d7fd2cadb..2a7c8e008e8faa7ee04b6803f1513e46812134d7 100644
+--- a/tauri/src/coding/wsl/sync.rs
++++ b/tauri/src/coding/wsl/sync.rs
+@@ -1,3 +1,4 @@
++use ai_toolbox_management::coordination::{contains_coordination_component, posix_coordination_guard, quote_posix_sync_path, reserved_coordination_shell_globs};
+ use super::types::{normalize_directory_excludes, FileMapping, SyncResult, WSLDetectResult};
+ use std::path::Path;
+ use std::process::Command;
+@@ -5,6 +6,13 @@ use std::process::Command;
+ #[cfg(target_os = "windows")]
+ use std::os::windows::process::CommandExt;
+ 
++fn reject_reserved_sync_path(path: &str) -> Result<(), String> {
++    if contains_coordination_component(path) {
++        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
++    }
++    Ok(())
++}
++
+ /// Windows CREATE_NO_WINDOW flag to prevent console window from appearing
+ #[cfg(target_os = "windows")]
+ const CREATE_NO_WINDOW: u32 = 0x08000000;
+@@ -338,15 +346,21 @@ pub fn sync_single_file(
+     wsl_path: &str,
+     distro: &str,
+ ) -> Result<Vec<String>, String> {
++    reject_reserved_sync_path(windows_path)?;
++    reject_reserved_sync_path(wsl_path)?;
+     let wsl_source_path = windows_to_wsl_path(windows_path)?;
+ 
+     // Expand ~ in WSL path
+     let wsl_target_path = wsl_path.replace("~", "$HOME");
+ 
+-    // Create the WSL command
++    // Check expanded paths before mkdir or copying.
+     let command = format!(
+-        "mkdir -p \"$(dirname \"{}\")\" && cp -f \"{}\" \"{}\"",
+-        wsl_target_path, wsl_source_path, wsl_target_path
++        "set -e; {guards}\nsource={source}; target={target}; \
++         ait_guard_path \"$source\"; ait_guard_path \"$target\"; \
++         mkdir -p \"$(dirname \"$target\")\"; cp -f -- \"$source\" \"$target\"",
++        guards = posix_coordination_guard(),
++        source = quote_posix_sync_path(&wsl_source_path),
++        target = quote_posix_sync_path(&wsl_target_path),
+     );
+ 
+     let output = create_wsl_command()
+@@ -372,46 +386,36 @@ fn normalize_directory_target_path(path: &str) -> String {
+ }
+ 
+ fn build_directory_copy_command(wsl_source_path: &str, wsl_target_path: &str) -> String {
+-    format!(
+-        "set -e; \
+-         source=\"{}\"; \
+-         target=\"{}\"; \
+-         parent=$(dirname \"$target\"); \
+-         mkdir -p \"$parent\"; \
+-         tmp=$(mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\"); \
+-         trap 'rm -rf \"$tmp\"' EXIT; \
+-         cp -R -P \"$source\"/. \"$tmp\"/; \
+-         rm -rf \"$target\"; \
+-         mv \"$tmp\" \"$target\"; \
+-         trap - EXIT",
+-        wsl_source_path, wsl_target_path
+-    )
++    // Even an empty user exclude list must omit coordination artifacts.
++    build_directory_copy_command_with_excludes(wsl_source_path, wsl_target_path)
+ }
+ 
+-/// Build a directory copy command that excludes entries whose name matches any
+-/// of the exclude list, at any nesting depth (recursive), matching the SSH
+-/// semantic. Excludes are passed as bash positional parameters ($1..$n) and
+-/// turned into `--exclude` args inside `tar`, so the command text itself needs
+-/// no escaping; `--exclude=name` matches any path segment named `name`.
++/// Preserve symlinks and use exact reserved-name pruning regardless of user
++/// excludes. Destination scans protect only artifacts already observed, not a
++/// concurrent remote owner. A second scan is immediately before destructive swap.
+ fn build_directory_copy_command_with_excludes(
+     wsl_source_path: &str,
+     wsl_target_path: &str,
+ ) -> String {
++    let reserved = reserved_coordination_shell_globs().iter()
++        .map(|pattern| format!("--exclude={}", quote_posix_sync_path(pattern)))
++        .collect::<Vec<_>>().join(" ");
+     format!(
+-        "set -e; set -o pipefail; \
+-         source=\"{}\"; \
+-         target=\"{}\"; \
++        "set -e; set -o pipefail; {guards}\n\
++         source={source}; target={target}; \
++         ait_guard_path \"$source\"; ait_guard_tree \"$target\"; \
+          parent=$(dirname \"$target\"); \
+          mkdir -p \"$parent\"; \
+          tmp=$(mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\"); \
+-         trap 'rm -rf \"$tmp\"' EXIT; \
+-         excl_args=(); \
++         trap 'ait_guard_tree \"$tmp\" && rm -rf \"$tmp\"' EXIT; \
++         excl_args=({reserved}); \
+          for excl in \"$@\"; do excl_args+=(--exclude=\"$excl\"); done; \
+          tar -C \"$source\" \"${{excl_args[@]}}\" -cf - . | tar -C \"$tmp\" -xf -; \
+-         rm -rf \"$target\"; \
+-         mv \"$tmp\" \"$target\"; \
+-         trap - EXIT",
+-        wsl_source_path, wsl_target_path
++         ait_guard_tree \"$target\"; \
++         rm -rf \"$target\"; mv \"$tmp\" \"$target\"; trap - EXIT",
++        guards = posix_coordination_guard(),
++        source = quote_posix_sync_path(wsl_source_path),
++        target = quote_posix_sync_path(wsl_target_path),
+     )
+ }
+ 
+@@ -432,6 +436,8 @@ pub fn sync_directory_with_excludes(
+     distro: &str,
+     directory_excludes: &[String],
+ ) -> Result<Vec<String>, String> {
++    reject_reserved_sync_path(windows_path)?;
++    reject_reserved_sync_path(wsl_path)?;
+     let wsl_source_path = windows_to_wsl_path(windows_path)?;
+ 
+     // Expand ~ in WSL path
+@@ -439,8 +445,8 @@ pub fn sync_directory_with_excludes(
+ 
+     // First, check if source path exists in WSL
+     let check_command = format!(
+-        "if [ -e \"{}\" ]; then echo exists; else echo notfound; fi",
+-        wsl_source_path
++        "if [ -e {} ]; then echo exists; else echo notfound; fi",
++        quote_posix_sync_path(&wsl_source_path)
+     );
+     let check_output = create_wsl_command()
+         .args(["-d", distro, "--exec", "bash", "-c", &check_command])
+@@ -516,6 +522,109 @@ pub fn sync_directory_with_excludes(
+ mod tests {
+     use super::*;
+ 
++    #[cfg(target_os = "linux")]
++    mod shell_fixture {
++        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/ai-toolbox-management/tests/support/bounded_shell.rs"));
++    }
++
++    #[cfg(target_os = "linux")]
++    #[test]
++    fn directory_shell_fixture_rejects_target_artifacts_before_staging() {
++        use std::os::unix::fs::MetadataExt;
++        for name in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
++            let fixture = tempfile::tempdir().unwrap();
++            let source = fixture.path().join("source");
++            let target = fixture.path().join("target");
++            std::fs::create_dir(&source).unwrap();
++            std::fs::create_dir(&target).unwrap();
++            std::fs::write(source.join("ordinary"), b"new").unwrap();
++            let lock = target.join(name);
++            std::fs::write(&lock, b"old coordination").unwrap();
++            let inode = std::fs::metadata(&lock).unwrap().ino();
++            let command = build_directory_copy_command(source.to_str().unwrap(), target.to_str().unwrap());
++            let (fixture, output) = shell_fixture::run("bash", &command, fixture);
++            assert!(!output.status.success());
++            assert_eq!(std::fs::read(&lock).unwrap(), b"old coordination");
++            assert_eq!(std::fs::metadata(&lock).unwrap().ino(), inode);
++            assert!(!target.join("ordinary").exists());
++            assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 2);
++        }
++    }
++
++    #[cfg(target_os = "linux")]
++    #[test]
++    fn directory_shell_fixture_excludes_all_reserved_source_types_and_preserves_controls() {
++        let fixture = tempfile::tempdir().unwrap();
++        let source = fixture.path().join("source");
++        let target = fixture.path().join("target");
++        std::fs::create_dir(&source).unwrap();
++        std::fs::create_dir(&target).unwrap();
++        std::fs::write(target.join("old"), b"replace ordinary target").unwrap();
++        std::fs::write(source.join(".env"), b"ordinary").unwrap();
++        std::os::unix::fs::symlink(".env", source.join("ordinary-link")).unwrap();
++        std::fs::write(source.join(".mcp.json"), b"{}").unwrap();
++        std::fs::write(source.join(".ai-toolbox-owner-note.sock"), b"keep").unwrap();
++        std::fs::write(source.join(".ai-toolbox-owner.lock"), b"exclude").unwrap();
++        std::fs::create_dir(source.join(".ai-toolbox-runtime.lock")).unwrap();
++        std::fs::create_dir(source.join("nested")).unwrap();
++        std::os::unix::fs::symlink("missing", source.join("nested/.ai-toolbox-owner.lock")).unwrap();
++        let socket = source.join(".ai-toolbox-owner-0000000000000001-0000000000000002.sock");
++        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
++        let command = build_directory_copy_command(source.to_str().unwrap(), target.to_str().unwrap());
++        let (_fixture, output) = shell_fixture::run("bash", &command, fixture);
++        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
++        assert_eq!(std::fs::read(target.join(".env")).unwrap(), b"ordinary");
++        assert!(target.join(".mcp.json").exists());
++        assert_eq!(std::fs::read_link(target.join("ordinary-link")).unwrap(), std::path::Path::new(".env"));
++        assert!(target.join(".ai-toolbox-owner-note.sock").exists());
++        assert!(!target.join("old").exists());
++        assert!(!target.join(".ai-toolbox-owner.lock").exists());
++        assert!(!target.join(".ai-toolbox-runtime.lock").exists());
++        assert!(std::fs::symlink_metadata(target.join("nested/.ai-toolbox-owner.lock")).is_err());
++        assert!(!target.join(socket.file_name().unwrap()).exists());
++    }
++
++    #[cfg(target_os = "linux")]
++    #[test]
++    fn directory_replace_preserves_parent_lease_and_refuses_non_directory_targets() {
++        use std::os::unix::fs::MetadataExt;
++        for kind in ["directory", "file", "symlink"] {
++            let fixture = tempfile::tempdir().unwrap();
++            let source = fixture.path().join("source");
++            let target = fixture.path().join("target");
++            let real = fixture.path().join("real");
++            std::fs::create_dir(&source).unwrap();
++            std::fs::create_dir(&real).unwrap();
++            std::fs::write(source.join("new"), b"new").unwrap();
++            let lock = fixture.path().join(".ai-toolbox-owner.lock");
++            let real_lock = real.join(".ai-toolbox-runtime.lock");
++            std::fs::write(&lock, b"parent lease").unwrap();
++            std::fs::write(&real_lock, b"referent lease").unwrap();
++            let inode = std::fs::metadata(&lock).unwrap().ino();
++            let real_inode = std::fs::metadata(&real_lock).unwrap().ino();
++            match kind {
++                "directory" => std::fs::create_dir(&target).unwrap(),
++                "file" => std::fs::write(&target, b"ordinary file").unwrap(),
++                _ => std::os::unix::fs::symlink(&real, &target).unwrap(),
++            }
++            let target_inode = std::fs::symlink_metadata(&target).unwrap().ino();
++            let command = build_directory_copy_command(source.to_str().unwrap(), target.to_str().unwrap());
++            let (fixture, output) = shell_fixture::run("bash", &command, fixture);
++            assert_eq!(output.status.success(), kind == "directory", "{kind}: {}", String::from_utf8_lossy(&output.stderr));
++            assert_eq!(std::fs::metadata(&lock).unwrap().ino(), inode);
++            assert_eq!(std::fs::read(&lock).unwrap(), b"parent lease");
++            assert_eq!(std::fs::metadata(&real_lock).unwrap().ino(), real_inode);
++            assert_eq!(std::fs::read(&real_lock).unwrap(), b"referent lease");
++            if kind == "directory" {
++                assert_eq!(std::fs::read(target.join("new")).unwrap(), b"new");
++            } else {
++                assert_eq!(std::fs::symlink_metadata(&target).unwrap().ino(), target_inode);
++                assert!(String::from_utf8_lossy(&output.stderr).contains("OWNER_REPLACEMENT_ROOT_UNSAFE"));
++            }
++            assert!(!std::fs::read_dir(fixture.path()).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".ai-toolbox-sync.")));
++        }
++    }
++
+     #[test]
+     fn normalize_directory_target_path_trims_trailing_slashes() {
+         assert_eq!(
+@@ -533,11 +642,17 @@ mod tests {
+         );
+ 
+         assert!(command.contains("mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\""));
+-        assert!(command.contains("cp -R -P \"$source\"/. \"$tmp\"/"));
+-        assert!(!command.contains("-L"));
++        assert!(command.contains("tar -C \"$source\""));
++        assert!(!command.contains("tar -h"));
++        let preflight = command.find("ait_guard_tree \"$target\"").unwrap();
++        let mkdir = command.find("mkdir -p").unwrap();
++        assert!(preflight < mkdir);
++        assert_eq!(command.matches("ait_guard_tree \"$target\"").count(), 2);
++        assert!(command.contains(".ai-toolbox-owner.lock"));
++        assert!(command.contains(".ai-toolbox-runtime.lock"));
+         assert!(command.contains("rm -rf \"$target\"; mv \"$tmp\" \"$target\""));
+ 
+-        let copy_index = command.find("cp -R -P").expect("copy command");
++        let copy_index = command.find("tar -C").expect("copy command");
+         let replace_index = command.find("rm -rf \"$target\"").expect("replace command");
+         assert!(copy_index < replace_index);
+     }
+@@ -562,6 +677,8 @@ pub fn sync_pattern_files(
+     wsl_target_dir: &str,
+     distro: &str,
+ ) -> Result<Vec<String>, String> {
++    reject_reserved_sync_path(windows_pattern)?;
++    reject_reserved_sync_path(wsl_target_dir)?;
+     // Convert Windows path to WSL path
+     let wsl_source_dir = windows_to_wsl_path(windows_pattern)?;
+ 
+@@ -577,28 +694,23 @@ pub fn sync_pattern_files(
+     // Expand ~ in WSL path
+     let wsl_target_dir_expanded = wsl_target_dir.replace("~", "$HOME");
+ 
+-    // Create the WSL command to sync pattern files
++    // The glob is data, not interpolated shell syntax. Each expanded source is
++    // filtered before metadata, and its final destination is checked before cp.
+     let command = format!(
+-        "mkdir -p \"{}\" && \
+-         if [ -f \"{}\"/{} ]; then \
+-             cp -f \"{}\"/{} \"{}\" && \
+-             echo \"synced\"; \
+-         else \
+-             shopt -s nullglob dotglob; \
+-             files=\"{}\"/{}; \
+-             if [ -n \"$files\" ]; then \
+-                 cp -f $files \"{}\" 2>/dev/null && echo \"synced\" || true; \
+-             fi; \
+-         fi",
+-        wsl_target_dir_expanded,
+-        wsl_source_base,
+-        pattern,
+-        wsl_source_base,
+-        pattern,
+-        wsl_target_dir_expanded,
+-        wsl_source_base,
+-        pattern,
+-        wsl_target_dir_expanded
++        "set -e; {guards}\nbase={base}; pattern={pattern}; target={target}; \
++         ait_guard_path \"$base\"; ait_guard_path \"$target\"; \
++         shopt -s nullglob dotglob; IFS=; files=(\"$base\"/$pattern); \
++         mkdir -p \"$target\"; \
++         for file in \"${{files[@]}}\"; do \
++             name=${{file##*/}}; if ait_reserved_name \"$name\"; then continue; fi; \
++             [ -f \"$file\" ] || continue; \
++             ait_guard_path \"$target/$name\"; \
++             if cp -f -- \"$file\" \"$target/$name\" 2>/dev/null; then echo synced; fi; \
++         done",
++        guards = posix_coordination_guard(),
++        base = quote_posix_sync_path(wsl_source_base),
++        pattern = quote_posix_sync_path(pattern),
++        target = quote_posix_sync_path(&wsl_target_dir_expanded),
+     );
+ 
+     let output = create_wsl_command()
+@@ -807,12 +919,14 @@ pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
+ 
+ /// Write content to a WSL file
+ pub fn write_wsl_file(distro: &str, wsl_path: &str, content: &str) -> Result<(), String> {
++    reject_reserved_sync_path(wsl_path)?;
+     let wsl_target = wsl_path.replace("~", "$HOME");
+ 
+-    // Use heredoc to write content, avoiding escape issues
++    // Content still goes through stdin; validate the expanded destination first.
+     let command = format!(
+-        "mkdir -p \"$(dirname \"{}\")\" && cat > \"{}\"",
+-        wsl_target, wsl_target
++        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
++         mkdir -p \"$(dirname \"$target\")\"; cat > \"$target\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(&wsl_target),
+     );
+ 
+     let mut child = create_wsl_command()
+@@ -841,6 +955,7 @@ pub fn write_wsl_file(distro: &str, wsl_path: &str, content: &str) -> Result<(),
+ 
+ /// Remove a file or directory in WSL
+ pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
++    reject_reserved_sync_path(wsl_path)?;
+     // 安全检查：禁止删除空路径或根路径
+     let trimmed = wsl_path.trim();
+     if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
+@@ -848,7 +963,12 @@ pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
+     }
+ 
+     let wsl_target = wsl_path.replace("~", "$HOME");
+-    let command = format!("rm -rf \"{}\"", wsl_target);
++    let command = format!(
++        "set -e; {guards}\ntarget={target}; ait_guard_path \"$target\"; \
++         if [ -d \"$target\" ] && [ ! -L \"$target\" ]; then ait_guard_tree \"$target\"; fi; \
++         rm -rf -- \"$target\"",
++        guards = posix_coordination_guard(), target = quote_posix_sync_path(&wsl_target),
++    );
+ 
+     let output = create_wsl_command()
+         .args(["-d", distro, "--exec", "bash", "-c", &command])
+diff --git a/tauri/src/settings/backup/AGENTS.md b/tauri/src/settings/backup/AGENTS.md
+index 3022c4dffc9039ed874472810a23310cf0a2fabd..8f5064abcf6e439f795be032b800f839c3548992 100644
+--- a/tauri/src/settings/backup/AGENTS.md
++++ b/tauri/src/settings/backup/AGENTS.md
+@@ -65,6 +65,8 @@ sequenceDiagram
+ 
+ ## 易错点与历史坑（Gotchas）
+ 
++- Owner 协调文件由 `ai_toolbox_management::transport::is_reserved_coordination_name` 的精确契约保护：两个固定 lock 名及两段 16 位小写 hex 的 socket 名；不能扩大为全部 dotfile/lock/socket。源 WalkDir 必须剪枝，文件 sink 同时校验 source 与 archive 名。恢复先只读预扫所有归档名、custom manifest 目标和将删除的 legacy DB tree，必须早于 SQLite restore、mkdir 或 staging；custom restore 仍是增量覆盖，不因目标根内存在普通 sibling owner lock 而整树拒绝。紧邻旧树删除复检并不消除 TOCTOU，任意硬链接/未审计业务 writer 仍不在此保护证明内。
++
+ - 加密备份恢复/生成必须经过共享入口（`prepare_backup_bytes` / `generate.rs`）。任何渠道出现“缺密码、错密码、截断、篡改”都必须在**任何恢复写入之前**报错；`CryptoError::AuthFailed` 映射为 `passwordWrong`，`PasswordRequired` 映射为 `passwordRequired`，前端据此在同一次恢复选择中弹出密码框重试，取消与错误都不能修改数据库/外部配置。
+ - 恢复的密码优先级：显式传入的一次性密码 > 本机凭据库；**凭据库读取失败也按 `passwordRequired` 处理**（用户可能知道密码，不能剥夺手动输入机会），但生成加密备份时凭据库不可用仍整体失败，绝不降级明文。改密码只影响今后备份，旧备份仍用创建时密码；关闭加密不重写旧备份，也不清理已存密码。
+ - 文件名解析的所有定长切片必须走 `str::get`（非字符边界返回 None），不能 `&body[..15]` / `split_at` 直切——多字节主机标签（如中文 legacy 前缀）会直接 panic，且调度器不会捕获该 panic。
+diff --git a/tauri/src/settings/backup/restore.rs b/tauri/src/settings/backup/restore.rs
+index 60d01aa7045e00b98031c7e03c9338b652d990e7..e8650cd834f171479a8dc1dbdbf6d11f411cc471 100644
+--- a/tauri/src/settings/backup/restore.rs
++++ b/tauri/src/settings/backup/restore.rs
+@@ -264,6 +264,10 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+     skip_cli_custom_roots: bool,
+ ) -> Result<RestoreResult, String> {
+     let db_path = get_db_path(app_handle)?;
++    super::utils::preflight_backup_coordination_paths(archive)?;
++    super::utils::reject_coordination_output_path(&db_path)?;
++    ai_toolbox_management::coordination::ensure_replaceable_tree(&db_path)
++        .map_err(|error| error.to_string())?;
+ 
+     // Check if this is a new format backup (with db/ prefix) or old format
+     let is_new_format = (0..archive.len()).any(|i| {
+@@ -312,6 +316,10 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+         );
+     }
+ 
++    // Repeat immediately before destructive replacement. This is not an owner
++    // lease and cannot prevent a non-cooperating writer racing the check.
++    ai_toolbox_management::coordination::ensure_replaceable_tree(&db_path)
++        .map_err(|error| error.to_string())?;
+     // Remove existing database directory
+     if db_path.exists() {
+         fs::remove_dir_all(&db_path)
+@@ -534,6 +542,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+         // Normalize path separators for cross-platform compatibility
+         // Windows backups may contain backslashes which need to be converted
+         let file_name = normalize_restore_entry_name(file.name());
++        super::utils::reject_coordination_path(&file_name)?;
+ 
+         // Skip the backup marker file
+         if file_name == ".backup_marker" || file_name == "db/.backup_marker" {
+@@ -557,6 +566,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+                 }
+ 
+                 let outpath = db_path.join(relative_path);
++                super::utils::reject_coordination_output_path(&outpath)?;
+ 
+                 if file_name.ends_with('/') {
+                     fs::create_dir_all(&outpath)
+@@ -590,6 +600,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+ 
+                 if relative_path == "auth.json" {
+                     let outpath = get_opencode_auth_restore_path(Some(&opencode_restore_dir))?;
++                    super::utils::reject_coordination_output_path(&outpath)?;
+                     let auth_dir = outpath.parent().ok_or_else(|| {
+                         "Failed to determine OpenCode auth parent directory".to_string()
+                     })?;
+@@ -644,6 +655,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+                 } else {
+                     claude_restore_dir.join(relative_path)
+                 };
++                super::utils::reject_coordination_output_path(&outpath)?;
+                 if let Some(parent) = outpath.parent() {
+                     if !parent.exists() {
+                         fs::create_dir_all(parent).map_err(|e| {
+@@ -673,6 +685,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+                 }
+ 
+                 let outpath = openclaw_restore_dir.join(relative_path);
++                super::utils::reject_coordination_output_path(&outpath)?;
+                 let mut outfile =
+                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                 std::io::copy(&mut file, &mut outfile)
+@@ -701,6 +714,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+                 }
+ 
+                 let outpath = codex_restore_dir.join(relative_path);
++                super::utils::reject_coordination_output_path(&outpath)?;
+ 
+                 // Just copy the file - MCP cmd /c normalization will be handled
+                 // by mcp_sync_all during startup resync (triggered by .resync_required flag)
+@@ -1253,6 +1267,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+                 }
+ 
+                 let outpath = image_assets_dir.join(relative_path);
++                super::utils::reject_coordination_output_path(&outpath)?;
+                 if let Some(parent) = outpath.parent() {
+                     if !parent.exists() {
+                         fs::create_dir_all(parent).map_err(|e| {
+@@ -1268,6 +1283,7 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
+         } else {
+             // Old format: all files are database files
+             let outpath = db_path.join(&file_name);
++            super::utils::reject_coordination_output_path(&outpath)?;
+ 
+             if file_name.ends_with('/') {
+                 fs::create_dir_all(&outpath)
+diff --git a/tauri/src/settings/backup/utils.rs b/tauri/src/settings/backup/utils.rs
+index 1490729254e8b66a69c6d0bff2303092f35634ae..4b70f43c8b0283da82d68fa24a60b4d90aa6348f 100644
+--- a/tauri/src/settings/backup/utils.rs
++++ b/tauri/src/settings/backup/utils.rs
+@@ -1,3 +1,4 @@
++use ai_toolbox_management::coordination::contains_coordination_component;
+ use regex::Regex;
+ use serde::{Deserialize, Serialize};
+ use std::collections::HashSet;
+@@ -1218,7 +1219,7 @@ pub async fn list_backup_file_filter_path_options(
+             let credentials_dir = host_path.join(kimi::constants::KIMI_CREDENTIALS_DIR);
+             let mut relative_paths = Vec::new();
+             if credentials_dir.is_dir() {
+-                for entry in WalkDir::new(&credentials_dir) {
++                for entry in WalkDir::new(&credentials_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+                     let Ok(entry) = entry else {
+                         continue;
+                     };
+@@ -1257,7 +1258,7 @@ pub async fn list_backup_file_filter_path_options(
+         push_backup_filter_option(&mut options, &mut seen, "geminicli", "oauth_creds.json");
+     }
+     if let Some(tmp_dir) = get_gemini_cli_tmp_dir_from_db(db).await? {
+-        for entry in WalkDir::new(&tmp_dir) {
++        for entry in WalkDir::new(&tmp_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+             let entry = entry.map_err(|e| format!("Failed to read Gemini CLI tmp entry: {}", e))?;
+             let path = entry.path();
+             if !path.is_file() || should_skip_system_file(path) {
+@@ -1312,7 +1313,7 @@ pub async fn list_backup_file_filter_path_options(
+         );
+     }
+     if let Some(skills_dir) = get_zcode_skills_dir_from_db(db).await? {
+-        for entry in WalkDir::new(&skills_dir) {
++        for entry in WalkDir::new(&skills_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+             let entry =
+                 entry.map_err(|e| format!("Failed to read ZCode skills entry: {}", e))?;
+             let path = entry.path();
+@@ -1334,7 +1335,7 @@ pub async fn list_backup_file_filter_path_options(
+         }
+     }
+     if let Some(tmp_dir) = get_antigravity_tmp_dir_from_db(db).await? {
+-        for entry in WalkDir::new(&tmp_dir) {
++        for entry in WalkDir::new(&tmp_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+             let entry =
+                 entry.map_err(|e| format!("Failed to read Antigravity tmp entry: {}", e))?;
+             let path = entry.path();
+@@ -1450,7 +1451,7 @@ pub async fn list_backup_file_filter_path_options(
+             );
+         }
+         if config_library_path.exists() {
+-            for entry in WalkDir::new(&config_library_path) {
++            for entry in WalkDir::new(&config_library_path).into_iter().filter_entry(backup_walk_entry_allowed) {
+                 let entry = entry
+                     .map_err(|e| format!("Failed to read Claude Desktop config library: {}", e))?;
+                 let path = entry.path();
+@@ -1852,6 +1853,7 @@ pub fn resolve_skills_restore_output_path(
+     }
+ 
+     let fallback_path = skills_dir.join(&normalized_relative);
++    reject_coordination_output_path(&fallback_path)?;
+     let warning = if normalized_segments[0] != segments[0] {
+         Some(RestoreWarning {
+             tool: "skills".to_string(),
+@@ -1869,6 +1871,8 @@ pub fn resolve_external_config_restore_output_path(
+     restore_dir: &Path,
+     relative_path: &str,
+ ) -> Result<Option<PathBuf>, String> {
++    reject_coordination_path(&restore_dir.to_string_lossy())?;
++    reject_coordination_path(relative_path)?;
+     let normalized = normalize_restore_entry_name(relative_path);
+     let trimmed_relative = normalized.trim_start_matches('/');
+     if trimmed_relative.is_empty() {
+@@ -1909,6 +1913,7 @@ pub fn resolve_external_config_restore_output_path(
+     }
+ 
+     if has_segment {
++        reject_coordination_output_path(&output_path)?;
+         Ok(Some(output_path))
+     } else {
+         Ok(None)
+@@ -2116,6 +2121,46 @@ pub fn get_gateway_provider_profiles_cache_file() -> Option<PathBuf> {
+         .filter(|p| p.exists())
+ }
+ 
++/// The matcher is shared with the owner protocol. This checks path spelling,
++/// not arbitrary hard-link aliases or concurrent writers.
++pub(crate) fn reject_coordination_path(path: &str) -> Result<(), String> {
++    if contains_coordination_component(path) {
++        return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
++    }
++    Ok(())
++}
++
++/// Resolve the nearest existing destination ancestor without creating it. This
++/// catches ordinary symlink aliases to a reserved component, but not hard links.
++pub(crate) fn reject_coordination_output_path(path: &Path) -> Result<(), String> {
++    reject_coordination_path(&path.to_string_lossy())?;
++    let mut existing = path;
++    loop {
++        match std::fs::canonicalize(existing) {
++            Ok(resolved) => return reject_coordination_path(&resolved.to_string_lossy()),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
++                match std::fs::symlink_metadata(existing) {
++                    Ok(metadata) if metadata.file_type().is_symlink() => {
++                        return Err("OWNER_REPLACEMENT_ROOT_UNSAFE".to_string());
++                    }
++                    Ok(_) => {}
++                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++                    Err(error) => return Err(format!("Failed to inspect restore path: {error}")),
++                }
++                match existing.parent().filter(|parent| !parent.as_os_str().is_empty()) {
++                    Some(parent) => existing = parent,
++                    None => return Ok(()),
++                }
++            }
++            Err(error) => return Err(format!("Failed to resolve restore path: {error}")),
++        }
++    }
++}
++
++fn backup_walk_entry_allowed(entry: &walkdir::DirEntry) -> bool {
++    !contains_coordination_component(&entry.path().to_string_lossy())
++}
++
+ /// Add a file to zip archive with a specific path
+ fn add_file_to_zip<W: Write + std::io::Seek>(
+     zip: &mut ZipWriter<W>,
+@@ -2123,6 +2168,11 @@ fn add_file_to_zip<W: Write + std::io::Seek>(
+     zip_path: &str,
+     options: SimpleFileOptions,
+ ) -> Result<(), String> {
++    reject_coordination_path(&file_path.to_string_lossy())?;
++    reject_coordination_path(zip_path)?;
++    let resolved = std::fs::canonicalize(file_path)
++        .map_err(|e| format!("Failed to resolve backup source: {e}"))?;
++    reject_coordination_path(&resolved.to_string_lossy())?;
+     let mut file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
+     let mut buffer = Vec::new();
+     file.read_to_end(&mut buffer)
+@@ -2377,6 +2427,9 @@ fn relative_path_for_zip(path: &Path, base_path: &Path) -> Result<Option<String>
+ }
+ 
+ fn should_skip_system_file(path: &Path) -> bool {
++    if contains_coordination_component(&path.to_string_lossy()) {
++        return true;
++    }
+     path.file_name()
+         .map(|file_name| {
+             let name = file_name.to_string_lossy();
+@@ -2440,11 +2493,17 @@ pub fn add_custom_backup_entries_to_zip<W: Write + std::io::Seek>(
+         }
+ 
+         let source_path = resolve_backup_storage_path(&entry.source_path)?;
++        reject_coordination_path(&source_path.to_string_lossy())?;
++        let canonical_source = std::fs::canonicalize(&source_path)
++            .map_err(|error| format!("Failed to resolve custom backup source: {error}"))?;
++        reject_coordination_path(&canonical_source.to_string_lossy())?;
+         let restore_path = entry
+             .restore_path
+             .clone()
+             .filter(|path| !path.trim().is_empty())
+             .unwrap_or_else(|| entry.source_path.clone());
++        reject_coordination_path(&restore_path)?;
++        reject_coordination_path(&resolve_backup_storage_path(&restore_path)?.to_string_lossy())?;
+         let payload_base = custom_backup_payload_base(index, &entry.id);
+ 
+         match entry.entry_type {
+@@ -2503,6 +2562,9 @@ pub fn add_custom_backup_entries_to_zip<W: Write + std::io::Seek>(
+                 let walker = WalkDir::new(&source_path)
+                     .into_iter()
+                     .filter_entry(|file_entry| {
++                        if !backup_walk_entry_allowed(file_entry) {
++                            return false;
++                        }
+                         if file_entry.depth() == 0 || exclude_regexes.is_empty() {
+                             return true;
+                         }
+@@ -2584,6 +2646,8 @@ fn copy_zip_entry_to_path<R: Read + std::io::Seek>(
+     raw_entry_name: &str,
+     output_path: &Path,
+ ) -> Result<(), String> {
++    reject_coordination_path(raw_entry_name)?;
++    reject_coordination_output_path(output_path)?;
+     if let Some(parent) = output_path.parent() {
+         if !parent.exists() {
+             std::fs::create_dir_all(parent)
+@@ -2602,9 +2666,80 @@ fn copy_zip_entry_to_path<R: Read + std::io::Seek>(
+     Ok(())
+ }
+ 
++// Only these exact entries are consumed as root overrides by restore.rs.
++// Arbitrarily named root-dir.txt payloads remain ordinary, potentially binary data.
++fn is_external_root_override_entry(name: &str) -> bool {
++    let Some(rest) = name.strip_prefix("external-configs/") else { return false; };
++    let Some(tool) = rest.strip_suffix("/root-dir.txt") else { return false; };
++    matches!(tool, "opencode" | "claude" | "codex" | "grok" | "kimi" |
++        "openclaw" | "geminicli" | "antigravity" | "zcode" | "pi" |
++        "oh_my_pi" | "hermes" | "dsh" | "omo_native")
++}
++
++/// Read-only validation must precede DB restore, staging, mkdir and extraction.
++/// A normal payload name may still be remapped to a reserved manifest target.
++pub(crate) fn preflight_backup_coordination_paths<R: Read + Seek>(
++    archive: &mut ZipArchive<R>,
++) -> Result<(), String> {
++    let mut manifest_content = None;
++    let mut names = Vec::new();
++    for index in 0..archive.len() {
++        let mut file = archive.by_index(index)
++            .map_err(|e| format!("Failed to inspect backup entry: {e}"))?;
++        let name = normalize_restore_entry_name(file.name());
++        reject_coordination_path(&name)?;
++        if let Some(normalized) = safe_relative_zip_path(&name)? {
++            reject_coordination_path(&normalized)?;
++        }
++        if name == CUSTOM_BACKUP_MANIFEST_PATH || is_external_root_override_entry(&name) {
++            // Restore selects the first normalized manifest. Reject ambiguity
++            // instead of validating a later entry that restore would not use.
++            if name == CUSTOM_BACKUP_MANIFEST_PATH && manifest_content.is_some() {
++                return Err("OWNER_CUSTOM_MANIFEST_AMBIGUOUS".to_string());
++            }
++            let mut content = String::new();
++            file.read_to_string(&mut content)
++                .map_err(|e| format!("Failed to inspect backup metadata: {e}"))?;
++            if name == CUSTOM_BACKUP_MANIFEST_PATH {
++                manifest_content = Some(content);
++            } else {
++                reject_coordination_path(content.trim())?;
++            }
++        }
++        names.push(name);
++    }
++    if let Some(content) = manifest_content {
++        let manifest: CustomBackupManifest = serde_json::from_str(&content)
++            .map_err(|e| format!("Failed to parse custom backup manifest: {e}"))?;
++        if manifest.version != 1 {
++            return Err(format!("Unsupported custom backup manifest version: {}", manifest.version));
++        }
++        for entry in manifest.entries {
++            let target = resolve_backup_storage_path(&entry.restore_path)?;
++            reject_coordination_path(&entry.restore_path)?;
++            reject_coordination_output_path(&target)?;
++            let payload = normalize_restore_entry_name(&entry.payload_path);
++            reject_coordination_path(&payload)?;
++            safe_relative_zip_path(&payload)?;
++            if matches!(entry.entry_type, BackupCustomEntryType::Directory) {
++                let prefix = format!("{}/", payload.trim_end_matches('/'));
++                for name in &names {
++                    if let Some(relative) = name.strip_prefix(&prefix) {
++                        if let Some(relative) = safe_relative_zip_path(relative)? {
++                            reject_coordination_output_path(&target.join(relative))?;
++                        }
++                    }
++                }
++            }
++        }
++    }
++    Ok(())
++}
++
+ pub fn restore_custom_backup_entries<R: Read + std::io::Seek>(
+     archive: &mut ZipArchive<R>,
+ ) -> Result<(), String> {
++    preflight_backup_coordination_paths(archive)?;
+     let manifest_raw_name =
+         match find_zip_entry_by_normalized_name(archive, CUSTOM_BACKUP_MANIFEST_PATH) {
+             Some(name) => name,
+@@ -2740,6 +2875,7 @@ pub fn add_image_assets_to_zip<W: Write + std::io::Seek>(
+     options: SimpleFileOptions,
+ ) -> Result<(), String> {
+     let image_assets_dir = get_image_assets_dir(app_handle)?;
++    reject_coordination_path(&image_assets_dir.to_string_lossy())?;
+     if !image_assets_dir.exists() {
+         return Ok(());
+     }
+@@ -2747,7 +2883,7 @@ pub fn add_image_assets_to_zip<W: Write + std::io::Seek>(
+     zip.add_directory("image-studio/assets/", options)
+         .map_err(|e| format!("Failed to add image assets directory: {}", e))?;
+ 
+-    for entry in WalkDir::new(&image_assets_dir) {
++    for entry in WalkDir::new(&image_assets_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+         let entry = entry.map_err(|e| format!("Failed to read image asset entry: {}", e))?;
+         let path = entry.path();
+         let relative_path = path
+@@ -2782,6 +2918,7 @@ pub fn add_directory_contents_to_zip<W: Write + std::io::Seek>(
+     zip_prefix: &str,
+     options: SimpleFileOptions,
+ ) -> Result<(), String> {
++    reject_coordination_path(&source_dir.to_string_lossy())?;
+     if !source_dir.is_dir() {
+         return Ok(());
+     }
+@@ -2790,7 +2927,7 @@ pub fn add_directory_contents_to_zip<W: Write + std::io::Seek>(
+     zip.add_directory(format!("{}/", normalized_prefix), options)
+         .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
+ 
+-    for entry in WalkDir::new(source_dir) {
++    for entry in WalkDir::new(source_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+         let path = entry.path();
+         let relative_path = path
+@@ -2841,6 +2978,7 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
+     db_path: &Path,
+     options: SimpleFileOptions,
+ ) -> Result<bool, String> {
++    reject_coordination_path(&db_path.to_string_lossy())?;
+     if !db_path.exists() {
+         return Ok(false);
+     }
+@@ -2855,7 +2993,7 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
+     let mut has_files = false;
+ 
+     // Add database files under db/ prefix
+-    for entry in WalkDir::new(db_path) {
++    for entry in WalkDir::new(db_path).into_iter().filter_entry(backup_walk_entry_allowed) {
+         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+         let path = entry.path();
+         let relative_path = path
+@@ -2878,15 +3016,7 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
+             // Use forward slashes for cross-platform compatibility in zip files
+             let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+             let name = format!("db/{}", relative_str);
+-            zip.start_file(name, options)
+-                .map_err(|e| format!("Failed to start file in zip: {}", e))?;
+-
+-            let mut file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+-            let mut file_buffer = Vec::new();
+-            file.read_to_end(&mut file_buffer)
+-                .map_err(|e| format!("Failed to read file: {}", e))?;
+-            zip.write_all(&file_buffer)
+-                .map_err(|e| format!("Failed to write to zip: {}", e))?;
++            add_file_to_zip(zip, path, &name, options)?;
+         } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
+             // Use forward slashes for cross-platform compatibility in zip files
+             let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+@@ -2974,6 +3104,9 @@ pub fn should_filter_external_config_entry(
+     relative_path: &str,
+ ) -> bool {
+     let normalized_path = normalize_restore_entry_name(relative_path);
++    if contains_coordination_component(&normalized_path) {
++        return true;
++    }
+     let file_name = normalized_path.trim_start_matches('/').trim();
+     if file_name.is_empty() || file_name == "root-dir.txt" {
+         return false;
+@@ -3016,6 +3149,7 @@ fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
+     filter_rules: &[BackupFileFilterRule],
+     options: SimpleFileOptions,
+ ) -> Result<(), String> {
++    reject_coordination_path(&source_dir.to_string_lossy())?;
+     if !source_dir.is_dir() {
+         return Ok(());
+     }
+@@ -3026,7 +3160,7 @@ fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
+     zip.add_directory(format!("{}/", normalized_zip_prefix), options)
+         .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
+ 
+-    for entry in WalkDir::new(source_dir) {
++    for entry in WalkDir::new(source_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+         let path = entry.path();
+         let relative_path = path
+@@ -4019,11 +4153,12 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
+ 
+     // Backup skills directory if exists
+     let skills_dir = get_skills_dir(app_handle)?;
++    reject_coordination_path(&skills_dir.to_string_lossy())?;
+     if skills_dir.exists() {
+         zip.add_directory("skills/", options)
+             .map_err(|e| format!("Failed to add skills directory: {}", e))?;
+ 
+-        for entry in WalkDir::new(&skills_dir) {
++        for entry in WalkDir::new(&skills_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+             let entry = entry.map_err(|e| format!("Failed to read skills entry: {}", e))?;
+             let path = entry.path();
+             let relative_path = path
+@@ -4154,6 +4289,146 @@ mod tests {
+     use zip::write::SimpleFileOptions;
+     use zip::{ZipArchive, ZipWriter};
+ 
++    #[test]
++    fn coordination_source_pruning_keeps_ordinary_dotfiles_and_near_matches() {
++        let source = tempfile::tempdir().unwrap();
++        for name in [".env", ".mcp.json", ".ai-toolbox-owner-note.sock", ".ai-toolbox-runtime.lock.backup"] {
++            fs::write(source.path().join(name), b"ordinary").unwrap();
++        }
++        fs::write(source.path().join(".ai-toolbox-owner.lock"), b"private").unwrap();
++        let nested = source.path().join(".ai-toolbox-runtime.lock");
++        fs::create_dir(&nested).unwrap();
++        fs::write(nested.join("never-copy"), b"private").unwrap();
++        fs::write(source.path().join(".ai-toolbox-owner-0000000000000001-0000000000000002.sock"), b"private").unwrap();
++        #[cfg(unix)]
++        std::os::unix::fs::symlink("missing", source.path().join("nested-link")).unwrap();
++        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
++        super::add_directory_contents_to_zip(&mut zip, source.path(), "fixture", SimpleFileOptions::default()).unwrap();
++        let bytes = zip.finish().unwrap().into_inner();
++        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
++        let names: Vec<_> = (0..archive.len()).map(|index| archive.by_index(index).unwrap().name().to_string()).collect();
++        assert!(names.iter().all(|name| !ai_toolbox_management::coordination::contains_coordination_component(name)));
++        for name in [".env", ".mcp.json", ".ai-toolbox-owner-note.sock", ".ai-toolbox-runtime.lock.backup"] {
++            assert!(names.contains(&format!("fixture/{name}")));
++        }
++    }
++
++    #[test]
++    fn forged_archive_and_custom_target_are_rejected_before_any_write() {
++        for reserved in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
++            let target = tempfile::tempdir().unwrap();
++            let lock = target.path().join(reserved);
++            fs::write(&lock, b"unchanged coordination").unwrap();
++            let before = fs::metadata(&lock).unwrap();
++            let manifest = serde_json::json!({"version": 1, "entries": [{
++                "id": "forged", "name": "fixture", "entry_type": "file",
++                "source_path": "synthetic", "restore_path": lock.to_string_lossy(),
++                "payload_path": "custom-backup/payload/ordinary"
++            }]}).to_string();
++            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
++            add_text_to_zip(&mut zip, CUSTOM_BACKUP_MANIFEST_PATH, &manifest, SimpleFileOptions::default()).unwrap();
++            add_text_to_zip(&mut zip, "custom-backup/payload/ordinary", "replacement", SimpleFileOptions::default()).unwrap();
++            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
++            assert_eq!(restore_custom_backup_entries(&mut archive).unwrap_err(), "OWNER_COORDINATION_PATH_RESERVED");
++            assert_eq!(fs::read(&lock).unwrap(), b"unchanged coordination");
++            #[cfg(unix)] {
++                use std::os::unix::fs::MetadataExt;
++                assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
++            }
++            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
++            add_text_to_zip(&mut zip, &format!("db\\{reserved}\\payload"), "forged", SimpleFileOptions::default()).unwrap();
++            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
++            assert!(super::preflight_backup_coordination_paths(&mut archive).is_err());
++        }
++    }
++
++    #[test]
++    fn ordinary_binary_root_dir_payload_restores_without_metadata_interpretation() {
++        let fixture = tempfile::tempdir().unwrap();
++        let source = fixture.path().join("root-dir.txt");
++        let target = fixture.path().join("restored/root-dir.txt");
++        let bytes = b"\xff\x00 ordinary .ai-toolbox-owner.lock data";
++        fs::write(&source, bytes).unwrap();
++        let entries = vec![BackupCustomEntry {
++            id: "binary-root-name".into(), name: "Synthetic binary".into(),
++            source_path: source.to_string_lossy().into_owned(),
++            restore_path: Some(target.to_string_lossy().into_owned()),
++            entry_type: BackupCustomEntryType::File, enabled: true,
++            exclude_patterns: Vec::new(),
++        }];
++        let mut archive = ZipArchive::new(Cursor::new(build_zip(&entries))).unwrap();
++        restore_custom_backup_entries(&mut archive).unwrap();
++        assert_eq!(fs::read(&target).unwrap(), bytes);
++        for name in ["skills/ordinary/root-dir.txt", "external-configs/codex/nested/root-dir.txt",
++                     "external-configs/unknown/root-dir.txt", "external-configs/claude_desktop/root-dir.txt"] {
++            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
++            zip.start_file(name, SimpleFileOptions::default()).unwrap();
++            zip.write_all(bytes).unwrap();
++            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
++            super::preflight_backup_coordination_paths(&mut archive).unwrap();
++        }
++        for tool in ["opencode", "claude", "codex", "grok", "kimi", "openclaw", "geminicli",
++                     "antigravity", "zcode", "pi", "oh_my_pi", "hermes", "dsh", "omo_native"] {
++            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
++            add_text_to_zip(&mut zip, &format!("external-configs/{tool}/root-dir.txt"),
++                "/synthetic/.ai-toolbox-owner.lock", SimpleFileOptions::default()).unwrap();
++            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
++            assert_eq!(super::preflight_backup_coordination_paths(&mut archive).unwrap_err(),
++                "OWNER_COORDINATION_PATH_RESERVED");
++        }
++    }
++
++    #[test]
++    fn duplicate_normalized_manifests_block_synthetic_database_sink() {
++        for names in [
++            [CUSTOM_BACKUP_MANIFEST_PATH, "custom-backup\\manifest.json"],
++            ["custom-backup\\manifest.json", CUSTOM_BACKUP_MANIFEST_PATH],
++        ] {
++            for malicious_first in [true, false] {
++                let target = tempfile::tempdir().unwrap();
++                let database = target.path().join("synthetic-database");
++                let lock = target.path().join(".ai-toolbox-owner.lock");
++                fs::write(&database, b"unchanged database").unwrap();
++                fs::write(&lock, b"unchanged coordination").unwrap();
++                let before = fs::metadata(&lock).unwrap();
++                let malicious = serde_json::json!({"version": 1, "entries": [{
++                    "id": "forged", "name": "fixture", "entry_type": "file",
++                    "source_path": "synthetic", "restore_path": lock.to_string_lossy(),
++                    "payload_path": "custom-backup/payload/ordinary"
++                }]}).to_string();
++                let benign = serde_json::json!({"version": 1, "entries": []}).to_string();
++                let contents = if malicious_first {
++                    [&malicious, &benign]
++                } else {
++                    [&benign, &malicious]
++                };
++                let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
++                for (name, content) in names.into_iter().zip(contents) {
++                    add_text_to_zip(&mut zip, name, content, SimpleFileOptions::default()).unwrap();
++                }
++                let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
++                assert_eq!(archive.len(), 2);
++                for (index, expected) in names.into_iter().enumerate() {
++                    assert_eq!(archive.by_index(index).unwrap().name(), expected);
++                }
++                assert_eq!(super::find_zip_entry_by_normalized_name(&mut archive, CUSTOM_BACKUP_MANIFEST_PATH), Some(names[0].to_string()));
++                // The production restore invokes this preflight before SQLite
++                // restore; this local sink proves that rejection short-circuits.
++                let result = super::preflight_backup_coordination_paths(&mut archive)
++                    .and_then(|()| fs::write(&database, b"must not restore")
++                        .map_err(|error| error.to_string()));
++                assert_eq!(result.unwrap_err(), "OWNER_CUSTOM_MANIFEST_AMBIGUOUS");
++                assert_eq!(restore_custom_backup_entries(&mut archive).unwrap_err(), "OWNER_CUSTOM_MANIFEST_AMBIGUOUS");
++                assert_eq!(fs::read(&database).unwrap(), b"unchanged database");
++                assert_eq!(fs::read(&lock).unwrap(), b"unchanged coordination");
++                #[cfg(unix)] {
++                    use std::os::unix::fs::MetadataExt;
++                    assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
++                }
++            }
++        }
++    }
++
+     fn build_zip(entries: &[BackupCustomEntry]) -> Vec<u8> {
+         let mut buffer = Cursor::new(Vec::new());
+         {
