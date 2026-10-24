@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {createSSHFixtureInteractions, waitForSSHFixtureState} from '../sshRequest/sshRequestBrowserInteractions.mjs';
 
 // Explicit feature expectations are independent of the runtime locale files.
 const EXPECTED = {
@@ -91,16 +92,8 @@ export async function verifySSHCapability({send,evaluate,baseUrl,exceptions,arti
   const results=[];
   let serial=0;
   const snapshot=()=>evaluate('sshRequestFixture.snapshot()');
-  const wait=async predicate=>{
-    for(let i=0;i<200;i++) {if(await predicate())return;await new Promise(r=>setTimeout(r,20));}
-    throw Error('UI state deadline');
-  };
+  const wait=waitForSSHFixtureState;
   const drain=async()=>{await evaluate('sshRequestFixture.drain()');await wait(async()=>!(await snapshot()).animations.length);};
-  const click=async(selector,text=null)=>{
-    const point=await evaluate(`(()=>{const es=[...document.querySelectorAll(${JSON.stringify(selector)})].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&(${JSON.stringify(text)}===null||e.textContent===${JSON.stringify(text)});});if(es.length!==1)throw Error('Expected one visible target: '+es.length);const e=es[0],r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(x<0||y<0||x>=innerWidth||y>=innerHeight||!e.contains(document.elementFromPoint(x,y)))throw Error('Target occluded/outside viewport');return{x,y};})()`);
-    await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
-    await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
-  };
   for(const lang of ['en-US','zh-CN']) {
     const locale=EXPECTED[lang];
     const cases=[
@@ -124,7 +117,9 @@ export async function verifySSHCapability({send,evaluate,baseUrl,exceptions,arti
     for(const spec of cases) {
       const caseId=`capability-${serial++}`;
       const exceptionStart=exceptions.length;
-      let state,phase='setup';const observations=[];
+      let state,phase='setup',selectorCategory=null;const observations=[];
+      const {chooseB}=createSSHFixtureInteractions({send,evaluate,snapshot,drain,
+        onPhase:(step,category)=>{phase='interaction:'+step;selectorCategory=category;}});
       try {
         await send('Page.navigate',{url:`${baseUrl}/?case=${caseId}&lang=${lang}`});
         await wait(async()=>evaluate(`!!window.sshRequestFixture && sshRequestFixture.snapshot().caseId===${JSON.stringify(caseId)} && sshRequestFixture.snapshot().calls.some(c=>c.id==='A')`));
@@ -133,13 +128,11 @@ export async function verifySSHCapability({send,evaluate,baseUrl,exceptions,arti
         let pending=before.calls.flatMap((c,i)=>c.id==='A'&&!c.settled?[i]:[]);
         const stale=spec.stale?pending:[];
         if(spec.stale) {
-          await click('.ant-modal .ant-select');
-          await wait(()=>evaluate(`!![...document.querySelectorAll('.ant-select-item-option-content > div > span')].find(e=>e.textContent==='Connection B'&&e.getBoundingClientRect().height>0)`));
-          await click('.ant-select-item-option-content > div > span','Connection B');
-          await drain();await wait(async()=> (await snapshot()).calls.some(c=>c.id==='B'&&!c.settled));
+          await chooseB();
           before=await snapshot();pending=before.calls.flatMap((c,i)=>c.id==='B'&&!c.settled?[i]:[]);
         }
         assert.ok(pending.length>0);observations.push({label:'before settlement',state:before});
+        phase='settlement';
         await evaluate(`sshRequestFixture.settle(${JSON.stringify(pending)},false,${JSON.stringify(spec.response)})`);
         await drain();
         if(spec.stale) {
@@ -182,10 +175,12 @@ export async function verifySSHCapability({send,evaluate,baseUrl,exceptions,arti
           ? await captureEvidence({send,evaluate,artifactRoot,stem:`${caseId}-${lang}-representative`}) : undefined;
         results.push({name:spec.name,lang,control:!!spec.control,passed:true,state,observations,evidence});
       } catch(error) {
+        // Only synthetic case metadata, never DOM, URLs or connection fields.
+        console.error(JSON.stringify({suite:'ssh-capability',case:spec.name,lang,phase,selectorCategory,error:String(error)}));
         const pageExceptions=exceptions.slice(exceptionStart);
         const classification=phase==='expectation'&&pageExceptions.length===0&&state?.forbidden===0?'expectation-failed':'fixture-or-control-error';
         const evidence=await captureEvidence({send,evaluate,artifactRoot,stem:`${caseId}-${lang}-failure`,includeDOM:true});
-        results.push({name:spec.name,lang,control:!!spec.control,passed:false,phase,evidence,
+        results.push({name:spec.name,lang,control:!!spec.control,passed:false,phase,selectorCategory,evidence,
           classification,error:String(error),state,observations,pageExceptions});
       }
     }
@@ -240,6 +235,7 @@ export async function verifySSHCapabilityBaseline({send,evaluate,baseUrl,excepti
       results.push({name:caseId,passed:true,classification:'missing-new-capability-ui',evidence,
         newFeatureExpectation:{expected:1,actual:0},existingAuthControlsPassed:true,syntheticBoundaryOnly:true,observations});
     } catch(error) {
+      console.error(JSON.stringify({suite:'ssh-capability-baseline',case:caseId,phase,selectorCategory:null,error:String(error)}));
       const evidence=await captureEvidence({send,evaluate,artifactRoot,stem:`${caseId}-failure`,includeDOM:true});
       results.push({name:caseId,passed:false,evidence,classification:'baseline-control-failed',phase,error:String(error),state,observations,pageExceptions:exceptions.slice(exceptionStart)});
     }
