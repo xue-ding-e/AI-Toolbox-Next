@@ -3163,14 +3163,66 @@ fn project_stats_group_usage_by_the_recorded_working_directory() {
     );
 }
 
-/// ISO timestamps relative to the real clock. Qoder fixtures must not pin
+/// ISO timestamps relative to one captured scenario clock. Qoder fixtures must not pin
 /// calendar dates: the sync's retention maintenance prunes detail rows older
 /// than `log_retention_days` (default 7) measured from `Local::now()`, so a
 /// hard-coded date turns the test into a time bomb that starts failing
 /// exactly one week after the fixture was written (observed 2026-10-24).
-fn relative_iso_timestamp(offset_secs: i64) -> String {
-    use chrono::{Duration, SecondsFormat, Utc};
-    (Utc::now() - Duration::seconds(offset_secs)).to_rfc3339_opts(SecondsFormat::Millis, true)
+/// Pass the same clock to the import's settle check instead of the unrelated
+/// fixed `NOW`; otherwise these current records become pending after that date.
+fn relative_iso_timestamp(now: chrono::DateTime<Utc>, offset_secs: i64) -> String {
+    use chrono::{Duration, SecondsFormat};
+    (now - Duration::seconds(offset_secs)).to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+// Only clock-relative Qoder scenarios use this helper. Other fixtures keep
+// their existing fixed-clock `run_sync`, including the archive regressions.
+fn run_sync_at(
+    db: &SqliteDbState,
+    cli: impl Into<GatewayUsageTool>,
+    root: &Path,
+    now: chrono::DateTime<Utc>,
+) -> GatewaySessionUsageImportResult {
+    sync_sources(db, &[(cli.into(), root.to_path_buf())], now.timestamp()).unwrap()
+}
+
+#[test]
+fn qoder_fixture_clock_covers_settling_and_local_midnight_boundaries() {
+    let retain_days = i64::from(
+        crate::coding::proxy_gateway::types::ProxyGatewaySettings::default().log_retention_days,
+    );
+    // Pure clock arithmetic: this does not mock Local::now() or execute future
+    // retention maintenance. The import scenarios below exercise the real path.
+    for (clock, utc_offset) in [
+        ("2026-10-24T00:00:00.001Z", 0),
+        ("2027-01-15T08:01:39.999Z", 0), // Before the old fixed NOW.
+        ("2027-01-15T08:01:48.000Z", 0), // First old-clock pending boundary.
+        ("2027-01-16T00:00:00.001Z", 0), // After NOW, crossing UTC midnight.
+        ("2027-01-15T10:00:00.001Z", 14 * 60 * 60),
+        ("2027-01-15T12:00:00.001Z", -12 * 60 * 60),
+    ] {
+        let now = chrono::DateTime::parse_from_rfc3339(clock)
+            .unwrap()
+            .with_timezone(&Utc);
+        let zone = chrono::FixedOffset::east_opt(utc_offset).unwrap();
+        for offset_secs in [40, 30, 20, 10, 5] {
+            let timestamp = relative_iso_timestamp(now, offset_secs);
+            let event = chrono::DateTime::parse_from_rfc3339(&timestamp).unwrap();
+            assert!(timestamp.ends_with('Z'));
+            assert_eq!(event.timestamp(), now.timestamp() - offset_secs);
+            assert!(event.timestamp() <= now.timestamp() - SESSION_SETTLE_SECONDS);
+
+            // A midnight crossing can put a recent event on yesterday's local
+            // date, still inside the default seven-calendar-day detail window.
+            let age_days = now
+                .with_timezone(&zone)
+                .date_naive()
+                .signed_duration_since(event.with_timezone(&zone).date_naive())
+                .num_days();
+            assert!((0..=1).contains(&age_days));
+            assert!(age_days < retain_days);
+        }
+    }
 }
 
 fn qoder_cli_assistant(request: &str, model: &str, credits: f64, timestamp: &str) -> Value {
@@ -3196,6 +3248,7 @@ fn qoder_cli_assistant(request: &str, model: &str, credits: f64, timestamp: &str
 
 #[test]
 fn qoder_cli_keeps_zero_token_calls_and_reads_the_working_directory() {
+    let now = Utc::now();
     let root = tempfile::tempdir().unwrap();
     let project = root.path().join("D--work-qoder-repo");
     fs::create_dir_all(&project).unwrap();
@@ -3204,22 +3257,22 @@ fn qoder_cli_keeps_zero_token_calls_and_reads_the_working_directory() {
         &[
             json!({"type":"runtime-config","sessionId":"qoder-session","model":"qfmodel"}),
             json!({"type":"user","sessionId":"qoder-session","cwd":"D:/work/qoder-repo",
-                "timestamp":&relative_iso_timestamp(40),"message":{"role":"user","content":"hi"}}),
+                "timestamp":&relative_iso_timestamp(now, 40),"message":{"role":"user","content":"hi"}}),
             // A row without usage is not a model call.
             json!({"type":"assistant","sessionId":"qoder-session","cwd":"D:/work/qoder-repo",
-                "timestamp":&relative_iso_timestamp(30),"message":{"id":"chatcmpl-plain","model":"qfmodel"}}),
-            qoder_cli_assistant("req-1", "qfmodel", 0.25, &relative_iso_timestamp(20)),
+                "timestamp":&relative_iso_timestamp(now, 30),"message":{"id":"chatcmpl-plain","model":"qfmodel"}}),
+            qoder_cli_assistant("req-1", "qfmodel", 0.25, &relative_iso_timestamp(now, 20)),
             // The same provider response repeated while streaming is one call.
-            qoder_cli_assistant("req-1", "qfmodel", 0.25, &relative_iso_timestamp(10)),
+            qoder_cli_assistant("req-1", "qfmodel", 0.25, &relative_iso_timestamp(now, 10)),
             // The credit-limit notice is not a reply.
             json!({"type":"assistant","sessionId":"qoder-session","cwd":"D:/work/qoder-repo",
-                "timestamp":&relative_iso_timestamp(5),
+                "timestamp":&relative_iso_timestamp(now, 5),
                 "message":{"id":"chatcmpl-synthetic","model":"<synthetic>","usage":{}}}),
         ],
     );
 
     let db = SqliteDbState::in_memory_for_test().unwrap();
-    let result = run_sync(&db, GatewayUsageTool::QoderCli, root.path());
+    let result = run_sync_at(&db, GatewayUsageTool::QoderCli, root.path(), now);
     assert_eq!(
         result.parsed_records, 1,
         "one provider response is one call"
@@ -3239,6 +3292,7 @@ fn qoder_cli_keeps_zero_token_calls_and_reads_the_working_directory() {
 
 #[test]
 fn qoder_cli_reads_the_nested_cache_creation_pair_and_the_config_model() {
+    let now = Utc::now();
     let root = tempfile::tempdir().unwrap();
     let file = root.path().join("nested.jsonl");
     write_jsonl(
@@ -3246,7 +3300,7 @@ fn qoder_cli_reads_the_nested_cache_creation_pair_and_the_config_model() {
         &[
             json!({"type":"runtime-config","sessionId":"qoder-session","model":"configured-model"}),
             json!({"type":"assistant","sessionId":"qoder-session","cwd":"D:/work/qoder-repo",
-            "timestamp":&relative_iso_timestamp(20),
+            "timestamp":&relative_iso_timestamp(now, 20),
             "message":{"id":"chatcmpl-nested","usage":{
                 "input_tokens":1000,
                 "output_tokens":50,
@@ -3256,7 +3310,7 @@ fn qoder_cli_reads_the_nested_cache_creation_pair_and_the_config_model() {
         ],
     );
     let db = SqliteDbState::in_memory_for_test().unwrap();
-    run_sync(&db, GatewayUsageTool::QoderCli, root.path());
+    run_sync_at(&db, GatewayUsageTool::QoderCli, root.path(), now);
     let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
     // The transcript's `input_tokens` is the provider's prompt count and
     // already contains both cache buckets, so the stored fresh input is
@@ -3274,6 +3328,7 @@ fn qoder_cli_reads_the_nested_cache_creation_pair_and_the_config_model() {
 
 #[test]
 fn qoder_cn_transcripts_stay_separate_from_the_international_cli() {
+    let now = Utc::now();
     let root = tempfile::tempdir().unwrap();
     write_jsonl(
         &root.path().join("cn.jsonl"),
@@ -3281,11 +3336,11 @@ fn qoder_cn_transcripts_stay_separate_from_the_international_cli() {
             "req-cn",
             "dfmodel",
             0.5,
-            &relative_iso_timestamp(20),
+            &relative_iso_timestamp(now, 20),
         )],
     );
     let db = SqliteDbState::in_memory_for_test().unwrap();
-    run_sync(&db, GatewayUsageTool::QoderCliCn, root.path());
+    run_sync_at(&db, GatewayUsageTool::QoderCliCn, root.path(), now);
     let summary =
         usage_stats::usage_summary(&db, None, None, Some(GatewayUsageTool::QoderCli), true)
             .unwrap();
@@ -3446,16 +3501,17 @@ fn qoder_tool_keys_serialize_exactly_as_their_app_type() {
 
 #[test]
 fn qoder_credits_are_stored_beside_zero_tokens() {
+    let now = Utc::now();
     let root = tempfile::tempdir().unwrap();
     write_jsonl(
         &root.path().join("qd.jsonl"),
         &[
-            qoder_cli_assistant("req-a", "qfmodel", 0.25, &relative_iso_timestamp(20)),
-            qoder_cli_assistant("req-b", "qfmodel", 0.75, &relative_iso_timestamp(10)),
+            qoder_cli_assistant("req-a", "qfmodel", 0.25, &relative_iso_timestamp(now, 20)),
+            qoder_cli_assistant("req-b", "qfmodel", 0.75, &relative_iso_timestamp(now, 10)),
         ],
     );
     let db = SqliteDbState::in_memory_for_test().unwrap();
-    run_sync(&db, GatewayUsageTool::QoderCli, root.path());
+    run_sync_at(&db, GatewayUsageTool::QoderCli, root.path(), now);
 
     // Credits are the only usage measure Qoder records; they are persisted so
     // history survives until a consumer renders them.
@@ -3479,13 +3535,13 @@ fn qoder_credits_are_stored_beside_zero_tokens() {
     write_jsonl(
         &root2.path().join("claude.jsonl"),
         &[
-            json!({"type":"assistant", "sessionId":"claude-session", "timestamp":THEN,
+            json!({"type":"assistant", "sessionId":"claude-session", "timestamp":relative_iso_timestamp(now, 20),
             "cwd": "D:/work/repo",
             "message":{"id":"msg-credits","model":"usage-test-model",
                 "usage":{"input_tokens":100,"output_tokens":10}}}),
         ],
     );
-    run_sync(&db, GatewayUsageTool::Claude, root2.path());
+    run_sync_at(&db, GatewayUsageTool::Claude, root2.path(), now);
     let claude_credits: Option<f64> = db
         .with_conn(|conn| {
             conn.query_row(
