@@ -1,0 +1,94 @@
+name: Maintenance validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-toolbox-maintenance-validation
+  cancel-in-progress: false
+
+jobs:
+  codex-credits-frontend:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/codex-extra-credits-upstream'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Record exact revision and resources
+        run: |
+          git rev-parse HEAD HEAD^ 'HEAD^{tree}'
+          test "$(git rev-parse HEAD^)" = 987b49fc1cd04db57b5a7aac1931b3476bb3979e
+          git diff --exit-code HEAD^ HEAD -- . ':!.github/workflows/maintenance-validation.yml'
+          node --version
+          pnpm --version
+          command -v google-chrome || command -v chromium
+          free -m
+          df -h
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: TypeScript
+        run: pnpm exec tsc --noEmit
+      - name: Credits real-page regression
+        run: pnpm run test:codex-credits
+      - name: Full frontend suite
+        run: pnpm test
+      - name: Frontend production build
+        run: pnpm build
+  codex-credits-rust:
+    needs: codex-credits-frontend
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/codex-extra-credits-upstream'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record exact revision and resources
+        run: |
+          git rev-parse HEAD HEAD^ 'HEAD^{tree}'
+          test "$(git rev-parse HEAD^)" = 987b49fc1cd04db57b5a7aac1931b3476bb3979e
+          git diff --exit-code HEAD^ HEAD -- . ':!.github/workflows/maintenance-validation.yml'
+          rustc --version
+          cargo --version
+          free -m
+          df -h
+      - name: Verify new credits tests are selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::codex::official_accounts::tests::codex_credits -- --list > /tmp/codex-credits-tests
+          cat /tmp/codex-credits-tests
+          grep -Fx '7 tests, 0 benchmarks' /tmp/codex-credits-tests
+          for name in parse_strings_numbers_and_preserve_subscription_windows preserve_zero_negative_and_conflicting_availability malformed_fields_do_not_fail_or_invent_a_balance round_trip_refresh_clear_and_failure_are_account_scoped old_records_and_virtual_logins_have_no_invented_balance preparation_failure_clears_persisted_balance oauth_refresh_does_not_restore_an_older_usage_snapshot; do
+            grep -Fx "coding::codex::official_accounts::tests::codex_credits_${name}: test" /tmp/codex-credits-tests
+          done
+      - name: Credits regressions
+        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::codex::official_accounts::tests::codex_credits
+      - name: Full upstream Rust suite
+        run: cargo test --locked --manifest-path tauri/Cargo.toml --no-fail-fast
