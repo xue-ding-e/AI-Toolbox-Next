@@ -32,3 +32,6 @@ nul
 .workflow
 .pi
 .playwright-mcp
+
+# Machine-local settings are not distributable product source.
+.claude/settings.local.json
