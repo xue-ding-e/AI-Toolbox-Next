@@ -264,9 +264,26 @@ pub async fn ssh_save_config(
         log::info!("SSH sync enabled, triggering full sync...");
 
         if session.try_acquire_sync_lock() {
-            let _ = session.ensure_connected().await;
-            let result = do_full_sync(&state, &app, &session, &config, None, None).await;
+            // A failed connect must be reported as such: `do_full_sync` probes
+            // the shell next, and a probe without a session answers `Unknown`,
+            // which the user reads as "the remote shell is not POSIX" when the
+            // real problem was the connection.
+            let result = match session.ensure_connected().await {
+                Ok(()) => Some(do_full_sync(&state, &app, &session, &config, None, None).await),
+                Err(error) => {
+                    log::warn!("SSH full sync skipped, connect failed: {error}");
+                    None
+                }
+            };
             session.release_sync_lock();
+
+            let result = result.unwrap_or_else(|| SyncResult {
+                success: false,
+                synced_files: Vec::new(),
+                skipped_files: Vec::new(),
+                errors: vec!["SSH 连接失败，同步未启动".to_string()],
+                warnings: Vec::new(),
+            });
 
             if !result.errors.is_empty() {
                 log::warn!("SSH full sync errors: {:?}", result.errors);

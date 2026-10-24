@@ -87,3 +87,5 @@ sequenceDiagram
 - 至少验证：手动点击 Sync Now 会执行同步，并带出进度事件。
 - 至少验证：启用 SSH 或切换 active connection 时能完成一次全量同步。
 - 至少验证：WSL Direct 本地路径在 SSH 设置页显示为 UNC，但不会导致模块被禁用。
+
+- 启用 SSH 后的首次全量同步必须先确认 `ensure_connected` 成功；连接失败返回同步未启动，释放 sync lock，不再用远端 shell probe 的 Unknown 掩盖连接错误。
