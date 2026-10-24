@@ -1061,6 +1061,8 @@ single/failover 接管写入的 `supports_websockets` 描述本机网关能力�
 
 2026-09-13 专项参考：cc-switch `e098279934a6041ebab35664c5fbd785df055ee0` 的 `src-tauri/src/codex_config.rs` 仍明确本机代理只提供 HTTP/SSE，没有可直接搬用的 WS 路由；AxonHub `dfbe22593ea33d62d1bc04d47a8e5d6c8b25d2bf` 的 `llm/transformer/openai/responses/websocket_executor.go` 与 `internal/server/api/responses_websocket.go` 提供握手、复用、终态和预热边界参考。本项目采用对应生命周期约束，保留一对一连接，不引入其全局 session pool、HTTP facade、数据库/channel/orchestrator。另核对 Codex `89c8bcf37d64be69e4c8286f4541c1a84ed312a4` 的 `codex-rs/core/src/client.rs`，确认握手 `UPGRADE_REQUIRED` → `FallbackToHttp`。这是 issue #342 的定点审查与实现，未执行两个参考项目的完整 baseline 增量同步，§19.4 的基线保持不变。
 
+WS compaction 的摘要重试只有在 `begin_summarizing_retry()` 成功后才替换 `response.observations`；准备失败、无 compaction 或拒绝重复重试时，保留实际原请求的诊断，不能把未发送的请求记入详情。该顺序适配上游 `167740781644753489ed50bbdc48905628362bdd`；Next 的 transient refusal 判定与 HTTP 结构化工具观测保持不变。
+
 ### 16.2 请求脱敏与响应还原（issue #347）
 
 数据脱敏是可关闭的 runtime 功能，默认关闭；协议矩阵和 transformer 职责保持不变。完整行为、限额、会话生命周期和 UI 入口见 [`gateway-data-redaction.md`](gateway-data-redaction.md)。
