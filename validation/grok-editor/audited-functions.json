@@ -22,5 +22,16 @@
     "interrupt": 1
   },
   "source_file": "audited-baseline-f617d51.py.txt",
-  "source_sha256": "c4230e5646ccc6678a706e60e0f689dab663f7683c31e1eb176702f71f0994e8"
+  "source_sha256": "c4230e5646ccc6678a706e60e0f689dab663f7683c31e1eb176702f71f0994e8",
+  "run_extension": {
+    "body_path": [
+      18,
+      "body",
+      8,
+      "body",
+      5
+    ],
+    "after": "check_rss(members)",
+    "statement": "observe_batch_checkpoint(child, known, members)"
+  }
 }

@@ -30,6 +30,38 @@ AUDITED_FUNCTION_COUNTS = {
     'cleanup': 2, 'run': 1, 'read_regular': 1, 'tree_snapshot': 1, 'content_records': 1,
     'verify_source': 1, 'arm_final_budget': 1, 'interrupt': 1,
 }
+REVIEWED_RUN_EXTENSION = {
+    'body_path': [18, 'body', 8, 'body', 5],
+    'after': 'check_rss(members)',
+    'statement': 'observe_batch_checkpoint(child, known, members)',
+}
+
+
+def reviewed_run_without_extension(node):
+    # This is an exact, independently reviewed one-statement extension, NOT a
+    # generic AST filter. Its statement, sole occurrence, enclosing location and
+    # immediate resource-check predecessor must all match before removing it.
+    expected = ast.parse(REVIEWED_RUN_EXTENSION['statement']).body[0]
+    anchor = ast.parse(REVIEWED_RUN_EXTENSION['after']).body[0]
+    calls = [item for item in ast.walk(node) if isinstance(item, ast.Call)
+             and isinstance(item.func, ast.Name) and item.func.id == 'observe_batch_checkpoint']
+    d.require(len(calls) == 1, 'reviewed run hook missing or duplicated')
+    try:
+        outer = node.body[18]
+        loop = outer.body[8]
+        statement = loop.body[5]
+        preceding = loop.body[4]
+    except (AttributeError, IndexError):
+        raise RuntimeError('reviewed run hook location changed') from None
+    d.require(isinstance(outer, ast.Try) and isinstance(loop, ast.While)
+              and isinstance(loop.test, ast.Constant) and loop.test.value is True,
+              'reviewed run hook enclosing location changed')
+    d.require(ast.dump(statement, include_attributes=False) == ast.dump(expected, include_attributes=False)
+              and ast.dump(preceding, include_attributes=False) == ast.dump(anchor, include_attributes=False),
+              'reviewed run hook statement or predecessor changed')
+    revised = copy.deepcopy(node)
+    del revised.body[18].body[8].body[5]
+    return revised
 
 
 def assert_reviewed_functions_unchanged(candidate, baseline, manifest):
@@ -38,20 +70,23 @@ def assert_reviewed_functions_unchanged(candidate, baseline, manifest):
         'source_file': AUDITED_BASELINE_FILE,
         'source_sha256': AUDITED_BASELINE_SHA,
         'functions': AUDITED_FUNCTION_COUNTS,
+        'run_extension': REVIEWED_RUN_EXTENSION,
     }, 'audited baseline manifest changed')
     d.require(hashlib.sha256(baseline).hexdigest() == AUDITED_BASELINE_SHA,
               'audited historical source hash changed')
 
-    def functions(source):
+    def functions(source, candidate=False):
         observed = {}
         for node in ast.parse(source).body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in AUDITED_FUNCTION_COUNTS:
+                if candidate and node.name == 'run':
+                    node = reviewed_run_without_extension(node)
                 observed.setdefault(node.name, []).append(ast.dump(node, include_attributes=False))
         d.require({name: len(bodies) for name, bodies in observed.items()} == AUDITED_FUNCTION_COUNTS,
                   'audited function missing, duplicated, or renamed')
         return observed
 
-    d.require(functions(candidate) == functions(baseline.decode('utf-8')),
+    d.require(functions(candidate, candidate=True) == functions(baseline.decode('utf-8')),
               'audited function AST changed')
 
 
@@ -126,8 +161,8 @@ class ReportContractTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(raw).hexdigest(), d.SOURCE_SEAL)
         seal = json.loads(raw)
         self.assertEqual(seal['base'], d.BASE)
-        self.assertEqual(seal['base'], '059545a2d3e1145f7758e374e7d09e176f43caa3')
-        self.assertEqual(seal['tree'], 'ea8fbc8849aa489ef2f853296ad52bd05f3c55ca')
+        self.assertEqual(seal['base'], '560b4560bd6e287d8515d027be76d0c5135876c3')
+        self.assertEqual(seal['tree'], 'b12e408791c63351093b80a48da3291dbcbb15c0')
         self.assertEqual(seal['files']['package.json']['sha256'], d.PACKAGE_SHA)
         self.assertEqual(seal['files']['pnpm-lock.yaml']['sha256'], d.LOCK_SHA)
         for path in ['scripts/verify-grok-editor-and-catalog.mjs', 'scripts/verify-grok-editor-readback.mjs',
@@ -185,6 +220,56 @@ class ReportContractTests(unittest.TestCase):
     def test_comment_only_candidate_change_preserves_exact_ast_comparison(self):
         # No semantic fields are normalized or dropped to make versions agree.
         self.audit(source=(HERE / 'validate.py').read_text() + '\n# harmless review note\n')
+
+    def test_run_hook_missing_duplicated_moved_reparameterized_or_swallowed_rejected(self):
+        source = (HERE / 'validate.py').read_text()
+        hook = '            observe_batch_checkpoint(child, known, members)\n'
+        self.assertEqual(source.count(hook), 1)
+        for changed in [source.replace(hook, ''), source.replace(hook, hook * 2),
+                        source.replace('            check_rss(members)\n' + hook,
+                                       hook + '            check_rss(members)\n'),
+                        source.replace(hook, hook.replace('known, members', 'members, known')),
+                        source.replace(hook, '            try:\n    ' + hook + '            except Exception:\n                pass\n')]:
+            with self.subTest(changed_tail=changed[-50:]), self.assertRaises(RuntimeError): self.audit(source=changed)
+
+    def test_hook_forwards_original_identity_objects_and_propagates_every_failure(self):
+        child, known, members = object(), {}, {}
+        class Control:
+            def observe(self, *args):
+                self.args = args
+                raise RuntimeError('synthetic checkpoint refusal')
+        control = Control()
+        with patch.object(d, 'BATCH_CONTROL', control):
+            with self.assertRaisesRegex(RuntimeError, 'checkpoint refusal'):
+                d.observe_batch_checkpoint(child, known, members)
+        self.assertIs(control.args[0], child); self.assertIs(control.args[1], known); self.assertIs(control.args[2], members)
+        with patch.object(d, 'BATCH_CONTROL', None): d.observe_batch_checkpoint(child, known, members)
+        actual = next(node for node in ast.parse((HERE / 'validate.py').read_text()).body
+                      if isinstance(node, ast.FunctionDef) and node.name == 'observe_batch_checkpoint')
+        expected = ast.parse('def observe_batch_checkpoint(child, known, members):\n'
+                             '    if BATCH_CONTROL is not None:\n'
+                             '        BATCH_CONTROL.observe(child, known, members)\n').body[0]
+        self.assertEqual(ast.dump(actual, include_attributes=False), ast.dump(expected, include_attributes=False))
+
+    def test_single_fixture_command_and_original_shared_deadlines_remain(self):
+        source = (HERE / 'validate.py').read_text()
+        main = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        fixture_calls = [node for node in ast.walk(main) if isinstance(node, ast.Call)
+                         and isinstance(node.func, ast.Name) and node.func.id == 'run'
+                         and isinstance(node.args[0], ast.Constant) and node.args[0].value == 'grok-editor-and-catalog']
+        self.assertEqual(len(fixture_calls), 1)
+        self.assertEqual(fixture_calls[0].args[2].value, 420)
+        self.assertEqual(ast.unparse(fixture_calls[0].args[-1]), 'fixture_env')
+        self.assertNotIn("run('grok-editor-readback'", source)
+        self.assertIn('started+1380', source)
+        self.assertIn('min(420,JOB_DEADLINE-time.monotonic()-FINALIZE_RESERVE)', source)
+        self.assertIn('BATCH_CONTROL.assert_complete()', source)
+        helper = (HERE / 'batch_lifecycle.py').read_text()
+        # Quiescence observation may not secretly refill clocks or change the
+        # existing owned-tree supervisor's resource metric and cleanup policy.
+        for forbidden in ['setitimer', 'CLEANUP_DEADLINE', 'JOB_DEADLINE', 'RSS_LIMIT',
+                          'Popen', 'pidfd_send_signal', 'killpg', 'time.sleep']:
+            self.assertNotIn(forbidden, helper)
 
     def test_observation_error_records_safe_classification_without_retry(self):
         error = d.ObservationError('synthetic-control-open', 13, 'metadata read failed')

@@ -1,5 +1,5 @@
 {
-  "base": "059545a2d3e1145f7758e374e7d09e176f43caa3",
+  "base": "560b4560bd6e287d8515d027be76d0c5135876c3",
   "files": {
     ".claude/CLAUDE.md": {
       "kind": "file",
@@ -654,7 +654,7 @@
     "scripts/AGENTS.md": {
       "kind": "file",
       "mode": 420,
-      "sha256": "28c404024da7714c1dac1a829c45595e7e5698a801aabce89234dfe3af079173"
+      "sha256": "55fce2bb3b265e89b3da42d271fe4f4b0026eb7c2d123e0abe8c5aecc936cd68"
     },
     "scripts/IsolatedInstanceSafety.ps1": {
       "kind": "file",
@@ -705,6 +705,16 @@
       "kind": "file",
       "mode": 420,
       "sha256": "3121b8ba86f906db9b4037b85eb43d94f8eea5621e94d1464ef5158a34ba52c3"
+    },
+    "scripts/lib/grok-batch-lifecycle.mjs": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "cb0f62ec8b78c267357f268c841165defc0ec5e4ad52e2e6f97d95fc464f44ea"
+    },
+    "scripts/lib/grok-batch-lifecycle.test.mjs": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9667649b2e3b628a7ca5da6c952df3f76348207a831174afe67d889d008f6bfe"
     },
     "scripts/lib/operation-inventory.mjs": {
       "kind": "file",
@@ -834,7 +844,7 @@
     "scripts/verify-grok-editor-and-catalog.mjs": {
       "kind": "file",
       "mode": 420,
-      "sha256": "4f34b19adcfb8a46a2bdd2f1d401cf4cf3ed7e4b60d2f15b4eeeaf975946c5c8"
+      "sha256": "4ce30dd96f5aeaf8e21322458136d87295c6c6b76bcf9179d918f2af488a1238"
     },
     "scripts/verify-grok-editor-readback.mjs": {
       "kind": "file",
@@ -8179,7 +8189,7 @@
     "web/test/features/coding/grok/editorReadback/fixtureBoundaries.test.ts": {
       "kind": "file",
       "mode": 420,
-      "sha256": "36917081278fa6316c7f5e3989b046d1b41933e4ba5ce5b62656c5092c5cedd3"
+      "sha256": "f84f908047b8d57e27c4d77ce75ebbb7902704fa252227062f2bb6b496bbe581"
     },
     "web/test/features/coding/grok/editorReadback/fixtures/GrokEditorFixture.jsx": {
       "kind": "file",
@@ -9257,5 +9267,5 @@
       "sha256": "0221c6ce0fdbd4e0545e142b56640a002b614ca5549b3d49d5ce8f3ca86db42a"
     }
   },
-  "tree": "ea8fbc8849aa489ef2f853296ad52bd05f3c55ca"
+  "tree": "b12e408791c63351093b80a48da3291dbcbb15c0"
 }

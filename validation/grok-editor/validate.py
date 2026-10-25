@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """One attempt only. Source preparation; do not execute without reviewed slot approval.
 Supervisor identity/WNOWAIT/pidfd/reap and RSS/threshold code is preserved from
-reviewed Grok r4 f617d51. Only the visible-v2 observation is adapted from 92198;
-this neither locates the old errno13 nor retries a known-denied operation.
-One fixture process runs all six editor and four existing catalog cases.
+reviewed Grok r4 f617d51; run adds one precisely audited checkpoint hook after RSS.
+The visible-v2 observation is adapted from 92198; this neither locates the old
+errno13 nor retries a known-denied operation. One supervised wrapper owns two
+short-lived fixture children inside the same six-plus-four attempt and budget.
 No RLIMIT_AS or browser flag changes. CI uses a fresh frozen official-registry dependency installation, not a local donor.
 """
 from contextlib import contextmanager
 import errno, hashlib, json, os, re, selectors, shutil, signal, stat, subprocess, sys, tempfile, time
 from pathlib import Path
+import secrets
+from batch_lifecycle import BatchLifecycle
 ROOT=Path(os.environ['GITHUB_WORKSPACE'])
 SOURCE=ROOT/'source'
 DONOR=None  # Fresh CI installation, no shared donor
 REVIEW=ROOT/'harness/validation/grok-editor'
-BASE='059545a2d3e1145f7758e374e7d09e176f43caa3'
+BASE='560b4560bd6e287d8515d027be76d0c5135876c3'
 LOG_LIMIT=TOTAL_LOG_LIMIT=16*1024*1024
 FINALIZE_RESERVE=120
 RECORDS=[]; TOTAL_LOG_BYTES=0; ACTIVE=None; EVIDENCE=None; PHASE='grok'; VARIANT=''
@@ -22,6 +25,13 @@ CLEANUP_DEADLINE=None; FIXTURE_STARTED=False; TIMINGS=[]
 DEPENDENCY_INSTALL_STARTED=False; DEPENDENCY_INSTALL_ACTIVE=False
 DEPENDENCY_SAMPLES={'samples':0,'enoent_misses':0,'last_samples':[],'assurance':'sampled metadata only; not full verification or quota'}
 PRIVATE=None; PRIVATE_ID=None; SOURCE_IDENTITIES={}; SCAN_AT=0; PEAK_RSS=0; PREP_DEADLINE=None
+BATCH_CONTROL=None
+
+def observe_batch_checkpoint(child, known, members):
+    # Only the fixture command enables this observer. It cannot launch, signal,
+    # extend a timeout or waive resource checks; failures propagate to run().
+    if BATCH_CONTROL is not None:
+        BATCH_CONTROL.observe(child, known, members)
 
 def require(ok, message):
     if not ok: raise RuntimeError(message)
@@ -385,6 +395,7 @@ def run(label, command, timeout, cwd, env, allowed_codes=(0,)):
             exit_code = observe_exit(child)
             members = owned_members(child.pid, known)
             check_rss(members)
+            observe_batch_checkpoint(child, known, members)
             if exit_code is not None and members:
                 reason = "surviving_descendants_after_parent_exit"
                 break
@@ -445,7 +456,7 @@ def cleanup(child, known):
         signal.setitimer(signal.ITIMER_REAL,max(0.001,min(60,JOB_DEADLINE-time.monotonic())))
     return _audited_cleanup(child, known)
 
-SOURCE_SEAL='587f212ff8638aa5a4b17e700cf67cea743ba4f2b9300b48416b913dbe2b9c60'
+SOURCE_SEAL='47563170a9eb1861ebb6c61bc4d28681c2f70a5f360b721ddb7236356ce43ae6'
 NODE=shutil.which('node')
 PNPM=shutil.which('pnpm')
 BROWSER='/usr/bin/google-chrome'
@@ -583,7 +594,7 @@ def interrupt(signum,frame):
     raise RuntimeError('supervisor interrupted/deadline: '+str(signum))
 
 def main():
-    global PRIVATE,PRIVATE_ID,EVIDENCE,JOB_DEADLINE,PREP_DEADLINE,FINALIZING,FIXTURE_STARTED,DEPENDENCY_INSTALL_STARTED,DEPENDENCY_INSTALL_ACTIVE
+    global PRIVATE,PRIVATE_ID,EVIDENCE,JOB_DEADLINE,PREP_DEADLINE,FINALIZING,FIXTURE_STARTED,DEPENDENCY_INSTALL_STARTED,DEPENDENCY_INSTALL_ACTIVE,BATCH_CONTROL
     started=time.monotonic(); JOB_DEADLINE=min(started+1380,started+int(os.environ['SHARED_DEADLINE_EPOCH'])-time.time()); PREP_DEADLINE=None
     for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGALRM): signal.signal(sig,interrupt)
     # One shared deadline covers source preparation, dependency installation, fixture and finalization.
@@ -637,9 +648,17 @@ def main():
             private_before=tree_snapshot(PRIVATE/'s/node_modules')
         write_json('dependency-preparation.json',{'entries':len(private_before),'content_seal':digest(json.dumps(content_records(private_before),sort_keys=True).encode()),'method':'fresh frozen official registry installation in task-only store; no shared donor'})
         result['phase']='six-plus-four-component-fixtures'
+        # Two short-lived fixture children share this one supervised command,
+        # deadline and owned tree. No per-batch run()/cleanup budget is started.
+        control_dir=PRIVATE/'t/bc'; control_dir.mkdir(mode=0o700)
+        session=secrets.token_hex(16)
+        BATCH_CONTROL=BatchLifecycle(control_dir,session,owned_members,process_table,
+                                     lambda records: write_json('batch-lifecycle.json',records))
+        fixture_env={**env,'GROK_BATCH_CONTROL_DIR':str(control_dir),'GROK_BATCH_SESSION':session}
         FIXTURE_STARTED=True
         signal.setitimer(signal.ITIMER_REAL,max(0.001,min(420,JOB_DEADLINE-time.monotonic()-FINALIZE_RESERVE)))
-        run('grok-editor-and-catalog',[NODE,'scripts/verify-grok-editor-and-catalog.mjs','--browser',BROWSER,'--output',str(PRIVATE/'a')],420,PRIVATE/'s',env)
+        run('grok-editor-and-catalog',[NODE,'scripts/verify-grok-editor-and-catalog.mjs','--browser',BROWSER,'--output',str(PRIVATE/'a')],420,PRIVATE/'s',fixture_env)
+        BATCH_CONTROL.assert_complete()
         verify_fixture_reports(PRIVATE/'a')
         result['component_cases']={'editor':6,'catalog':4}
         result['ok']=True
@@ -670,6 +689,13 @@ def main():
             check_disk_budgets()
         except BaseException as error:
             result['ok']=False; result['finalization_error']=type(error).__name__+': '+str(error)
+        if BATCH_CONTROL is not None:
+            result['batch_handshakes']=BATCH_CONTROL.records
+            try:
+                BATCH_CONTROL.close()
+            except BaseException as error:
+                result['ok']=False
+                result['batch_control_close_error']=type(error).__name__+': '+str(error)
         result.update(dependency_budget_samples=DEPENDENCY_SAMPLES,phase_timings=TIMINGS,commands=RECORDS,peak_sampled_rss=PEAK_RSS,elapsed_seconds=time.monotonic()-started,
                       retained_private_files=True,scope='six editor plus four existing catalog real-component browser cases with strict synthetic IPC; editor router is fail-closed. No real router initialization/navigation/share/deep-link/native/disk persistence or continuous gate claim')
         if result['process_cleanup']!='confirmed': result['ok']=False
