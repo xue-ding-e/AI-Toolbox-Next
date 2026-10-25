@@ -66,3 +66,25 @@ test('saved-account results only override list reads started before completion',
   assert.equal(lateFailure.name, 'Renamed');
   assert.equal(lateFailure.accessTokenPreview, 'new-token');
 });
+
+test('saved-account refresh accepts corrected credential metadata without changing record identity', () => {
+  const requested = { ...account, id: 'saved-a', isVirtual: false, accountId: 'stale-id' };
+  const recovered = {
+    ...requested, accountId: 'token-account-id', email: 'corrected@example.invalid',
+    credits: { hasCredits: true, balance: 17 },
+  };
+  assert.equal(matchesOfficialAccountRefresh(recovered, requested), true);
+  for (const update of [{ id: 'saved-b' }, { providerId: 'official-b' }, { isVirtual: true }]) {
+    assert.equal(matchesOfficialAccountRefresh({ ...recovered, ...update }, requested), false);
+  }
+  const listed = { ...requested, name: 'User-renamed account' };
+  assert.equal(reconcileOfficialAccountUsage(listed, { account: recovered, revision: 3 }, 2).credits?.balance, 17);
+  assert.equal(reconcileOfficialAccountUsage(listed, { account: recovered, revision: 3 }, 2).name, listed.name);
+  assert.equal(reconcileOfficialAccountUsage(listed, { account: recovered, revision: 3 }, 3), listed);
+});
+
+test('virtual identity checks remain strict when a saved-account refresh can repair metadata', () => {
+  const otherLogin = { ...account, accountId: 'login-b', email: 'b@example.invalid' };
+  assert.equal(matchesOfficialAccountRefresh(otherLogin, account), false);
+  assert.equal(reconcileOfficialAccountUsage(otherLogin, { account, revision: 100 }, -1), otherLogin);
+});

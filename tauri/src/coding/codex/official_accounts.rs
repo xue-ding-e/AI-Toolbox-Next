@@ -394,13 +394,32 @@ async fn exchange_authorization_code(
         .map_err(|error| format!("Failed to parse OAuth token response: {error}"))
 }
 
+// The production path always uses the unified proxy/TLS client and fixed endpoints.
+// Tests inject only synthetic loopback endpoints, scoped to the current async task.
+async fn account_http_client(
+    db: &SqliteDbState,
+) -> Result<(reqwest::Client, String, String), String> {
+    #[cfg(test)]
+    {
+        let _ = db;
+        return usage_refresh_tests::http_override()
+            .ok_or_else(|| "Synthetic Codex HTTP scope is required in tests".to_string());
+    }
+    #[cfg(not(test))]
+    Ok((
+        crate::http_client::client_with_timeout(db, 20).await?,
+        CODEX_OAUTH_TOKEN_URL.to_string(),
+        CODEX_USAGE_URL.to_string(),
+    ))
+}
+
 async fn refresh_oauth_token(
     db: &SqliteDbState,
     refresh_token: &str,
 ) -> Result<OAuthTokenResponse, String> {
-    let client = crate::http_client::client_with_timeout(db, 20).await?;
+    let (client, token_url, _) = account_http_client(db).await?;
     let response = client
-        .post(CODEX_OAUTH_TOKEN_URL)
+        .post(token_url)
         .form(&OAuthRefreshRequest {
             grant_type: "refresh_token",
             client_id: CODEX_OAUTH_CLIENT_ID,
@@ -1384,10 +1403,10 @@ pub(crate) async fn fetch_usage_snapshot(
     account_id: Option<&str>,
     plan_type: Option<&str>,
 ) -> Result<UsageSnapshot, String> {
-    let client = crate::http_client::client_with_timeout(db, 20).await?;
+    let (client, _, usage_url) = account_http_client(db).await?;
 
     let mut request = client
-        .get(CODEX_USAGE_URL)
+        .get(usage_url)
         .header("Authorization", format!("Bearer {access_token}"))
         .header(
             "User-Agent",
@@ -3249,3 +3268,6 @@ pub async fn sync_codex_official_account_apply_status(
 
     update_official_account_apply_status(db, matched_account_id.as_deref()).await
 }
+
+#[cfg(test)]
+mod usage_refresh_tests;
