@@ -103,6 +103,7 @@ sequenceDiagram
 
 ## 最小验证
 
+- 编辑器补充 fixture 挂载真实 `GrokPage` / `GrokModelFormModal`，只替换 IPC 与 fail-closed `app/routes` 边界；六项回读、取消、保存、pending、重试、remount 必须和原有四项获取模型浏览器检查一起实际执行。边界 mock 单测或 bundle 成功不代表这十项浏览器验收通过；remount 仅是合成内存存储，不能代称原生重启或磁盘持久化。
 - 至少验证：修改根目录后页面重新读取到新的路径来源。
 - 至少验证：导入同源 provider 冲突时有明确覆盖/副本分支。
 - 改 Session Manager UI 时，至少验证来源切换、详情导航、恢复命令、导入导出、删除和刷新触发。
