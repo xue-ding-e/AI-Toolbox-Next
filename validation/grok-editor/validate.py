@@ -16,7 +16,7 @@ ROOT=Path(os.environ['GITHUB_WORKSPACE'])
 SOURCE=ROOT/'source'
 DONOR=None  # Fresh CI installation, no shared donor
 REVIEW=ROOT/'harness/validation/grok-editor'
-BASE='560b4560bd6e287d8515d027be76d0c5135876c3'
+BASE='904082cdfe6dbc0279e89731c7cddbf9f87807e3'
 LOG_LIMIT=TOTAL_LOG_LIMIT=16*1024*1024
 FINALIZE_RESERVE=120
 RECORDS=[]; TOTAL_LOG_BYTES=0; ACTIVE=None; EVIDENCE=None; PHASE='grok'; VARIANT=''
@@ -456,7 +456,7 @@ def cleanup(child, known):
         signal.setitimer(signal.ITIMER_REAL,max(0.001,min(60,JOB_DEADLINE-time.monotonic())))
     return _audited_cleanup(child, known)
 
-SOURCE_SEAL='47563170a9eb1861ebb6c61bc4d28681c2f70a5f360b721ddb7236356ce43ae6'
+SOURCE_SEAL='ac80679315e595aeec29119e6c527ae5295607b663b14fabbbf8af817b5a655d'
 NODE=shutil.which('node')
 PNPM=shutil.which('pnpm')
 BROWSER='/usr/bin/google-chrome'

@@ -40,7 +40,7 @@ def unique_object(pairs):
 
 
 def signature(st):
-    return (st.st_dev, st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    return (st.st_dev, st.st_ino, st.st_mode, st.st_uid, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 def valid_identity(identity):
@@ -64,7 +64,8 @@ class BatchLifecycle:
                     and st.st_uid == os.getuid(), 'batch-control-directory-mode-owner')
             self.directory_id = (st.st_dev, st.st_ino)
             self.check_directory()
-            require(os.listdir(self.fd) == [], 'batch-control-directory-not-empty')
+            with os.scandir(self.fd) as entries:
+                require(next(entries, None) is None, 'batch-control-directory-not-empty')
             self.record([])
         except BaseException:
             self.close()
@@ -88,13 +89,28 @@ class BatchLifecycle:
     def names(self):
         self.check_directory()
         try:
-            names = set(os.listdir(self.fd))
             allowed = set(self.seals)
             if self.index < 2:
                 allowed |= {f'request-{self.index}.json', f'.request-{self.index}.tmp'}
-            require(names <= allowed, 'batch-control-unexpected-entry-or-order')
-            for name in names:
-                st = os.stat(name, dir_fd=self.fd, follow_symlinks=False)
+            names = set()
+            # Stop at the first unexpected name; never allocate an unbounded
+            # directory listing before enforcing the finite protocol inventory.
+            with os.scandir(self.fd) as entries:
+                for entry in entries:
+                    require(entry.name in allowed and len(names) < len(allowed),
+                            'batch-control-unexpected-entry-or-order')
+                    names.add(entry.name)
+            for name in list(names):
+                try:
+                    st = os.stat(name, dir_fd=self.fd, follow_symlinks=False)
+                except OSError as error:
+                    # The one current staging alias is intentionally unlinked
+                    # by its producer. Committed records disappearing are not
+                    # this finite publication transition and still fail closed.
+                    if error.errno == errno.ENOENT and self.index < 2 and name == f'.request-{self.index}.tmp':
+                        names.remove(name)
+                        continue
+                    raise
                 require(stat.S_ISREG(st.st_mode) and st.st_size <= LIMIT
                         and stat.S_IMODE(st.st_mode) == 0o600 and st.st_uid == os.getuid(),
                         'batch-control-entry-type-or-size')
@@ -102,17 +118,28 @@ class BatchLifecycle:
         except OSError as error:
             raise LifecycleError('batch-control-entry-observation', error.errno) from None
 
-    def read(self, name, missing=False):
+    def read(self, name, missing=False, staging=None):
         self.check_directory()
         fd = None
         try:
-            before = os.stat(name, dir_fd=self.fd, follow_symlinks=False)
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd)
+            if staging is not None:
+                # Check AFTER opening the committed name: checking before open
+                # leaves a window for link/unlink to alter ctime during reading.
+                try:
+                    pending = os.stat(staging, dir_fd=self.fd, follow_symlinks=False)
+                except OSError as error:
+                    if error.errno != errno.ENOENT:
+                        raise
+                else:
+                    require(stat.S_ISREG(pending.st_mode) and pending.st_size <= LIMIT
+                            and stat.S_IMODE(pending.st_mode) == 0o600 and pending.st_uid == os.getuid(),
+                            'batch-control-entry-type-or-size')
+                    return None
+            before = os.fstat(fd)
             require(stat.S_ISREG(before.st_mode) and before.st_size <= LIMIT
                     and stat.S_IMODE(before.st_mode) == 0o600 and before.st_uid == os.getuid(),
                     'batch-control-entry-type-or-size')
-            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd)
-            held = os.fstat(fd)
-            require(signature(before) == signature(held), 'batch-control-file-identity')
             data = os.read(fd, LIMIT + 1)
             require(len(data) <= LIMIT, 'batch-control-entry-type-or-size')
             after = os.fstat(fd)
@@ -122,9 +149,9 @@ class BatchLifecycle:
             self.check_directory()
             return data, signature(before)
         except OSError as error:
-            # Only the initial lookup can mean "not published yet". An entry
-            # disappearing after that lookup is an uncertain mutation, not retry.
-            if missing and fd is None and 'before' not in locals() and error.errno == errno.ENOENT:
+            # Only the committed-name open can mean "not published yet".
+            # After opening, disappearance of that committed name is an error.
+            if missing and fd is None and error.errno == errno.ENOENT:
                 return None
             raise LifecycleError('batch-control-read', error.errno) from None
         finally:
@@ -180,7 +207,7 @@ class BatchLifecycle:
         # observation errors are never converted into "not ready".
         if f'.request-{self.index}.tmp' in names:
             return
-        observed = self.read(name, missing=True)
+        observed = self.read(name, missing=True, staging=f'.request-{self.index}.tmp')
         if observed is None:
             return
         raw, file_id = observed

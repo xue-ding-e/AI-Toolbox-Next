@@ -1,5 +1,5 @@
 {
-  "base": "560b4560bd6e287d8515d027be76d0c5135876c3",
+  "base": "904082cdfe6dbc0279e89731c7cddbf9f87807e3",
   "files": {
     ".claude/CLAUDE.md": {
       "kind": "file",
@@ -654,7 +654,7 @@
     "scripts/AGENTS.md": {
       "kind": "file",
       "mode": 420,
-      "sha256": "55fce2bb3b265e89b3da42d271fe4f4b0026eb7c2d123e0abe8c5aecc936cd68"
+      "sha256": "42407c958fce06cc91b554a161f87eb90f1763343a117d7a744ed98095d8a0d1"
     },
     "scripts/IsolatedInstanceSafety.ps1": {
       "kind": "file",
@@ -709,12 +709,12 @@
     "scripts/lib/grok-batch-lifecycle.mjs": {
       "kind": "file",
       "mode": 420,
-      "sha256": "cb0f62ec8b78c267357f268c841165defc0ec5e4ad52e2e6f97d95fc464f44ea"
+      "sha256": "16e068585273fefb6afd7598ad82a682da87baaafc9b7c483686bb1cf629696f"
     },
     "scripts/lib/grok-batch-lifecycle.test.mjs": {
       "kind": "file",
       "mode": 420,
-      "sha256": "9667649b2e3b628a7ca5da6c952df3f76348207a831174afe67d889d008f6bfe"
+      "sha256": "ed1181395fb321fbfe08b02c8ef297fff6a038b0c34d0366ade0e131450f664b"
     },
     "scripts/lib/operation-inventory.mjs": {
       "kind": "file",
@@ -9267,5 +9267,5 @@
       "sha256": "0221c6ce0fdbd4e0545e142b56640a002b614ca5549b3d49d5ce8f3ca86db42a"
     }
   },
-  "tree": "b12e408791c63351093b80a48da3291dbcbb15c0"
+  "tree": "66a021e2892aeefc9a20c4a9a35839628cc8019f"
 }

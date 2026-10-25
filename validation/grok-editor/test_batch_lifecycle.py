@@ -168,10 +168,10 @@ class BatchLifecycleTests(unittest.TestCase):
                 with self.assertRaises(LifecycleError): self.observe()
                 self.assertFalse((self.root / 'ack-0.json').exists())
 
-    def test_request_read_denial_and_disappearance_after_lookup_are_not_pending(self):
+    def test_request_read_denial_and_disappearance_after_open_are_not_pending(self):
         self.prime(); self.publish()
         original = os.open
-        for code in (errno.EACCES, errno.ENOENT):
+        for code in (errno.EACCES,):
             calls = []
             def blocked(name, *args, **kwargs):
                 if name == 'request-0.json':
@@ -180,6 +180,9 @@ class BatchLifecycleTests(unittest.TestCase):
             with self.subTest(code=code), patch('batch_lifecycle.os.open', side_effect=blocked):
                 with self.assertRaisesRegex(LifecycleError, 'batch-control-read'): self.observe()
             self.assertEqual(calls, ['request-0.json'])
+        with patch('batch_lifecycle.os.read', side_effect=FileNotFoundError(errno.ENOENT, 'synthetic')) as read:
+            with self.assertRaisesRegex(LifecycleError, 'batch-control-read'): self.observe()
+        self.assertEqual(read.call_count, 1)
 
     def test_changed_control_directory_identity_rejected(self):
         old = self.root.with_name(self.root.name + '-old')
@@ -228,6 +231,60 @@ class BatchLifecycleTests(unittest.TestCase):
         self.control.active = None
         with self.assertRaisesRegex(LifecycleError, 'generation-unknown'):
             self.control.observe(self.wrapper, {**self.known, 201: -1}, {**self.members, 201: member(-1, 100)})
+
+    def test_staging_created_after_directory_scan_still_prevents_request_read(self):
+        self.prime()
+        original = self.control.read
+        calls = []
+        def publish_between_scan_and_open(name, *args, **kwargs):
+            if name == 'request-0.json' and not calls:
+                calls.append(name)
+                temporary = self.root / '.request-0.tmp'
+                temporary.write_bytes(canonical(self.request())); temporary.chmod(0o600)
+                os.link(temporary, self.root / name)
+            return original(name, *args, **kwargs)
+        with patch.object(self.control, 'read', side_effect=publish_between_scan_and_open): self.observe()
+        self.snapshot.assert_not_called()
+        self.assertFalse((self.root / 'ack-0.json').exists())
+        (self.root / '.request-0.tmp').unlink()
+        self.observe()
+        self.assertTrue((self.root / 'ack-0.json').exists())
+
+    def test_only_current_staging_alias_may_disappear_during_metadata_scan(self):
+        self.prime(); self.publish()
+        temporary = self.root / '.request-0.tmp'
+        temporary.write_bytes(b''); temporary.chmod(0o600)
+        original = os.stat
+        def transition(name, *args, **kwargs):
+            if name == '.request-0.tmp' and temporary.exists():
+                temporary.unlink()
+                raise FileNotFoundError(errno.ENOENT, 'intentional publication transition')
+            return original(name, *args, **kwargs)
+        with patch('batch_lifecycle.os.stat', side_effect=transition): self.observe()
+        self.assertTrue((self.root / 'ack-0.json').exists())
+
+    def test_staging_observation_denial_is_not_treated_as_absent_or_pending(self):
+        self.prime(); self.publish()
+        original = os.stat
+        calls = []
+        def denied(name, *args, **kwargs):
+            if name == '.request-0.tmp':
+                calls.append(name); raise PermissionError(errno.EACCES, 'synthetic')
+            return original(name, *args, **kwargs)
+        with patch('batch_lifecycle.os.stat', side_effect=denied):
+            with self.assertRaisesRegex(LifecycleError, 'batch-control-read; errno=13'): self.observe()
+        self.assertEqual(calls, ['.request-0.tmp'])
+        self.assertFalse((self.root / 'ack-0.json').exists())
+
+    def test_directory_inventory_stops_at_first_unexpected_entry(self):
+        class Entries:
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def __iter__(self):
+                yield SimpleNamespace(name='unexpected')
+                raise AssertionError('unbounded directory enumeration')
+        with patch('batch_lifecycle.os.scandir', return_value=Entries()):
+            with self.assertRaisesRegex(LifecycleError, 'unexpected-entry'): self.observe()
 
 
 if __name__ == '__main__':

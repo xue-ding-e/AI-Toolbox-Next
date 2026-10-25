@@ -161,8 +161,8 @@ class ReportContractTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(raw).hexdigest(), d.SOURCE_SEAL)
         seal = json.loads(raw)
         self.assertEqual(seal['base'], d.BASE)
-        self.assertEqual(seal['base'], '560b4560bd6e287d8515d027be76d0c5135876c3')
-        self.assertEqual(seal['tree'], 'b12e408791c63351093b80a48da3291dbcbb15c0')
+        self.assertEqual(seal['base'], '904082cdfe6dbc0279e89731c7cddbf9f87807e3')
+        self.assertEqual(seal['tree'], '66a021e2892aeefc9a20c4a9a35839628cc8019f')
         self.assertEqual(seal['files']['package.json']['sha256'], d.PACKAGE_SHA)
         self.assertEqual(seal['files']['pnpm-lock.yaml']['sha256'], d.LOCK_SHA)
         for path in ['scripts/verify-grok-editor-and-catalog.mjs', 'scripts/verify-grok-editor-readback.mjs',
