@@ -114,6 +114,89 @@ class FullDriverTests(unittest.TestCase):
         for case in driver.MANIFEST['ignored']:
             self.assertIn(case['context'], (root / case['path']).read_text())
 
+    def test_upstream_focused_and_probe_inventory_are_nonempty_and_distinct(self):
+        self.assertEqual([len(case['tests']) for case in driver.MANIFEST['focused'].values()], [19, 31])
+        self.assertEqual(len(driver.MANIFEST['probe']['tests']), 3)
+        names = [name for case in driver.MANIFEST['focused'].values() for name in case['tests']]
+        names += driver.MANIFEST['probe']['tests']
+        self.assertEqual(len(names), len(set(names)))
+        self.assertNotEqual(driver.MANIFEST['probe']['sha'], driver.MANIFEST['product_sha'])
+
+    def test_focused_runtime_inventory_rejects_missing_duplicate_and_extra(self):
+        driver.verify_focused_inventory('a: test\nb: test\n', ['a', 'b'])
+        for listing in ['', 'a: test\n', 'a: test\na: test\nb: test\n', 'a: test\nb: test\nc: test\n']:
+            with self.assertRaises(AssertionError):
+                driver.verify_focused_inventory(listing, ['a', 'b'])
+        with self.assertRaises(AssertionError):
+            driver.verify_focused_inventory('', [])
+
+    def focused_log(self):
+        return 'test a ... ok\ntest b ... ok\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 99 filtered out;\n'
+
+    def test_focused_success_requires_every_expected_execution(self):
+        self.assertEqual(driver.classify_focused(0, self.focused_log(), ['a', 'b']), 'passed')
+        variants = [
+            self.focused_log().replace('test b ... ok\n', ''),
+            self.focused_log().replace('test b ... ok', 'test a ... ok'),
+            self.focused_log().replace('2 passed', '0 passed'),
+            self.focused_log().replace('test b ... ok', 'test b ... ignored'),
+            self.focused_log() + 'test result: FAILED',
+        ]
+        for content in variants:
+            with self.assertRaises(AssertionError):
+                driver.classify_focused(0, content, ['a', 'b'])
+        with self.assertRaises(AssertionError):
+            driver.classify_focused(0, '', [])
+
+    def test_focused_compile_failure_is_not_probe_assertion_failure(self):
+        self.assertEqual(driver.classify_focused(101, 'error[E0433]: unresolved name', ['a']), 'compile-or-doc-compile-failure')
+        self.assertEqual(driver.classify_focused(101, 'test result: FAILED', ['a']), 'test-failure')
+        self.assertEqual(driver.classify_focused(1, 'timeout', ['a']), 'environment-or-unclassified-failure')
+
+    def test_new_workflow_is_pinned_to_product_and_separate_probe(self):
+        root = HERE.parents[1]
+        workflow = (root / '.github/workflows/maintenance-validation.yml').read_text().split('  codex-usage-440-full-product:', 1)[1]
+        self.assertIn(driver.REF, workflow)
+        self.assertIn('ref: ' + driver.MANIFEST['product_sha'], workflow)
+        self.assertIn('ref: ' + driver.MANIFEST['probe']['sha'], workflow)
+        self.assertIn('fetch-depth: 2', workflow)
+        self.assertIn('product evidence "$EXPECTED_VALIDATION_SHA" probes', workflow)
+        self.assertNotIn('ed843373628fed574c20d61ffa259a01bd0c60ee', workflow)
+
+    def test_probe_source_rejects_any_changed_tree_or_non_test_delta(self):
+        probe = driver.MANIFEST['probe']
+        base_answers = [probe['sha'], probe['tree'], driver.MANIFEST['product_sha'], '', probe['path']]
+        from hashlib import sha256
+        delta = b'synthetic test-only patch'
+        with patch.dict(probe, {'delta_sha256': sha256(delta).hexdigest()}):
+            with patch.object(driver.subprocess, 'check_output', side_effect=base_answers + [delta]):
+                driver.verify_probe_source(Path('/synthetic'))
+            for index in range(5):
+                answers = list(base_answers)
+                answers[index] = 'unexpected'
+                with patch.object(driver.subprocess, 'check_output', side_effect=answers + [delta]):
+                    with self.assertRaises(AssertionError):
+                        driver.verify_probe_source(Path('/synthetic'))
+            with patch.object(driver.subprocess, 'check_output', side_effect=base_answers + [b'changed']):
+                with self.assertRaises(AssertionError):
+                    driver.verify_probe_source(Path('/synthetic'))
+
+    def test_lib_artifact_requires_a_fresh_actual_test_executable(self):
+        artifact = {'reason': 'compiler-artifact', 'profile': {'test': True},
+                    'target': {'name': 'ai_toolbox_lib'}, 'executable': '/synthetic/lib-test', 'fresh': False}
+        with patch.object(Path, 'read_bytes', return_value=b'synthetic binary'):
+            result = driver.fresh_lib_artifact(json.dumps(artifact))
+            self.assertEqual(result['binary'], '/synthetic/lib-test')
+            self.assertEqual(len(result['sha256']), 64)
+            for changed in [dict(artifact, fresh=True), dict(artifact, executable=None),
+                            dict(artifact, profile={'test': False}), dict(artifact, target={'name': 'other'})]:
+                with self.assertRaises(AssertionError):
+                    driver.fresh_lib_artifact(json.dumps(changed))
+            with self.assertRaises(AssertionError):
+                driver.fresh_lib_artifact(json.dumps(artifact) + '\n' + json.dumps(artifact))
+            with self.assertRaises(AssertionError):
+                driver.fresh_lib_artifact('compiler error without an executable')
+
 
 if __name__ == '__main__':
     unittest.main()

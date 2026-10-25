@@ -1,6 +1,6 @@
 {
-  "product_sha": "ed843373628fed574c20d61ffa259a01bd0c60ee",
-  "product_tree": "9185300968d02f9e767ee05021993b9dd97e7e85",
+  "product_sha": "2f9f378a9a32d0d5386a3dd725fe8432c073cb81",
+  "product_tree": "4ebd7e6962f0341dd1ffd62efe41b805ae127af9",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -186,5 +186,81 @@
     "source_structure_scripts": 3,
     "chromium_fixture_scripts": 23,
     "note": "22 direct shared-browser runners plus official-edit staged shared-browser runner. Not native Tauri/UI acceptance. Each fixture prepares its own temporary bundle; install is the shared prerequisite. Later failures after a failed script remain unattributed until setup dependencies are inspected."
+  },
+  "focused": {
+    "usage-credentials": {
+      "prefix": "coding::codex::official_accounts::usage_credential_tests::",
+      "tests": [
+        "coding::codex::official_accounts::usage_credential_tests::usable_stored_credential_skips_exchange_and_persists_usage",
+        "coding::codex::official_accounts::usage_credential_tests::expired_stored_credential_is_rotated_before_usage",
+        "coding::codex::official_accounts::usage_credential_tests::applied_account_adopts_newer_same_account_runtime_credential",
+        "coding::codex::official_accounts::usage_credential_tests::runtime_credential_of_another_account_is_never_borrowed",
+        "coding::codex::official_accounts::usage_credential_tests::refreshing_unapplied_account_leaves_runtime_login_untouched",
+        "coding::codex::official_accounts::usage_credential_tests::unexpired_token_rejected_with_401_triggers_one_forced_recovery",
+        "coding::codex::official_accounts::usage_credential_tests::second_401_after_recovery_reports_reauth_without_looping",
+        "coding::codex::official_accounts::usage_credential_tests::rejected_refresh_token_reports_reauth_and_keeps_the_account",
+        "coding::codex::official_accounts::usage_credential_tests::missing_refresh_token_reports_reauth_without_any_request",
+        "coding::codex::official_accounts::usage_credential_tests::background_pass_persists_a_non_applied_account_rotation",
+        "coding::codex::official_accounts::usage_credential_tests::rotated_credential_is_persisted_before_a_failing_usage_call",
+        "coding::codex::official_accounts::usage_credential_tests::transient_usage_errors_do_not_trigger_a_token_exchange",
+        "coding::codex::official_accounts::usage_credential_tests::local_virtual_account_refreshes_its_expired_runtime_credential",
+        "coding::codex::official_accounts::usage_credential_tests::credential_is_reread_after_waiting_for_the_oauth_lock",
+        "coding::codex::official_accounts::usage_credential_tests::local_virtual_account_recovers_from_401_with_a_forced_exchange",
+        "coding::codex::official_accounts::usage_credential_tests::runtime_write_is_skipped_when_the_account_was_switched_away",
+        "coding::codex::official_accounts::usage_credential_tests::missing_or_broken_snapshot_sends_no_usage_request",
+        "coding::codex::official_accounts::usage_credential_tests::account_header_comes_from_the_recovered_credential",
+        "coding::codex::official_accounts::usage_credential_tests::failed_refresh_keeps_previous_usage_and_records_the_error"
+      ]
+    },
+    "neighboring-accounts": {
+      "prefix": "coding::codex::official_accounts::tests::",
+      "tests": [
+        "coding::codex::official_accounts::tests::codex_credits_parse_strings_numbers_and_preserve_subscription_windows",
+        "coding::codex::official_accounts::tests::codex_credits_preserve_zero_negative_and_conflicting_availability",
+        "coding::codex::official_accounts::tests::codex_credits_malformed_fields_do_not_fail_or_invent_a_balance",
+        "coding::codex::official_accounts::tests::codex_credits_round_trip_refresh_clear_and_failure_are_account_scoped",
+        "coding::codex::official_accounts::tests::codex_credits_old_records_and_virtual_logins_have_no_invented_balance",
+        "coding::codex::official_accounts::tests::codex_credits_preparation_failure_clears_persisted_balance",
+        "coding::codex::official_accounts::tests::codex_credits_oauth_refresh_does_not_restore_an_older_usage_snapshot",
+        "coding::codex::official_accounts::tests::auth_has_official_runtime_requires_auth_mode_and_both_tokens",
+        "coding::codex::official_accounts::tests::imported_auth_json_requires_a_valid_official_login_object",
+        "coding::codex::official_accounts::tests::refreshed_auth_preserves_rotated_fields_omitted_by_server",
+        "coding::codex::official_accounts::tests::browser_oauth_authorize_url_uses_actual_callback_port_and_official_scopes",
+        "coding::codex::official_accounts::tests::browser_oauth_falls_back_when_default_port_is_occupied",
+        "coding::codex::official_accounts::tests::browser_oauth_callback_rejects_invalid_state",
+        "coding::codex::official_accounts::tests::browser_oauth_callback_times_out_without_connection",
+        "coding::codex::official_accounts::tests::device_auth_cancel_signals_and_removes_session",
+        "coding::codex::official_accounts::tests::official_runtime_merge_preserves_unknown_runtime_fields",
+        "coding::codex::official_accounts::tests::atomic_auth_writer_replaces_content_and_sets_owner_only_permissions",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_free_treats_primary_week_window_as_weekly_limit",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_free_falls_back_to_primary_window_as_weekly_limit",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_pro_family_has_no_five_hour_limit",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_pro_does_not_relabel_timed_five_hour_window_as_weekly",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_non_free_uses_window_duration_before_order",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_detects_monthly_window",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_detects_monthly_window_from_additional_rate_limits",
+        "coding::codex::official_accounts::tests::extract_reset_timestamp_uses_relative_seconds_when_absolute_timestamp_is_missing",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_reads_reset_credit_count",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_keeps_zero_reset_credit_count_and_camel_case_alias",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_leaves_reset_credit_count_absent_when_missing",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_uses_limit_reached_hint_when_percent_is_missing",
+        "coding::codex::official_accounts::tests::should_hide_virtual_local_account_when_refresh_token_matches_saved_account",
+        "coding::codex::official_accounts::tests::should_show_virtual_local_account_when_local_auth_is_not_saved"
+      ]
+    }
+  },
+  "probe": {
+    "sha": "12e9811fb33e2bd8127cb3538649bfe6d9dec564",
+    "tree": "68af030c0c2d9ddaaff4844448a358a739f72648",
+    "path": "tauri/src/coding/codex/official_accounts.rs",
+    "delta_sha256": "a04467a8c943893112af76f20940c857132a98c2667362a2555714cae0ed56e3",
+    "prefix": "coding::codex::official_accounts::usage_credential_tests::followup_",
+    "tests": [
+      "coding::codex::official_accounts::usage_credential_tests::followup_shared_workspace_different_user_is_not_adopted",
+      "coding::codex::official_accounts::usage_credential_tests::followup_local_success_after_runtime_switch_is_rejected",
+      "coding::codex::official_accounts::usage_credential_tests::followup_concurrent_401_reuses_already_recovered_credential"
+    ],
+    "source_commit": "6bdf35214fd523c0f79ba6f852723e15cbb7b008",
+    "scope": "Only cfg(test) usage_credential_tests overlay; assertions unexecuted when sealed, not established product defects."
   }
 }

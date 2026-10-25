@@ -19,7 +19,7 @@ spec = importlib.util.spec_from_file_location("reviewed_guards", HERE / "verify-
 guards = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guards)
 MANIFEST = json.loads((HERE / "codex-usage-440-full-manifest.json").read_text())
-REF = "refs/heads/validation/codex-usage-440-full-20261025"
+REF = "refs/heads/validation/codex-440-upstream-full-20261025"
 
 
 def verify_source(root):
@@ -84,8 +84,58 @@ def classify_rust(code, content, inventory):
     return "environment-or-unclassified-failure"
 
 
+def verify_focused_inventory(listing, expected):
+    names = [line.removesuffix(": test") for line in listing.splitlines() if line.endswith(": test")]
+    assert expected and len(set(expected)) == len(expected), "Empty/duplicate expected focused inventory"
+    assert Counter(names) == Counter(expected), "Focused runtime identities differ from the sealed inventory"
+
+
+def classify_focused(code, content, expected):
+    if code:
+        # Keep the reviewed distinction: compiler/setup failure is not a failed assertion.
+        return classify_rust(code, content, [])
+    assert expected and len(set(expected)) == len(expected), "Empty/duplicate expected focused inventory"
+    assert not re.search(r"test result: FAILED|^error(?:\[|:)", content, re.MULTILINE)
+    observed = re.findall(r"^test (.+?) \.{3} (ok|ignored(?:,.*)?|FAILED)$", content, re.MULTILINE)
+    assert Counter(name for name, _ in observed) == Counter(expected), "Focused execution omitted or added identities"
+    assert all(status == "ok" for _, status in observed), "Focused tests may not be ignored"
+    summaries = re.findall(r"^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;", content, re.MULTILINE)
+    assert len(summaries) == 1, "Expected exactly one focused binary summary"
+    assert [int(value) for value in summaries[0][:4]] == [len(expected), 0, 0, 0], "Incomplete/zero focused execution"
+    return "passed"
+
+
+def verify_probe_source(root):
+    probe = MANIFEST["probe"]
+    for expression, expected in [("HEAD", probe["sha"]), ("HEAD^{tree}", probe["tree"]),
+                                 ("HEAD^", MANIFEST["product_sha"])]:
+        assert subprocess.check_output(["git", "rev-parse", expression], cwd=root, text=True).strip() == expected
+    assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True).strip()
+    changed = subprocess.check_output(["git", "diff", "--name-only", "HEAD^", "HEAD"], cwd=root, text=True).splitlines()
+    assert changed == [probe["path"]], "Probe must remain a one-file, test-only overlay"
+    delta = subprocess.check_output(["git", "diff", "--binary", "--full-index", "HEAD^", "HEAD", "--", probe["path"]], cwd=root)
+    assert hashlib.sha256(delta).hexdigest() == probe["delta_sha256"], "Reviewed test-only delta changed"
+
+
+def fresh_lib_artifact(content):
+    found = []
+    for line in content.splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if (item.get("reason") == "compiler-artifact" and item.get("profile", {}).get("test")
+                and item.get("target", {}).get("name") == "ai_toolbox_lib" and item.get("executable")):
+            assert not item.get("fresh"), "Own test library unexpectedly reused"
+            path = Path(item["executable"])
+            found.append({"binary": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    assert len(found) == 1, "Expected exactly one freshly built production lib-test binary"
+    return found[0]
+
+
 def main():
     root, output, expected_sha = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
+    probe_root = Path(sys.argv[4]).resolve()
     assert re.fullmatch(r"[0-9a-f]{40}", expected_sha)
     driver_root = HERE.parents[1]
     assert os.environ.get("GITHUB_REPOSITORY") == "xue-ding-e/AI-Toolbox-Next"
@@ -93,6 +143,7 @@ def main():
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=driver_root, text=True).strip() == expected_sha
     assert not subprocess.check_output(["git", "status", "--porcelain"], cwd=driver_root, text=True).strip()
     verify_source(root)
+    verify_probe_source(probe_root)
     output.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + 100 * 60
     command_records = []
@@ -168,8 +219,8 @@ def main():
         return code, content
 
     results = []
-    def checked(args, label, budget, env, category):
-        code, content = run(args, root, label, timeout=budget, env=env)
+    def checked(args, label, budget, env, category, cwd=None):
+        code, content = run(args, root if cwd is None else cwd, label, timeout=budget, env=env)
         result = {"stage": label, "category": category, "exit_code": code, "passed": code == 0,
                   "earlier_failed_stages": [item["stage"] for item in results if not item["passed"]],
                   "failure_attribution": None if code == 0 else "Unattributed stage failure; inspect setup and earlier failures before claiming a product bug"}
@@ -177,13 +228,23 @@ def main():
         (output / "stage-results.json").write_text(json.dumps(results, indent=2) + "\n")
         return code, content
 
+    def focused(binary, selection, label, cwd):
+        code, listing = checked([binary, selection["prefix"], "--list"], label + "-inventory", 120, env, "inventory-not-execution", cwd)
+        assert code == 0
+        verify_focused_inventory(listing, selection["tests"])
+        code, content = checked([binary, selection["prefix"], "--test-threads=1"], label, 180, env, "focused-rust-not-full-suite", cwd)
+        results[-1]["classification"] = classify_focused(code, content, selection["tests"])
+        results[-1]["expected_identities"] = selection["tests"]
+        results[-1]["summaries"] = re.findall(r"^test result: .*", content, re.MULTILINE)
+        (output / "stage-results.json").write_text(json.dumps(results, indent=2) + "\n")
+
     guards.admit(root)
     tools = {name: subprocess.check_output(["rustup", "which", name], text=True).strip() for name in ["cargo", "rustc", "rustdoc"]}
     assert all(Path(path).is_file() for path in tools.values())
     env = isolated_env(output.parent / "private-full-profile", tools)
     (output / "source-and-plan.json").write_text(json.dumps({"driver_sha": expected_sha, "manifest": MANIFEST, "tools": tools,
-        "budgets_seconds": {"total": 6000, "install": 600, "tsc": 300, "each_frontend_script": 600, "official_edit_script": 900, "build": 600, "compile": 1800, "rust_default_tests_and_docs": 1200},
-        "scope": "Linux default cargo targets and docs; exact complete pnpm test chain, no added skip; not Windows/live OAuth"}, indent=2) + "\n")
+        "budgets_seconds": {"total": 6000, "install": 600, "tsc": 300, "each_frontend_script": 600, "official_edit_script": 900, "build": 600, "compile": 1800, "focused_inventory": 120, "focused_execution": 180, "rust_default_tests_and_docs": 1200, "probe_compile": 1800},
+        "scope": "Sealed product: Linux default cargo targets/docs and complete pnpm test chain; focused 19+31 are additional evidence, not full-suite substitutes. Separate test-only probe overlay has its own SHA/binary/results. No live OAuth or Windows acceptance."}, indent=2) + "\n")
     code, _ = checked(["pnpm", "install", "--frozen-lockfile"], "frontend-install", 600, env, "dependency-environment")
     if code == 0:
         checked(["pnpm", "exec", "tsc", "--noEmit"], "frontend-tsc", 300, env, "typecheck")
@@ -208,6 +269,9 @@ def main():
                 artifacts.append({"target": item["target"], "binary": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         assert artifacts and any(a["target"]["name"] == "ai_toolbox_lib" for a in artifacts)
         (output / "binary-identities.json").write_text(json.dumps(artifacts, indent=2) + "\n")
+        product_lib = fresh_lib_artifact(content)
+        for label, selection in MANIFEST["focused"].items():
+            focused(product_lib["binary"], selection, "rust-product-" + label, root)
         code, content = checked(cargo + ["--", "--list"], "rust-full-inventory", 180, env, "inventory-not-execution")
         assert code == 0
         inventory = full_inventory(content)
@@ -225,9 +289,25 @@ def main():
         for artifact in artifacts:
             assert hashlib.sha256(Path(artifact["binary"]).read_bytes()).hexdigest() == artifact["sha256"]
     verify_source(root)
+    product_passed = all(result["passed"] for result in results) and len(results) == len(MANIFEST["test_chain"]) + 11
+    if product_passed:
+        (output / "PRODUCT-PASS.txt").write_text("Sealed product passed full Linux/default-docs and complete pnpm tests; separate probes are not part of this result.\n")
+    # The test-only overlay never changes the product checkout. A shared target
+    # directory is used strictly serially; record/verify product binaries above
+    # before this fresh overlay compilation can replace any artifact path.
+    verify_probe_source(probe_root)
+    guards.admit(probe_root)
+    code, content = checked(cargo + ["--lib", "--no-run", "--message-format=json"], "rust-probe-compile", 1800, env, "probe-compile-not-product", probe_root)
+    if code == 0:
+        probe_lib = fresh_lib_artifact(content)
+        (output / "probe-binary-identity.json").write_text(json.dumps(probe_lib, indent=2) + "\n")
+        focused(probe_lib["binary"], MANIFEST["probe"], "rust-followup-probes", probe_root)
+        assert hashlib.sha256(Path(probe_lib["binary"]).read_bytes()).hexdigest() == probe_lib["sha256"]
+    verify_source(root)
+    verify_probe_source(probe_root)
     assert all(result["passed"] for result in results), "One or more required stages failed; see stage-results.json"
-    assert len(results) == len(MANIFEST["test_chain"]) + 7, "Required stage missing"
-    (output / "PASS.txt").write_text("Sealed Linux default cargo suite/docs and complete pnpm test chain passed. Not Windows/live OAuth acceptance.\n")
+    assert len(results) == len(MANIFEST["test_chain"]) + 14, "Required stage missing"
+    (output / "PASS.txt").write_text("Sealed Linux product/default cargo/docs, complete pnpm chain, and separately identified test-only probes passed. Not Windows/live OAuth acceptance.\n")
 
 
 if __name__ == "__main__":
