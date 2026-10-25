@@ -1,5 +1,6 @@
 """Manual sealed-product Linux validation, not Windows or live OAuth acceptance."""
 from collections import Counter
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -9,6 +10,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 if not __debug__:
@@ -42,14 +44,30 @@ def verify_ignored(listing):
     assert names == sorted(case["name"] for case in MANIFEST["ignored"]), "Runtime ignored identities differ"
 
 
-def isolated_env(profile, tool_paths):
+@contextmanager
+def short_private_tmpdir():
+    # Linux filesystem sockets have a short sockaddr_un path limit. Keep the
+    # scratch root independent of the long checkout/profile path, but never use
+    # a shared fixed directory or a user's profile. TemporaryDirectory owns only
+    # this randomly-created 0700 directory and removes it after child cleanup.
+    with tempfile.TemporaryDirectory(prefix="a440-", dir="/tmp") as name:
+        root = Path(name)
+        info = root.lstat()
+        assert root.is_dir() and not root.is_symlink()
+        assert info.st_uid == os.getuid() and info.st_mode & 0o777 == 0o700
+        assert len(os.fsencode(root)) <= 24, "Private TMPDIR leaves insufficient Unix socket path budget"
+        yield root
+
+
+def isolated_env(profile, tool_paths, runtime_tmp):
     # Allowlist rather than deleting a few known credential variable names.
     env = {key: os.environ[key] for key in ["PATH", "LANG", "LC_ALL", "TZ", "LD_LIBRARY_PATH"] if key in os.environ}
     profile.mkdir(parents=True, exist_ok=False)
-    for key in ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CARGO_HOME", "TMPDIR"]:
+    for key in ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CARGO_HOME"]:
         directory = profile / key.lower()
         directory.mkdir()
         env[key] = str(directory)
+    env["TMPDIR"] = str(runtime_tmp)
     env.update(RUSTC=tool_paths["rustc"], RUSTDOC=tool_paths["rustdoc"], CARGO_TARGET_DIR=str(profile / "target"),
                CARGO_BUILD_JOBS="2", CARGO_PROFILE_DEV_DEBUG="0", CARGO_PROFILE_TEST_DEBUG="0", CARGO_INCREMENTAL="0",
                RUST_BACKTRACE="0", CI="true", HUSKY="0")
@@ -77,10 +95,12 @@ def classify_rust(code, content, inventory):
         totals = [sum(int(summary[i]) for summary in summaries) for i in range(5)]
         assert totals == [len(inventory) - len(ignored), 0, len(ignored), 0, 0] and totals[0] > 0, "Incomplete/zero/filtered test execution"
         return "passed"
-    if re.search(r"^error(?:\[|:)|could not compile", content, re.MULTILINE):
-        return "compile-or-doc-compile-failure"
     if "test result: FAILED" in content:
         return "test-failure"
+    # Cargo appends `error: test failed` after a real failed test binary; it is
+    # not a compiler diagnostic. Preserve runtime failure evidence above.
+    if re.search(r"^error(?:\[|:)|could not compile", content, re.MULTILINE):
+        return "compile-or-doc-compile-failure"
     return "environment-or-unclassified-failure"
 
 
@@ -133,7 +153,7 @@ def fresh_lib_artifact(content):
     return found[0]
 
 
-def main():
+def run_validation(runtime_tmp):
     root, output, expected_sha = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
     probe_root = Path(sys.argv[4]).resolve()
     assert re.fullmatch(r"[0-9a-f]{40}", expected_sha)
@@ -239,10 +259,12 @@ def main():
         (output / "stage-results.json").write_text(json.dumps(results, indent=2) + "\n")
 
     guards.admit(root)
+    guards.admit(runtime_tmp)
     tools = {name: subprocess.check_output(["rustup", "which", name], text=True).strip() for name in ["cargo", "rustc", "rustdoc"]}
     assert all(Path(path).is_file() for path in tools.values())
-    env = isolated_env(output.parent / "private-full-profile", tools)
+    env = isolated_env(output.parent / "private-full-profile", tools, runtime_tmp)
     (output / "source-and-plan.json").write_text(json.dumps({"driver_sha": expected_sha, "manifest": MANIFEST, "tools": tools,
+        "runtime_tmpdir": str(runtime_tmp), "runtime_tmpdir_scope": "Owned random 0700 directory, removed after owned child cleanup; not a real user profile",
         "budgets_seconds": {"total": 6000, "install": 600, "tsc": 300, "each_frontend_script": 600, "official_edit_script": 900, "build": 600, "compile": 1800, "focused_inventory": 120, "focused_execution": 180, "rust_default_tests_and_docs": 1200, "probe_compile": 1800},
         "scope": "Sealed product: Linux default cargo targets/docs and complete pnpm test chain; focused 19+31 are additional evidence, not full-suite substitutes. Separate test-only probe overlay has its own SHA/binary/results. No live OAuth or Windows acceptance."}, indent=2) + "\n")
     code, _ = checked(["pnpm", "install", "--frozen-lockfile"], "frontend-install", 600, env, "dependency-environment")
@@ -308,6 +330,13 @@ def main():
     assert all(result["passed"] for result in results), "One or more required stages failed; see stage-results.json"
     assert len(results) == len(MANIFEST["test_chain"]) + 14, "Required stage missing"
     (output / "PASS.txt").write_text("Sealed Linux product/default cargo/docs, complete pnpm chain, and separately identified test-only probes passed. Not Windows/live OAuth acceptance.\n")
+
+
+def main():
+    # run_validation cleans each owned process group even on exceptions/signals
+    # before this scope removes its own temporary files.
+    with short_private_tmpdir() as runtime_tmp:
+        run_validation(runtime_tmp)
 
 
 if __name__ == "__main__":

@@ -46,13 +46,64 @@ class FullDriverTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.dict(os.environ, {'GITHUB_TOKEN': 'synthetic-forbidden', 'OPENAI_API_KEY': 'synthetic-forbidden',
                                         'CODEX_SMOKE_LOCAL_FIXTURE': '/not-a-fixture', 'HOME': '/not-the-profile'}):
-                env = driver.isolated_env(Path(temporary) / 'profile', {'rustc': '/synthetic/rustc', 'rustdoc': '/synthetic/rustdoc'})
+                env = driver.isolated_env(Path(temporary) / 'profile', {'rustc': '/synthetic/rustc', 'rustdoc': '/synthetic/rustdoc'}, Path(temporary) / 'short-tmp')
             self.assertNotIn('GITHUB_TOKEN', env)
             self.assertNotIn('OPENAI_API_KEY', env)
             self.assertNotIn('CODEX_SMOKE_LOCAL_FIXTURE', env)
             self.assertTrue(env['HOME'].startswith(temporary))
             self.assertTrue(env['CARGO_HOME'].startswith(temporary))
             self.assertEqual(env['RUSTC'], '/synthetic/rustc')
+            self.assertEqual(env['TMPDIR'], str(Path(temporary) / 'short-tmp'))
+
+    def test_private_short_tmp_is_owned_unique_and_removed(self):
+        with driver.short_private_tmpdir() as first:
+            with driver.short_private_tmpdir() as second:
+                self.assertNotEqual(first, second)
+                self.assertEqual(first.stat().st_uid, os.getuid())
+                self.assertEqual(first.stat().st_mode & 0o777, 0o700)
+                self.assertLessEqual(len(os.fsencode(first)), 24)
+            self.assertFalse(second.exists())
+            self.assertTrue(first.exists())
+        self.assertFalse(first.exists())
+
+    def test_short_tmp_leaves_budget_for_exact_wsl_fixture_socket_shape(self):
+        # Path-budget assertion only, not a native socket bind or Rust test.
+        with driver.short_private_tmpdir() as root:
+            with tempfile.TemporaryDirectory(prefix='.tmp', dir=root) as fixture:
+                source = Path(fixture) / 'source'
+                source.mkdir()
+                path = source / '.ai-toolbox-owner-0000000000000001-0000000000000002.sock'
+                self.assertLess(len(os.fsencode(path)), 108)
+                self.assertFalse(path.exists())
+        old_root = '/home/runner/work/AI-Toolbox-Next/AI-Toolbox-Next/private-full-profile/tmpdir'
+        old_path = Path(old_root) / '.tmpABCDEF' / 'source' / '.ai-toolbox-owner-0000000000000001-0000000000000002.sock'
+        self.assertGreaterEqual(len(os.fsencode(old_path)), 108)
+
+    def test_validation_exception_cleans_only_owned_tmp(self):
+        for error_type in [RuntimeError, InterruptedError, KeyboardInterrupt]:
+            with self.subTest(error=error_type.__name__), driver.short_private_tmpdir() as unrelated:
+                marker = unrelated / 'must-remain'
+                marker.write_text('unrelated synthetic owner')
+                seen = []
+                def failing(root):
+                    seen.append(root)
+                    (root / 'synthetic-child-output').write_text('fixture')
+                    raise error_type('synthetic validation error')
+                with patch.object(driver, 'run_validation', side_effect=failing):
+                    with self.assertRaisesRegex(error_type, 'synthetic validation error'):
+                        driver.main()
+                self.assertEqual(len(seen), 1)
+                self.assertFalse(seen[0].exists())
+                self.assertEqual(marker.read_text(), 'unrelated synthetic owner')
+
+    def test_cargo_real_failed_summary_is_not_a_compile_failure(self):
+        content = ('thread fixture panicked: path must be shorter than SUN_LEN\n'
+                   'test result: FAILED. 3101 passed; 1 failed; 13 ignored; 0 measured; 0 filtered out;\n'
+                   'error: test failed, to rerun pass `--lib`\n')
+        self.assertEqual(driver.classify_rust(101, content, []), 'test-failure')
+        self.assertEqual(driver.classify_focused(101, content, ['fixture']), 'test-failure')
+        with self.assertRaises(AssertionError):
+            driver.classify_rust(0, content, ['fixture'])
 
     def inventory(self):
         return [case['name'] for case in driver.MANIFEST['ignored']] + ['synthetic::positive']
