@@ -76,6 +76,16 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
     let stableSamples = 0;
     for (let attempt = 0; attempt < 200; attempt++) {
       const target = await fixture('menuTarget(' + JSON.stringify(name) + ')');
+      // Catalog expansion can displace the button after the initial scroll.
+      // Reposition only before hover/click; waiting alone cannot make an
+      // offscreen target hit-testable. Keep the original total sample budget.
+      if (!revealed && !target.inViewport) {
+        await fixture('scrollMenuTarget(' + JSON.stringify(name) + ')');
+        previous = undefined;
+        stableSamples = 0;
+        await delay(50);
+        continue;
+      }
       const stationary = previous && ['x', 'y', 'width', 'height']
         .every(key => Math.abs(target[key] - previous[key]) < 0.25);
       stableSamples = stationary && target.inViewport && target.hit

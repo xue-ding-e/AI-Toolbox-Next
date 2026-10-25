@@ -110,6 +110,8 @@ Claude / Codex 式的菜单**固定为**：启用（含副标题）→ 编辑 �
 ## 最小验证
 
 - `pnpm run test:provider-card-layout` 通过（薄映射层守卫）。
+- `test:migrated-provider-cards` 夹具里，目录文本出现不代表展开动画/布局已经稳定；首次 `scrollIntoView` 后目标仍可能移出 viewport。只在 hover/点击前允许重新定位，并重置稳定采样；reveal 后不自动滚动，不重试点击。原 200 次上限、5 次静止采样、hit-test/opacity 和真实单次指针点击都必须保留。`migratedProviderCardsMenu.test.ts` 直接执行夹具 helper 的正反例仅属 Node/mock 回归，不能代替实际浏览器检查。
+
 - 该 CLI 页面能正常列出卡片：名称、第二行、操作按钮、模型折叠区（若有）与迁移前一致。
 - 拖拽：能拖动排序；在搜索/非自定义排序下拖拽被禁用（**且界面说明了原因**——把手消失而没有任何解释时，用户会把「有意禁用」报成「拖拽坏了」，2026-10-08 真实发生）；批量选择模式下拖拽句柄换成复选框。
   > **必须用真事件验证，不能只读链路。** `pnpm run test:provider-list-drag` 在真 Chromium 里对真实 `CodexPage` 发指针事件并核对回写。这条守卫存在的原因就是：拖拽被「读链路确认每一层都对」的方式修好过两次，两次都没修好（SOP #112 / 13.1 模式六十）。
