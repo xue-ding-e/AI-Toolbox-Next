@@ -173,9 +173,9 @@ class RedClassificationTests(unittest.TestCase):
     def test_test_name_is_never_panic_evidence(self):
         name = "issue440_unexpired_401_forces_one_recovery_and_retry"
         header = "thread x panicked at src/coding/codex/official_accounts/usage_refresh_tests.rs:242:70:\n"
-        body = 'called `Result::unwrap()` on an `Err` value: "Codex usage request failed: HTTP status client error (401 Unauthorized) for url (http://127.0.0.1:1234/usage)"\n\n'
+        body = 'called `Result::unwrap()` on an `Err` value: "Codex usage request failed: HTTP status client error (401 Mock) for url (http://127.0.0.1:1234/usage)"\n\n'
         driver.verify_business_red(name, header + body)
-        for content in [header + "fixture failed " + name, header + 'called `Result::unwrap()` on an `Err` value: "Synthetic Codex HTTP scope"', header.replace(":242:", ":123:") + body]:
+        for content in [header + "fixture failed " + name, header + 'called `Result::unwrap()` on an `Err` value: "Synthetic Codex HTTP scope"', header.replace(":242:", ":123:") + body, header + body.replace("401 Mock", "401 Unauthorized"), header + body.replace("401 Mock", "403 Mock"), header + body.replace("/usage", "/oauth/token")]:
             with self.assertRaises(AssertionError):
                 driver.verify_business_red(name, content)
 

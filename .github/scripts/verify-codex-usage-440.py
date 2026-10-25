@@ -50,7 +50,7 @@ def verify_business_red(name, content):
     lines = body.splitlines()
     if expected["kind"] == "usage_401":
         assert re.fullmatch(
-            r'called `Result::unwrap\(\)` on an `Err` value: "Codex usage request failed: HTTP status client error \(401 Unauthorized\) for url \(http://127\.0\.0\.1:\d+/usage\)"',
+            r'called `Result::unwrap\(\)` on an `Err` value: "Codex usage request failed: HTTP status client error \(401 Mock\) for url \(http://127\.0\.0\.1:\d+/usage\)"',
             lines[0],
         ), "Wrong RED error body; the test name is not business evidence"
     else:
