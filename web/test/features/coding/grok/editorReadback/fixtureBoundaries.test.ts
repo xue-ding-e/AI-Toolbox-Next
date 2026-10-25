@@ -101,29 +101,6 @@ test('routing snapshots cannot erase recorded forbidden operations', () => {
   assert.deepEqual(run.routingSnapshot().unexpected, ['property-read']);
 });
 
-const batchSource = readFileSync(new URL('../../../../../../scripts/verify-grok-editor-and-catalog.mjs', import.meta.url), 'utf8')
-  .replace('await import(specifier)', 'await load(specifier)');
-function batch(load: (specifier: string) => Promise<void>): Promise<void> {
-  return new Function('load', 'return (async () => {\n' + batchSource + '\n})();')(load);
-}
-
-test('supervised batch selects the six-case and existing four-case fixtures exactly once', async () => {
-  const selected: string[] = [];
-  await batch(async specifier => { selected.push(specifier); });
-  assert.deepEqual(selected, ['./verify-grok-editor-readback.mjs', './verify-grok-fetched-models.mjs']);
-});
-
-test('editor failure still reaches catalog controls but never becomes a passing batch', async () => {
-  const selected: string[] = [];
-  await assert.rejects(batch(async specifier => {
-    selected.push(specifier);
-    if (selected.length === 1) throw new Error('synthetic editor failure');
-  }), /Grok editor\/catalog fixture batch failed/);
-  assert.equal(selected.length, 2);
-});
-
-test('a failed existing catalog control also rejects the combined batch', async () => {
-  await assert.rejects(batch(async specifier => {
-    if (specifier.includes('fetched-models')) throw new Error('synthetic catalog failure');
-  }), /Grok editor\/catalog fixture batch failed/);
-});
+// The three combined-batch assertions now live with the actual process/ACK
+// implementation in scripts/lib/grok-batch-lifecycle.test.mjs. These eight
+// synthetic IPC/router controls remain independent of browser execution.
