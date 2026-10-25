@@ -3749,6 +3749,7 @@ mod usage_credential_tests {
     struct MockReply {
         status: u16,
         body: String,
+        before_reply: Option<Box<dyn Fn() + Send>>,
     }
 
     /// Distinct email per account id keeps the identity checks meaningful: with
@@ -3839,10 +3840,12 @@ mod usage_credential_tests {
                     let (status, body) = if request.path.contains("/oauth/token") {
                         let index = token_thread.fetch_add(1, Ordering::SeqCst);
                         let reply = &token_replies[index];
+                        if let Some(before_reply) = &reply.before_reply { before_reply(); }
                         (reply.status, reply.body.clone())
                     } else {
                         let index = usage_thread.fetch_add(1, Ordering::SeqCst);
                         let reply = &usage_replies[index];
+                        if let Some(before_reply) = &reply.before_reply { before_reply(); }
                         (reply.status, reply.body.clone())
                     };
                     requests_thread.lock().expect("requests lock").push(request);
@@ -3952,6 +3955,7 @@ mod usage_credential_tests {
         MockReply {
             status,
             body: body.into(),
+            before_reply: None,
         }
     }
 
@@ -4673,5 +4677,118 @@ mod usage_credential_tests {
         assert_eq!(stored.last_limits_fetched_at, first_fetched_at);
         // Credits are the exception: the cached balance is invalidated.
         assert_eq!(stored.credits, None);
+    }
+
+    // These follow-ups are adapted from the synthetic issue440 regressions in
+    // xue-ding-e/AI-Toolbox-Next ed843373, not from private account data. They run
+    // the production usage entry points; a failed assertion is not a compile
+    // result and each scenario distinguishes its actual effect.
+    fn followup_identity_auth(user: &str, expires_in: i64) -> Value {
+        let payload = serde_json::json!({
+            "exp": chrono::Utc::now().timestamp() + expires_in,
+            "sub": user,
+            "email": format!("{user}@example.invalid"),
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "synthetic-shared-workspace",
+                "chatgpt_user_id": user,
+                "chatgpt_plan_type": "team"
+            }
+        });
+        let jwt = format!("e30.{}.synthetic", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string()));
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {"access_token": jwt, "id_token": jwt,
+                "refresh_token": format!("synthetic-refresh-{user}"),
+                "account_id": "synthetic-shared-workspace"}
+        })
+    }
+
+    #[tokio::test]
+    async fn followup_shared_workspace_different_user_is_not_adopted() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = followup_identity_auth("synthetic-user-a", 20 * 86400);
+        let other_user = followup_identity_auth("synthetic-user-b", 30 * 86400);
+        let account = env.save_account(&stored, true).await;
+        env.write_runtime_auth(&other_user);
+        let server = MockServer::start(vec![ok_usage(12.0)], Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        env.refresh(&account.id).await.expect("own credential usage");
+
+        // This is an identity isolation assertion, not an exchange-count test:
+        // a workspace id must not authorize adopting another user's tokens.
+        assert_eq!(env.stored_snapshot(&account.id).await, stored,
+            "same workspace but different explicit user must not replace saved credentials");
+        assert_eq!(server.authorization_headers(), vec![format!("Bearer {}", stored["tokens"]["access_token"].as_str().unwrap())]);
+        assert_eq!(server.token_calls(), 0);
+        assert_eq!(env.read_runtime_auth(), other_user);
+    }
+
+    #[tokio::test]
+    async fn followup_local_success_after_runtime_switch_is_rejected() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let first = auth_with(&token("followup-local-a", 20 * 86400), "synthetic-local-a", "account-a");
+        let second = auth_with(&token("followup-local-b", 30 * 86400), "synthetic-local-b", "account-b");
+        env.write_runtime_auth(&first);
+        let path = env._root.path().join("auth.json");
+        let replacement = second.clone();
+        let mut delayed = ok_usage(12.0);
+        delayed.before_reply = Some(Box::new(move || {
+            // An external runtime switches after the production HTTP request
+            // arrives, before the response reaches the awaiting refresh.
+            std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+        }));
+        let server = MockServer::start(vec![delayed], Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        let result = refresh_local_account_usage(&env.db).await;
+
+        assert_eq!(env.read_runtime_auth(), second, "the new runtime must remain unchanged");
+        assert_eq!(server.usage_calls(), 1);
+        assert_eq!(server.token_calls(), 0);
+        // A failure here demonstrates a stale successful __local__ result,
+        // NOT a claim that the runtime was overwritten.
+        assert!(result.is_err(), "late usage for a replaced local login must not be reported as current success");
+    }
+
+    #[tokio::test]
+    async fn followup_concurrent_401_reuses_already_recovered_credential() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let original = auth_with(&token("followup-401-old", 20 * 86400), "synthetic-401-old", "account-a");
+        let account = env.save_account(&original, false).await;
+        let first = token("followup-401-next", 30 * 86400);
+        let second = token("followup-401-extra", 40 * 86400);
+        let server = MockServer::start(
+            vec![reply(401, "{}"), reply(401, "{}"), ok_usage(12.0), ok_usage(12.0)],
+            vec![reply(200, token_body(&first, "synthetic-401-next")),
+                 reply(200, token_body(&second, "synthetic-401-extra"))],
+        );
+        set_test_endpoints(&server.usage_url, &server.token_url);
+        let oauth_guard = OAUTH_REFRESH_LOCK.lock().await;
+        let requests = async { tokio::join!(env.refresh(&account.id), env.refresh(&account.id)) };
+        tokio::pin!(requests);
+        tokio::select! {
+            _ = &mut requests => panic!("refreshes must wait for the held OAuth lock"),
+            waited = tokio::time::timeout(Duration::from_secs(5), async {
+                while server.usage_calls() < 2 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }) => waited.expect("both real usage requests reached the mock"),
+        }
+        assert_eq!(server.token_calls(), 0, "lock barrier must precede exchange");
+        drop(oauth_guard);
+        let (left, right) = tokio::time::timeout(Duration::from_secs(10), requests).await.expect("bounded concurrent completion");
+        left.expect("first recovered usage");
+        right.expect("second recovered usage");
+        let bodies = server.token_request_bodies();
+        assert_eq!(bodies.iter().filter(|body| body.contains("refresh_token=synthetic-401-old")).count(), 1,
+            "the original refresh token must never be spent twice");
+        // If only this assertion fails with two DIFFERENT refresh tokens, the
+        // finding is redundant exchange, not refresh-token replay/cross-account access.
+        assert_eq!(server.token_calls(), 1, "the waiting 401 must use the already recovered credential first");
+        assert_eq!(server.usage_calls(), 4);
     }
 }
