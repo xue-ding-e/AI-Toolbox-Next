@@ -66,13 +66,23 @@ export async function openBatchControl({ directory, session, io = fs, uid = proc
     catch (error) { if (error.code === 'ENOENT') return; throw error; }
     throw new Error('Preexisting Grok lifecycle record');
   }
-  async function readAck(name) {
+  async function readAck(name, index) {
     const filename = path.join(directory, name);
     // NONBLOCK makes a substituted FIFO fail the regular-file check, not hang.
     let handle;
     try { handle = await io.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
     try {
+      // The supervisor publishes by link then unlink. Inspect its fixed staging
+      // alias only AFTER opening ack: unlink legitimately changes inode ctime.
+      // No stable-file snapshot/read begins until that publication is complete.
+      let staging;
+      try { staging = await io.lstat(path.join(directory, `.ack-${index}.tmp`), { bigint: true }); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (staging) {
+        require(regular(staging) && staging.size <= BigInt(MAX_RECORD), 'Invalid acknowledgement staging file');
+        return null;
+      }
       const before = await handle.stat({ bigint: true });
       require(regular(before) && before.size <= BigInt(MAX_RECORD), 'Invalid acknowledgement file');
       const buffer = Buffer.alloc(MAX_RECORD + 1);
@@ -124,7 +134,7 @@ export async function openBatchControl({ directory, session, io = fs, uid = proc
       const expires = now() + ACK_WAIT_MS;
       while (now() < expires) {
         await checkDirectory();
-        const bytes = await readAck(`ack-${index}.json`);
+        const bytes = await readAck(`ack-${index}.json`, index);
         if (bytes) {
           const ack = parseAcknowledgement(bytes, request);
           await checkDirectory();

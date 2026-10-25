@@ -27,6 +27,9 @@ they do not trigger another route, a browser retry or a fresh time/RSS budget.
 The private directory/session protects against stale runs, not hostile same-UID
 code. Overall acceptance still requires exact real 6 + 4 reports, unchanged
 source/dependency seals and final owned cleanup under the original shared limits.
+Hardlink publication changes ctime when its temporary alias is removed. Readers
+must open the final record before checking that fixed staging alias, and take
+stable metadata only after the alias disappears; permission errors are not waits.
 
 `node --test scripts/lib/grok-batch-lifecycle.test.mjs` covers only fake processes
 and fake I/O, including the three former batch-selector controls. It is not a

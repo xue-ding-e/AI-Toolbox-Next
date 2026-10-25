@@ -23,7 +23,11 @@ function fakeIO(options = {}) {
     isDirectory: () => value.kind === 'dir', isFile: () => value.kind === 'file' });
   const find = name => { if (!files.has(name)) throw error('ENOENT'); return files.get(name); };
   const io = {
-    async lstat(name) { calls.push(['lstat', name]); return stat(find(name)); },
+    async lstat(name) {
+      calls.push(['lstat', name]);
+      if (options.deniedAckStaging && name.includes('/.ack-')) throw error('EACCES');
+      return stat(find(name));
+    },
     async readdir() { return [...files.keys()].filter(name => name !== DIRECTORY).map(name => path.basename(name)); },
     async open(name, flags, mode) {
       calls.push(['open', name, flags, mode]);
@@ -59,6 +63,7 @@ function fakeIO(options = {}) {
         const ack = entry(options.ackKind ?? 'file', options.ackBytes ?? canonicalRecord(ackFor(r)));
         if (options.ackUid !== undefined) ack.uid = options.ackUid;
         files.set(path.join(DIRECTORY, `ack-${r.index}.json`), ack);
+        if (options.ackStaging) files.set(path.join(DIRECTORY, `.ack-${r.index}.tmp`), ack);
       }
     },
     async unlink(name) { calls.push(['unlink', name]); find(name); files.delete(name); },
@@ -168,6 +173,52 @@ test('only not-yet-open ENOENT may wait; denied or disappearing opened acknowled
     assert.equal(f.calls.filter(x => x[0] === 'open' && x[1].endsWith('/ack-0.json')).length, 1);
     assert.equal(f.now(), 0); await control.close();
   }
+});
+
+test('opened acknowledgement waits for its fixed staging alias before taking stable metadata or reading', async () => {
+  const f = fakeIO({ ackStaging: true }); let delayed = 0;
+  const control = await openBatchControl({ ...f.options, delay: async ms => {
+    delayed += 1;
+    assert.equal(f.calls.filter(x => x[0] === 'read').length, 0);
+    assert.equal(f.calls.filter(x => x[0] === 'fstat' && x[1].endsWith('/ack-0.json')).length, 0);
+    assert.equal(f.calls.filter(x => x[0] === 'close' && x[1].endsWith('/ack-0.json')).length, 1);
+    const staging = path.join(DIRECTORY, '.ack-0.tmp');
+    const item = f.files.get(staging); assert(item);
+    f.files.delete(staging); item.ctimeNs += 1n;
+    await f.delay(ms);
+  } });
+  assert.deepEqual(await control.checkpoint(request(), 0), ackFor(request()));
+  assert.equal(delayed, 1);
+  assert.equal(f.calls.filter(x => x[0] === 'open' && x[1].endsWith('/ack-0.json')).length, 2);
+  assert.equal(f.calls.filter(x => x[0] === 'read').length, 1);
+  await control.close();
+});
+
+test('invalid acknowledgement staging is not treated as a waiting state', async () => {
+  for (const mutation of [item => { item.kind = 'symlink'; }, item => { item.uid = 999n; },
+    item => { item.mode = 0o100644n; }, item => { item.data = Buffer.alloc(1025); }]) {
+    const f = fakeIO({ ackStaging: true });
+    const link = f.io.link;
+    f.io.link = async (...args) => {
+      await link(...args);
+      // Substitute only the temporary path; the opened ack remains regular.
+      const name = path.join(DIRECTORY, '.ack-0.tmp');
+      const replacement = { ...f.files.get(name) }; mutation(replacement); f.files.set(name, replacement);
+    };
+    const control = await openBatchControl(f.options);
+    await assert.rejects(control.checkpoint(request(), 0), /Invalid acknowledgement staging/);
+    assert.equal(f.now(), 0); assert.equal(f.calls.filter(x => x[0] === 'read').length, 0);
+    await control.close();
+  }
+});
+
+test('permission refusal for acknowledgement staging stops after one opened-ack inspection', async () => {
+  const f = fakeIO({ deniedAckStaging: true }); const control = await openBatchControl(f.options);
+  await assert.rejects(control.checkpoint(request(), 0), /EACCES/);
+  assert.equal(f.calls.filter(x => x[0] === 'lstat' && x[1].endsWith('/.ack-0.tmp')).length, 1);
+  assert.equal(f.calls.filter(x => x[0] === 'open' && x[1].endsWith('/ack-0.json')).length, 1);
+  assert.equal(f.calls.filter(x => x[0] === 'read').length, 0); assert.equal(f.now(), 0);
+  await control.close();
 });
 
 test('missing acknowledgement reaches the bounded deadline without launching another fixture', async () => {
