@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -45,7 +46,7 @@ async function killBrowserTree(browser) {
 }
 
 // Shared Chromium/Vite fixture runner. All HTTP, profiles and artifacts are local.
-export async function runBrowserFixture({ fixtureDirectory, fixtureFilename, artifactPrefix, verify, fixtureAliases = [] }) {
+export async function runBrowserFixture({ fixtureDirectory, fixtureFilename, artifactPrefix, verify, fixtureAliases = [], browserDiagnostics = false }) {
   const { values } = parseArgs({ options: { browser: { type: 'string' }, output: { type: 'string' } } });
   const outputParent = path.resolve(values.output ?? tmpdir());
   await mkdir(outputParent, { recursive: true });
@@ -103,7 +104,55 @@ export async function runBrowserFixture({ fixtureDirectory, fixtureFilename, art
       '--window-size=1280,900', '--force-device-scale-factor=1', 'about:blank',
     ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
     let browserErrors = '';
-    browser.stderr.on('data', data => { browserErrors += data; });
+    // Opt-in synthetic-fixture diagnostics. No target URLs, titles or page content.
+    const started = Date.now();
+    const diagnostic = browserDiagnostics ? {
+      schema: 1, pid: browser.pid ?? null, phase: 'spawn',
+      exit: null, spawnError: null, discovery: [], stderrBytes: 0,
+      stderrRetainedBytes: 0, stderrTruncated: false, failure: null,
+    } : null;
+    const stderrLimit = 64 * 1024;
+    let stderrRaw = Buffer.alloc(0), diagnosticError, diagnosticClosed = false;
+    function persistDiagnostic() {
+      if (!diagnostic || diagnosticError || diagnosticClosed) return;
+      try {
+        writeFileSync(path.join(artifactRoot, 'browser-startup.json'), JSON.stringify(diagnostic, null, 2));
+        writeFileSync(path.join(artifactRoot, 'browser-stderr.bin'), stderrRaw);
+      } catch (error) { diagnosticError = error; }
+    }
+    function sealDiagnostic() {
+      if (!diagnostic || diagnosticClosed) return;
+      diagnostic.collectionClosed = { elapsedMs: Date.now() - started, exitObserved: diagnostic.exit !== null };
+      persistDiagnostic();
+      diagnosticClosed = true; // No late callback may write after the final error check.
+    }
+    function outcome(details) {
+      if (!diagnostic) return;
+      diagnostic.discovery.push({ elapsedMs: Date.now() - started, ...details });
+    }
+    if (diagnostic) {
+      browser.once('spawn', () => { diagnostic.pid = browser.pid; persistDiagnostic(); });
+      browser.once('error', error => {
+        diagnostic.spawnError = { name: error.name, code: typeof error.code === 'string' ? error.code : null };
+        persistDiagnostic();
+      });
+      browser.once('exit', (code, signal) => {
+        diagnostic.exit = { code, signal, elapsedMs: Date.now() - started };
+        persistDiagnostic();
+      });
+      persistDiagnostic();
+    }
+    browser.stderr.on('data', data => {
+      if (diagnosticClosed) return;
+      if (!diagnostic) { browserErrors += data; return; }
+      browserErrors = (browserErrors + data).slice(-1500);
+      diagnostic.stderrBytes += data.length;
+      const remaining = stderrLimit - stderrRaw.length;
+      if (remaining > 0) stderrRaw = Buffer.concat([stderrRaw, data.subarray(0, remaining)]);
+      diagnostic.stderrRetainedBytes = stderrRaw.length;
+      diagnostic.stderrTruncated = diagnostic.stderrBytes > stderrRaw.length;
+      persistDiagnostic();
+    });
     let socket;
     try {
       // Wait for the page target, not merely for the DevTools HTTP endpoint.
@@ -113,13 +162,27 @@ export async function runBrowserFixture({ fixtureDirectory, fixtureFilename, art
       // the budget is as generous as the CDP command timeout below.
       let pageTarget;
       for (let attempt = 0; attempt < 600 && !pageTarget; attempt++) {
+        let httpStatus = null, discoveryStage = 'fetch';
         try {
-          const targets = await (await fetch('http://127.0.0.1:' + debugPort + '/json/list')).json();
+          const response = await fetch('http://127.0.0.1:' + debugPort + '/json/list');
+          httpStatus = response.status; discoveryStage = 'json';
+          const targets = await response.json();
+          discoveryStage = 'target-selection';
           pageTarget = targets.find(target => target.type === 'page' && target.webSocketDebuggerUrl);
-        } catch { /* Endpoint not up yet. */ }
+          outcome({ attempt, kind: pageTarget ? 'page-ready' : 'no-page-target', httpStatus: response.status, targetCount: targets.length });
+        } catch (error) {
+          outcome({ attempt, kind: 'discovery-error', stage: discoveryStage, httpStatus, errorName: error.name, code: typeof error.code === 'string' ? error.code : null });
+          /* Endpoint not up yet. */
+        }
+        persistDiagnostic();
         if (!pageTarget) await delay(100);
       }
-      if (!pageTarget) throw new Error('Browser did not start: ' + browserErrors.slice(-1500));
+      if (!pageTarget) {
+        if (diagnostic) diagnostic.failure = diagnostic.spawnError ? 'spawn-error' : 'page-discovery-timeout';
+        throw new Error('Browser did not start: ' + browserErrors.slice(-1500));
+      }
+      if (diagnostic) diagnostic.phase = 'cdp-connect';
+      persistDiagnostic();
       socket = new WebSocket(pageTarget.webSocketDebuggerUrl);
       await new Promise((resolve, reject) => {
         socket.addEventListener('open', resolve, { once: true });
@@ -154,15 +217,32 @@ export async function runBrowserFixture({ fixtureDirectory, fixtureFilename, art
       };
       await send('Page.enable'); await send('Runtime.enable');
       await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+      if (diagnostic) diagnostic.phase = 'fixture-ready';
+      persistDiagnostic();
+      if (diagnosticError) throw diagnosticError;
       return { send, evaluate, exceptions,
+        assertDiagnostics(priorError) {
+          sealDiagnostic();
+          if (diagnosticError) throw priorError
+            ? new AggregateError([priorError, diagnosticError], 'Fixture and diagnostic write failures')
+            : diagnosticError;
+        },
+        recordFixtureOutcome(passed) {
+          if (diagnostic) { diagnostic.fixtureOutcome = passed ? 'passed' : 'failed'; persistDiagnostic(); }
+        },
         async close() {
           try { await send('Browser.close'); }
           // The handshake is best effort: a browser that ignores it still has to
           // go, children included, or the next fixture inherits its memory.
-          finally { socket.close(); await killBrowserTree(browser); }
+          finally { socket.close(); await killBrowserTree(browser); persistDiagnostic(); if (diagnosticError) throw diagnosticError; }
         },
       };
-    } catch (error) { socket?.close(); await killBrowserTree(browser); throw error; }
+    } catch (error) {
+      if (diagnostic) diagnostic.failure ||= diagnostic.phase === 'cdp-connect' ? 'cdp-initialization-error' : 'startup-error';
+      socket?.close(); await killBrowserTree(browser); sealDiagnostic();
+      if (diagnosticError) throw new AggregateError([error, diagnosticError], 'Browser failure and diagnostic write failure');
+      throw error;
+    }
   }
 
   const fixtureRoot = path.join(artifactRoot, 'dist');
@@ -176,15 +256,18 @@ export async function runBrowserFixture({ fixtureDirectory, fixtureFilename, art
     } catch { response.writeHead(404); response.end(); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  let browser;
+  let browser, fixtureError;
   console.log('Artifacts: ' + artifactRoot);
   try {
     browser = await openBrowser();
     const checks = await verify({ ...browser, baseUrl: 'http://127.0.0.1:' + server.address().port, artifactRoot });
     if (browser.exceptions.length) throw new Error('Unhandled browser exceptions: ' + JSON.stringify(browser.exceptions));
+    browser.recordFixtureOutcome(true);
     await writeFile(path.join(artifactRoot, 'results.json'), JSON.stringify({ checks, browserExceptions: browser.exceptions }, null, 2));
     console.log(`Passed ${checks.length} browser checks.`);
   } catch (error) {
+    fixtureError = error;
+    browser?.recordFixtureOutcome(false);
     if (browser) {
       try {
         console.error('Browser exceptions:', JSON.stringify(browser.exceptions));
@@ -208,6 +291,7 @@ export async function runBrowserFixture({ fixtureDirectory, fixtureFilename, art
     // promise forever — turning "the browser went away" into a hung run.
     server.closeAllConnections?.();
     await new Promise(resolve => server.close(resolve));
+    browser?.assertDiagnostics(fixtureError);
   }
 
 }
