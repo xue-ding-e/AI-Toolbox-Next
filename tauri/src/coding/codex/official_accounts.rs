@@ -821,15 +821,21 @@ async fn prepare_persisted_account_credential(
 }
 
 /// One controlled recovery after the usage endpoint rejected a credential:
-/// prefer a newer same-account runtime credential, otherwise force exactly one
-/// OAuth exchange. The exchange itself reports "sign in again" when the
-/// refresh token is gone or rejected.
+/// prefer a newer same-account runtime credential, then re-read under the lock.
+/// A concurrent recovery may already have replaced the rejected access token;
+/// only force an exchange when the current token is the one that got a 401.
+/// The exchange itself reports "sign in again" when the refresh token is gone
+/// or rejected.
 async fn recover_persisted_account_credential(
     db: &SqliteDbState,
     account_id: &str,
     attempted_auth: &Value,
 ) -> Result<PreparedOfficialCredential, String> {
     let account = load_official_account(db, account_id).await?;
+    let stored = stored_auth_from_account(&account)?;
+    if stored != *attempted_auth && !auth_identities_match(attempted_auth, &stored) {
+        return Err("The saved Codex login changed during the refresh; retry".to_string());
+    }
     if account.is_applied {
         if let Some(runtime_auth) = newer_runtime_credential(db, attempted_auth).await? {
             let updated = persist_refreshed_account_snapshot(db, &account, &runtime_auth).await?;
@@ -844,7 +850,21 @@ async fn recover_persisted_account_credential(
     let _refresh_guard = OAUTH_REFRESH_LOCK.lock().await;
     let (latest, base) =
         newest_account_credential(db, &load_official_account(db, account_id).await?).await?;
-    let next = exchange_official_auth_locked(db, &base, true).await?;
+    if base != *attempted_auth && !auth_identities_match(attempted_auth, &base) {
+        return Err("The saved Codex login changed during the refresh; retry".to_string());
+    }
+    // Compare the actual access token, not exp: rotations can have equal or
+    // absent expiry claims. The normal freshness check still handles an
+    // already-replaced token that is itself due for renewal.
+    let force = access_token_from_auth(&base)? == access_token_from_auth(attempted_auth)?;
+    let next = exchange_official_auth_locked(db, &base, force).await?;
+    if next == base {
+        return Ok(PreparedOfficialCredential {
+            account: latest,
+            auth: base,
+            runtime_written: false,
+        });
+    }
     let updated = persist_refreshed_account_snapshot(db, &latest, &next).await?;
     let runtime_written = write_runtime_credential_if_still_applied(db, account_id, &next).await?;
     Ok(PreparedOfficialCredential {
@@ -2770,6 +2790,9 @@ async fn prepare_local_credential(
         // and the answer would belong to a row that is no longer on screen.
         return Err("The local Codex login changed during the refresh; retry".to_string());
     }
+    // A waiting 401 belongs to `auth`, not automatically to the newer token
+    // another request may have persisted while this request waited for the lock.
+    let force = force && access_token_from_auth(&latest)? == access_token_from_auth(auth)?;
     let next = exchange_official_auth_locked(db, &latest, force).await?;
     let written = if next != latest {
         write_local_runtime_credential(db, &latest, &next).await?
@@ -4917,5 +4940,135 @@ mod usage_credential_tests {
             assert_eq!(server.usage_calls(), 1);
             assert_eq!(server.token_calls(), 0);
         }
+    }
+    #[tokio::test]
+    async fn followup_concurrent_401_reuses_already_recovered_credential() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let original = auth_with(&token("followup-401-old", 20 * 86400), "synthetic-401-old", "account-a");
+        let account = env.save_account(&original, false).await;
+        let first = token("followup-401-next", 30 * 86400);
+        let second = token("followup-401-extra", 40 * 86400);
+        let server = MockServer::start(
+            vec![reply(401, "{}"), reply(401, "{}"), ok_usage(12.0), ok_usage(12.0)],
+            vec![reply(200, token_body(&first, "synthetic-401-next")),
+                 reply(200, token_body(&second, "synthetic-401-extra"))],
+        );
+        set_test_endpoints(&server.usage_url, &server.token_url);
+        let oauth_guard = OAUTH_REFRESH_LOCK.lock().await;
+        let requests = async { tokio::join!(env.refresh(&account.id), env.refresh(&account.id)) };
+        tokio::pin!(requests);
+        tokio::select! {
+            _ = &mut requests => panic!("refreshes must wait for the held OAuth lock"),
+            waited = tokio::time::timeout(Duration::from_secs(5), async {
+                while server.usage_calls() < 2 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }) => waited.expect("both real usage requests reached the mock"),
+        }
+        assert_eq!(server.token_calls(), 0, "lock barrier must precede exchange");
+        drop(oauth_guard);
+        let (left, right) = tokio::time::timeout(Duration::from_secs(10), requests).await.expect("bounded concurrent completion");
+        left.expect("first recovered usage");
+        right.expect("second recovered usage");
+        let bodies = server.token_request_bodies();
+        assert_eq!(bodies.iter().filter(|body| body.contains("refresh_token=synthetic-401-old")).count(), 1,
+            "the original refresh token must never be spent twice");
+        // If only this assertion fails with two DIFFERENT refresh tokens, the
+        // finding is redundant exchange, not refresh-token replay/cross-account access.
+        assert_eq!(server.token_calls(), 1, "the waiting 401 must use the already recovered credential first");
+        assert_eq!(server.usage_calls(), 4);
+    }
+    async fn concurrent_401_rotation_case(local: bool, original_access: &str, next_access: &str) {
+        let env = TestEnv::new();
+        let original = auth_with(original_access, "synthetic-concurrent-old", "account-a");
+        let account = env.save_account(&original, false).await;
+        if local {
+            env.write_runtime_auth(&original);
+        }
+        let server = MockServer::start(
+            vec![reply(401, "{}"), reply(401, "{}"), ok_usage(12.0), ok_usage(12.0)],
+            vec![reply(200, token_body(next_access, "synthetic-concurrent-next")),
+                 reply(200, token_body("synthetic-unnecessary-access", "synthetic-unnecessary-refresh"))],
+        );
+        set_test_endpoints(&server.usage_url, &server.token_url);
+        let oauth_guard = OAUTH_REFRESH_LOCK.lock().await;
+        let refresh_once = || async {
+            if local {
+                refresh_local_account_usage(&env.db).await.map(|_| ())
+            } else {
+                env.refresh(&account.id).await.map(|_| ())
+            }
+        };
+        let requests = async { tokio::join!(refresh_once(), refresh_once()) };
+        tokio::pin!(requests);
+        tokio::select! {
+            _ = &mut requests => panic!("both refreshes must wait for the OAuth lock"),
+            waited = tokio::time::timeout(Duration::from_secs(5), async {
+                while server.usage_calls() < 2 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }) => waited.expect("both usage requests reached the server"),
+        }
+        assert_eq!(server.token_calls(), 0);
+        drop(oauth_guard);
+        let (left, right) = tokio::time::timeout(Duration::from_secs(10), requests).await.expect("bounded recovery");
+        left.expect("first usage succeeds");
+        right.expect("waiting usage succeeds");
+        assert_eq!(server.token_calls(), 1, "reuse changed access token without requiring later exp");
+        assert_eq!(server.usage_calls(), 4);
+        let headers = server.authorization_headers();
+        assert_eq!(&headers[..2], &[format!("Bearer {original_access}"), format!("Bearer {original_access}")]);
+        assert_eq!(&headers[2..], &[format!("Bearer {next_access}"), format!("Bearer {next_access}")]);
+        let final_auth = if local { env.read_runtime_auth() } else { env.stored_snapshot(&account.id).await };
+        assert_eq!(final_auth["tokens"]["access_token"], next_access);
+        assert_eq!(final_auth["tokens"]["refresh_token"], "synthetic-concurrent-next");
+    }
+
+    #[tokio::test]
+    async fn concurrent_401_reuses_equal_expiry_rotations_for_saved_and_local_accounts() {
+        let _guard = TEST_GUARD.lock().await;
+        let old = token("equal-exp-old", 20 * 86400);
+        // Only the synthetic signature differs; the exp payload is identical.
+        let next = old.strip_suffix("equal-exp-old").unwrap().to_string() + "equal-exp-next";
+        for local in [false, true] {
+            concurrent_401_rotation_case(local, &old, &next).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_401_forces_then_reuses_opaque_rotations_for_saved_and_local_accounts() {
+        let _guard = TEST_GUARD.lock().await;
+        for local in [false, true] {
+            concurrent_401_rotation_case(local, "synthetic-opaque-old", "synthetic-opaque-next").await;
+        }
+    }
+
+    #[tokio::test]
+    async fn local_401_replacement_that_is_expired_still_refreshes() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let first = auth_with(&token("local-expired-before", 20 * 86400), "synthetic-before", "account-a");
+        let expired = auth_with(&token("local-expired-next", -3600), "synthetic-expired-next", "account-a");
+        env.write_runtime_auth(&first);
+        let path = env._root.path().join("auth.json");
+        let mut rejected = reply(401, "{}");
+        rejected.before_reply = Some(Box::new(move || {
+            std::fs::write(&path, serde_json::to_vec(&expired).unwrap()).unwrap();
+        }));
+        let fresh = token("local-expired-recovered", 30 * 86400);
+        let server = MockServer::start(
+            vec![rejected, ok_usage(12.0)],
+            vec![reply(200, token_body(&fresh, "synthetic-expired-recovered"))],
+        );
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        let result = refresh_local_account_usage(&env.db).await.expect("expired replacement is renewed");
+
+        assert_eq!(result.credential["tokens"]["access_token"], fresh);
+        assert!(result.runtime_written);
+        assert_eq!(server.usage_calls(), 2);
+        assert_eq!(server.token_calls(), 1);
+        assert!(server.token_request_bodies()[0].contains("refresh_token=synthetic-expired-next"));
     }
 }
