@@ -696,3 +696,56 @@ async fn issue440_cancelled_usage_releases_locks_and_cannot_commit_late_success(
     assert_eq!(load_official_account(&db, &account.id).await.unwrap().credits.unwrap().balance, Some(42.5));
     assert_eq!(server.paths(), ["/usage", "/usage"]);
 }
+
+#[tokio::test]
+async fn issue440_rotation_survives_usage_timeout() {
+    let old = synthetic_auth("a", "before-timeout", -3600);
+    let new = synthetic_auth("a", "after-timeout", 10 * 86400);
+    let (db, account, _root) = fixture(&old, false).await;
+    let response = new.clone();
+    let observed_db = db.clone();
+    let id = account.id.clone();
+    let server = MockServer::new(move |request| {
+        if request.path == "/oauth/token" { return (200, token_response(&response)) }
+        assert_eq!(request.authorization, format!("Bearer {}", token(&response)));
+        let stored = observed_db.with_conn(|conn| db_get(conn, DbTable::CodexOfficialAccount, &id)).unwrap().unwrap();
+        let persisted: Value = serde_json::from_str(stored["auth_snapshot"].as_str().unwrap()).unwrap();
+        assert_eq!(persisted["tokens"], response["tokens"]);
+        std::thread::sleep(Duration::from_secs(4));
+        (200, usage_response())
+    });
+    let error = server.run(refresh_persisted_account_usage(&db, &account)).await.unwrap_err();
+    assert!(!error.contains("CODEX_REAUTH_REQUIRED"));
+    let stored = load_official_account(&db, &account.id).await.unwrap();
+    assert_eq!(auth_json_from_snapshot(stored.auth_snapshot.as_deref().unwrap()).unwrap()["tokens"], new["tokens"]);
+    assert!(stored.last_error.is_some());
+    assert!(stored.credits.is_none());
+    assert_eq!(server.paths(), ["/oauth/token", "/usage"]);
+}
+
+#[tokio::test]
+async fn issue440_local_401_has_one_bounded_recovery() {
+    for rejected_twice in [false, true] {
+        let old = synthetic_auth("a", &format!("local-rejected-{rejected_twice}"), 10 * 86400);
+        let new = synthetic_auth("a", &format!("local-recovered-{rejected_twice}"), 11 * 86400);
+        let (db, account, root) = fixture(&old, false).await;
+        db.with_conn(|conn| db_delete(conn, DbTable::CodexOfficialAccount, &account.id)).unwrap();
+        let response = new.clone();
+        let server = MockServer::new(move |request| {
+            if request.path == "/oauth/token" { return (200, token_response(&response)) }
+            assert_eq!(request.account_id, "a");
+            if !rejected_twice && request.authorization == format!("Bearer {}", token(&response)) {
+                (200, usage_response())
+            } else { (401, serde_json::json!({})) }
+        });
+        let mut wrote = false;
+        let result = server.run(usage_refresh::refresh_local(&db, "provider-a", &mut wrote)).await;
+        if rejected_twice { assert!(result.unwrap_err().contains("CODEX_REAUTH_REQUIRED")) }
+        else { assert_eq!(result.unwrap().credits.unwrap().balance, Some(42.5)) }
+        assert!(wrote);
+        assert_eq!(server.paths(), ["/usage", "/oauth/token", "/usage"]);
+        let live: Value = serde_json::from_str(&fs::read_to_string(root.path().join("auth.json")).unwrap()).unwrap();
+        assert_eq!(live["tokens"], new["tokens"]);
+        assert!(db.with_conn(|conn| db_list(conn, DbTable::CodexOfficialAccount, None)).unwrap().is_empty());
+    }
+}
