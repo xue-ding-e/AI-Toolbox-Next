@@ -21,7 +21,7 @@ spec = importlib.util.spec_from_file_location("reviewed_guards", HERE / "verify-
 guards = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guards)
 MANIFEST = json.loads((HERE / "codex-usage-440-full-manifest.json").read_text())
-REF = "refs/heads/validation/codex-440-upstream-full-20261025"
+REF = "refs/heads/validation/codex-440-recovery-full-20261025"
 
 
 def verify_source(root):
@@ -29,6 +29,7 @@ def verify_source(root):
         assert subprocess.check_output(["git", "rev-parse", expression], cwd=root, text=True).strip() == expected
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True).strip()
     assert json.loads((root / "package.json").read_text())["scripts"] == MANIFEST["scripts"]
+    verify_focused_source((root / MANIFEST["regressions"]["path"]).read_text())
     observed = []
     for path in sorted((root / "tauri").rglob("*.rs")):
         for line in path.read_text().splitlines():
@@ -125,16 +126,45 @@ def classify_focused(code, content, expected):
     return "passed"
 
 
-def verify_probe_source(root):
-    probe = MANIFEST["probe"]
-    for expression, expected in [("HEAD", probe["sha"]), ("HEAD^{tree}", probe["tree"]),
-                                 ("HEAD^", MANIFEST["product_sha"])]:
-        assert subprocess.check_output(["git", "rev-parse", expression], cwd=root, text=True).strip() == expected
-    assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True).strip()
-    changed = subprocess.check_output(["git", "diff", "--name-only", "HEAD^", "HEAD"], cwd=root, text=True).splitlines()
-    assert changed == [probe["path"]], "Probe must remain a one-file, test-only overlay"
-    delta = subprocess.check_output(["git", "diff", "--binary", "--full-index", "HEAD^", "HEAD", "--", probe["path"]], cwd=root)
-    assert hashlib.sha256(delta).hexdigest() == probe["delta_sha256"], "Reviewed test-only delta changed"
+def verify_focused_source(source):
+    # This sealed file has exactly these two test modules. Runtime --list still
+    # independently verifies every selected compiled identity before execution.
+    marker = "mod usage_credential_tests {"
+    assert source.count(marker) == 1 and source.count("mod tests {") == 1
+    before, credentials = source.split(marker, 1)
+    neighboring = before.split("mod tests {", 1)[1]
+    for key, section in [("usage-credentials", credentials), ("neighboring-accounts", neighboring)]:
+        selection = MANIFEST["focused"][key]
+        names = re.findall(r"#\[(?:tokio::)?test\]\s+(?:async\s+)?fn\s+(\w+)", section)
+        assert Counter(selection["prefix"] + name for name in names) == Counter(selection["tests"]), "Focused source inventory changed"
+    regressions = MANIFEST["regressions"]
+    selected = [name for name in MANIFEST["focused"]["usage-credentials"]["tests"] if name.startswith(regressions["prefix"])]
+    assert Counter(selected) == Counter(regressions["tests"]), "Permanent regression selection changed"
+    assert set(regressions["function_sha256"]) == set(regressions["tests"])
+    for name, expected in regressions["function_sha256"].items():
+        # Hash the original complete test function, including every assertion.
+        # A source-layout change must be reviewed/resealed, never guessed here.
+        short = name.rsplit("::", 1)[1]
+        start = source.index("    #[tokio::test]\n    async fn " + short + "(")
+        end = source.index("\n    }", start) + 6
+        assert hashlib.sha256(source[start:end].encode()).hexdigest() == expected, "Permanent regression assertions changed"
+
+
+def required_stage_names():
+    names = ["frontend-install", "frontend-tsc"]
+    names += [f"frontend-{index:02d}-{name.replace(':', '-')}" for index, name in enumerate(MANIFEST["test_chain"])]
+    names += ["frontend-build", "rust-default-compile"]
+    for label in MANIFEST["focused"]:
+        names += ["rust-product-" + label + "-inventory", "rust-product-" + label]
+    names += ["rust-product-regressions-inventory", "rust-product-regressions",
+              "rust-full-inventory", "rust-ignored-inventory", "rust-default-tests-and-docs"]
+    assert len(names) == len(set(names))
+    return names
+
+
+def verify_required_stages(results):
+    assert Counter(result["stage"] for result in results) == Counter(required_stage_names()), "Required stage missing or duplicated"
+    assert all(result["passed"] for result in results), "One or more required stages failed; see stage-results.json"
 
 
 def fresh_lib_artifact(content):
@@ -155,7 +185,6 @@ def fresh_lib_artifact(content):
 
 def run_validation(runtime_tmp):
     root, output, expected_sha = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
-    probe_root = Path(sys.argv[4]).resolve()
     assert re.fullmatch(r"[0-9a-f]{40}", expected_sha)
     driver_root = HERE.parents[1]
     assert os.environ.get("GITHUB_REPOSITORY") == "xue-ding-e/AI-Toolbox-Next"
@@ -163,7 +192,6 @@ def run_validation(runtime_tmp):
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=driver_root, text=True).strip() == expected_sha
     assert not subprocess.check_output(["git", "status", "--porcelain"], cwd=driver_root, text=True).strip()
     verify_source(root)
-    verify_probe_source(probe_root)
     output.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + 100 * 60
     command_records = []
@@ -265,8 +293,8 @@ def run_validation(runtime_tmp):
     env = isolated_env(output.parent / "private-full-profile", tools, runtime_tmp)
     (output / "source-and-plan.json").write_text(json.dumps({"driver_sha": expected_sha, "manifest": MANIFEST, "tools": tools,
         "runtime_tmpdir": str(runtime_tmp), "runtime_tmpdir_scope": "Owned random 0700 directory, removed after owned child cleanup; not a real user profile",
-        "budgets_seconds": {"total": 6000, "install": 600, "tsc": 300, "each_frontend_script": 600, "official_edit_script": 900, "build": 600, "compile": 1800, "focused_inventory": 120, "focused_execution": 180, "rust_default_tests_and_docs": 1200, "probe_compile": 1800},
-        "scope": "Sealed product: Linux default cargo targets/docs and complete pnpm test chain; focused 19+31 are additional evidence, not full-suite substitutes. Separate test-only probe overlay has its own SHA/binary/results. No live OAuth or Windows acceptance."}, indent=2) + "\n")
+        "budgets_seconds": {"total": 6000, "install": 600, "tsc": 300, "each_frontend_script": 600, "official_edit_script": 900, "build": 600, "compile": 1800, "focused_inventory": 120, "focused_execution": 180, "rust_default_tests_and_docs": 1200},
+        "scope": "Sealed product: Linux default cargo targets/docs and complete pnpm test chain; focused 30+31 and the three permanent baseline-RED regressions are additional evidence, not full-suite substitutes. The same sealed product binary runs all selections; no test-only overlay. No live OAuth or Windows acceptance."}, indent=2) + "\n")
     code, _ = checked(["pnpm", "install", "--frozen-lockfile"], "frontend-install", 600, env, "dependency-environment")
     if code == 0:
         checked(["pnpm", "exec", "tsc", "--noEmit"], "frontend-tsc", 300, env, "typecheck")
@@ -294,6 +322,7 @@ def run_validation(runtime_tmp):
         product_lib = fresh_lib_artifact(content)
         for label, selection in MANIFEST["focused"].items():
             focused(product_lib["binary"], selection, "rust-product-" + label, root)
+        focused(product_lib["binary"], MANIFEST["regressions"], "rust-product-regressions", root)
         code, content = checked(cargo + ["--", "--list"], "rust-full-inventory", 180, env, "inventory-not-execution")
         assert code == 0
         inventory = full_inventory(content)
@@ -311,25 +340,10 @@ def run_validation(runtime_tmp):
         for artifact in artifacts:
             assert hashlib.sha256(Path(artifact["binary"]).read_bytes()).hexdigest() == artifact["sha256"]
     verify_source(root)
-    product_passed = all(result["passed"] for result in results) and len(results) == len(MANIFEST["test_chain"]) + 11
-    if product_passed:
-        (output / "PRODUCT-PASS.txt").write_text("Sealed product passed full Linux/default-docs and complete pnpm tests; separate probes are not part of this result.\n")
-    # The test-only overlay never changes the product checkout. A shared target
-    # directory is used strictly serially; record/verify product binaries above
-    # before this fresh overlay compilation can replace any artifact path.
-    verify_probe_source(probe_root)
-    guards.admit(probe_root)
-    code, content = checked(cargo + ["--lib", "--no-run", "--message-format=json"], "rust-probe-compile", 1800, env, "probe-compile-not-product", probe_root)
-    if code == 0:
-        probe_lib = fresh_lib_artifact(content)
-        (output / "probe-binary-identity.json").write_text(json.dumps(probe_lib, indent=2) + "\n")
-        focused(probe_lib["binary"], MANIFEST["probe"], "rust-followup-probes", probe_root)
-        assert hashlib.sha256(Path(probe_lib["binary"]).read_bytes()).hexdigest() == probe_lib["sha256"]
-    verify_source(root)
-    verify_probe_source(probe_root)
-    assert all(result["passed"] for result in results), "One or more required stages failed; see stage-results.json"
-    assert len(results) == len(MANIFEST["test_chain"]) + 14, "Required stage missing"
-    (output / "PASS.txt").write_text("Sealed Linux product/default cargo/docs, complete pnpm chain, and separately identified test-only probes passed. Not Windows/live OAuth acceptance.\n")
+    verify_required_stages(results)
+    message = "Sealed Linux product/default cargo/docs, complete pnpm chain, focused 30+31 and permanent baseline-RED regressions passed on the same product binary. Not Windows/live OAuth acceptance.\n"
+    (output / "PRODUCT-PASS.txt").write_text(message)
+    (output / "PASS.txt").write_text(message)
 
 
 def main():

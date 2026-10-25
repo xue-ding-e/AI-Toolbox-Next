@@ -1,5 +1,6 @@
 """Only static/synthetic driver tests; no Cargo, browser, network or live profiles."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -165,13 +166,16 @@ class FullDriverTests(unittest.TestCase):
         for case in driver.MANIFEST['ignored']:
             self.assertIn(case['context'], (root / case['path']).read_text())
 
-    def test_upstream_focused_and_probe_inventory_are_nonempty_and_distinct(self):
-        self.assertEqual([len(case['tests']) for case in driver.MANIFEST['focused'].values()], [19, 31])
-        self.assertEqual(len(driver.MANIFEST['probe']['tests']), 3)
+    def test_permanent_regressions_are_in_the_full_product_inventory(self):
+        self.assertEqual([len(case['tests']) for case in driver.MANIFEST['focused'].values()], [30, 31])
+        regressions = driver.MANIFEST['regressions']
+        self.assertEqual(len(regressions['tests']), 3)
         names = [name for case in driver.MANIFEST['focused'].values() for name in case['tests']]
-        names += driver.MANIFEST['probe']['tests']
         self.assertEqual(len(names), len(set(names)))
-        self.assertNotEqual(driver.MANIFEST['probe']['sha'], driver.MANIFEST['product_sha'])
+        self.assertTrue(set(regressions['tests']) < set(names))
+        self.assertEqual(set(regressions['function_sha256']), set(regressions['tests']))
+        self.assertEqual(regressions['red_run_id'], 40223996205)
+        self.assertNotIn('probe', driver.MANIFEST)
 
     def test_focused_runtime_inventory_rejects_missing_duplicate_and_extra(self):
         driver.verify_focused_inventory('a: test\nb: test\n', ['a', 'b'])
@@ -204,33 +208,69 @@ class FullDriverTests(unittest.TestCase):
         self.assertEqual(driver.classify_focused(101, 'test result: FAILED', ['a']), 'test-failure')
         self.assertEqual(driver.classify_focused(1, 'timeout', ['a']), 'environment-or-unclassified-failure')
 
-    def test_new_workflow_is_pinned_to_product_and_separate_probe(self):
+    def test_new_workflow_pins_one_product_without_an_overlay_checkout(self):
         root = HERE.parents[1]
         workflow = (root / '.github/workflows/maintenance-validation.yml').read_text().split('  codex-usage-440-full-product:', 1)[1]
         self.assertIn(driver.REF, workflow)
         self.assertIn('ref: ' + driver.MANIFEST['product_sha'], workflow)
-        self.assertIn('ref: ' + driver.MANIFEST['probe']['sha'], workflow)
-        self.assertIn('fetch-depth: 2', workflow)
-        self.assertIn('product evidence "$EXPECTED_VALIDATION_SHA" probes', workflow)
+        self.assertIn('product evidence "$EXPECTED_VALIDATION_SHA" 2>&1', workflow)
+        self.assertNotIn('path: probes', workflow)
+        self.assertNotIn('ref: ' + driver.MANIFEST['regressions']['red_probe_sha'], workflow)
         self.assertNotIn('ed843373628fed574c20d61ffa259a01bd0c60ee', workflow)
+        source = (HERE / 'verify-codex-usage-440-full.py').read_text()
+        self.assertIn('focused(product_lib["binary"], MANIFEST["regressions"]', source)
+        self.assertNotIn('rust-probe-compile', source)
 
-    def test_probe_source_rejects_any_changed_tree_or_non_test_delta(self):
-        probe = driver.MANIFEST['probe']
-        base_answers = [probe['sha'], probe['tree'], driver.MANIFEST['product_sha'], '', probe['path']]
-        from hashlib import sha256
-        delta = b'synthetic test-only patch'
-        with patch.dict(probe, {'delta_sha256': sha256(delta).hexdigest()}):
-            with patch.object(driver.subprocess, 'check_output', side_effect=base_answers + [delta]):
-                driver.verify_probe_source(Path('/synthetic'))
-            for index in range(5):
-                answers = list(base_answers)
-                answers[index] = 'unexpected'
-                with patch.object(driver.subprocess, 'check_output', side_effect=answers + [delta]):
-                    with self.assertRaises(AssertionError):
-                        driver.verify_probe_source(Path('/synthetic'))
-            with patch.object(driver.subprocess, 'check_output', side_effect=base_answers + [b'changed']):
+    def test_product_source_rejects_wrong_sha_tree_or_dirty_checkout(self):
+        base_answers = [driver.MANIFEST['product_sha'], driver.MANIFEST['product_tree'], '']
+        for index in range(3):
+            answers = list(base_answers)
+            answers[index] = 'unexpected'
+            with patch.object(driver.subprocess, 'check_output', side_effect=answers):
                 with self.assertRaises(AssertionError):
-                    driver.verify_probe_source(Path('/synthetic'))
+                    driver.verify_source(Path('/synthetic'))
+
+    def source_fixture(self):
+        function = '    #[tokio::test]\n    async fn followup_regression() {\n        assert_eq!(1, 1);\n    }'
+        source = 'mod tests {\n    #[test]\n    fn adjacent() {}\n}\nmod usage_credential_tests {\n' + function + '\n}\n'
+        focused = {
+            'usage-credentials': {'prefix': 'usage::', 'tests': ['usage::followup_regression']},
+            'neighboring-accounts': {'prefix': 'tests::', 'tests': ['tests::adjacent']},
+        }
+        regressions = {'prefix': 'usage::followup_', 'tests': ['usage::followup_regression'],
+                       'function_sha256': {'usage::followup_regression': hashlib.sha256(function.encode()).hexdigest()}}
+        return source, {'focused': focused, 'regressions': regressions}
+
+    def test_focused_source_requires_exact_inventory_and_unchanged_assertions(self):
+        source, manifest = self.source_fixture()
+        with patch.dict(driver.MANIFEST, manifest):
+            driver.verify_focused_source(source)
+            for changed in [source.replace('#[test]', ''),
+                            source.replace('    fn adjacent() {}', '    fn adjacent() {}\n    #[test]\n    fn extra() {}'),
+                            source.replace('assert_eq!(1, 1);', 'assert_eq!(1, 2);'),
+                            source.replace('followup_regression()', 'renamed_regression()')]:
+                with self.assertRaises(AssertionError):
+                    driver.verify_focused_source(changed)
+
+    def test_regressions_cannot_be_removed_from_the_selected_product_tests(self):
+        source, manifest = self.source_fixture()
+        manifest['regressions']['tests'] = []
+        with patch.dict(driver.MANIFEST, manifest), self.assertRaises(AssertionError):
+            driver.verify_focused_source(source)
+
+    def test_required_stages_include_regressions_and_reject_missing_duplicate_or_failed(self):
+        stages = driver.required_stage_names()
+        self.assertEqual(len(stages), 41)
+        self.assertIn('rust-product-regressions-inventory', stages)
+        self.assertIn('rust-product-regressions', stages)
+        self.assertIn('rust-default-tests-and-docs', stages)
+        self.assertNotIn('rust-probe-compile', stages)
+        results = [{'stage': name, 'passed': True} for name in stages]
+        driver.verify_required_stages(results)
+        for changed in [results[:-1], results + [results[0]],
+                        [dict(result, passed=False) if result['stage'] == 'rust-product-regressions' else result for result in results]]:
+            with self.assertRaises(AssertionError):
+                driver.verify_required_stages(changed)
 
     def test_lib_artifact_requires_a_fresh_actual_test_executable(self):
         artifact = {'reason': 'compiler-artifact', 'profile': {'test': True},

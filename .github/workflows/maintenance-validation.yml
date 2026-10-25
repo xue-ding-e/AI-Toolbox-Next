@@ -626,7 +626,7 @@ jobs:
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
   codex-usage-440-full-product:
     # Driver is isolated from the product checkout and is never delivered to main.
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/codex-440-upstream-full-20261025' && github.sha == inputs.expected_sha
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/codex-440-recovery-full-20261025' && github.sha == inputs.expected_sha
     runs-on: ubuntu-22.04
     timeout-minutes: 115
     env:
@@ -649,14 +649,8 @@ jobs:
           python3 -B driver/.github/scripts/verify-codex-usage-440.py --admission "$GITHUB_WORKSPACE" | tee evidence/admission-initial.log
       - uses: actions/checkout@v4
         with:
-          ref: 2f9f378a9a32d0d5386a3dd725fe8432c073cb81
+          ref: 1fcb0c30636289f7fdacd674609040931d63fe84
           path: product
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          ref: 12e9811fb33e2bd8127cb3538649bfe6d9dec564
-          path: probes
-          fetch-depth: 2
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
@@ -680,11 +674,11 @@ jobs:
         timeout-minutes: 102
         run: |
           set -euo pipefail
-          python3 -B driver/.github/scripts/verify-codex-usage-440-full.py product evidence "$EXPECTED_VALIDATION_SHA" probes 2>&1 | tee evidence/driver.log
+          python3 -B driver/.github/scripts/verify-codex-usage-440-full.py product evidence "$EXPECTED_VALIDATION_SHA" 2>&1 | tee evidence/driver.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: codex-usage-440-upstream-product-and-probe-evidence
+          name: codex-usage-440-recovery-product-evidence
           retention-days: 7
           if-no-files-found: warn
           path: |

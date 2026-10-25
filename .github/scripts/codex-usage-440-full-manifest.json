@@ -1,6 +1,6 @@
 {
-  "product_sha": "2f9f378a9a32d0d5386a3dd725fe8432c073cb81",
-  "product_tree": "4ebd7e6962f0341dd1ffd62efe41b805ae127af9",
+  "product_sha": "1fcb0c30636289f7fdacd674609040931d63fe84",
+  "product_tree": "96ce21ea8415e1da155c00ad2fb96706db99c2b7",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -209,7 +209,18 @@
         "coding::codex::official_accounts::usage_credential_tests::runtime_write_is_skipped_when_the_account_was_switched_away",
         "coding::codex::official_accounts::usage_credential_tests::missing_or_broken_snapshot_sends_no_usage_request",
         "coding::codex::official_accounts::usage_credential_tests::account_header_comes_from_the_recovered_credential",
-        "coding::codex::official_accounts::usage_credential_tests::failed_refresh_keeps_previous_usage_and_records_the_error"
+        "coding::codex::official_accounts::usage_credential_tests::failed_refresh_keeps_previous_usage_and_records_the_error",
+        "coding::codex::official_accounts::usage_credential_tests::followup_shared_workspace_different_user_is_not_adopted",
+        "coding::codex::official_accounts::usage_credential_tests::identity_matching_preserves_stable_user_and_legacy_fallbacks",
+        "coding::codex::official_accounts::usage_credential_tests::same_user_changed_email_runtime_rotation_is_adopted",
+        "coding::codex::official_accounts::usage_credential_tests::followup_local_success_after_runtime_switch_is_rejected",
+        "coding::codex::official_accounts::usage_credential_tests::local_success_allows_same_identity_token_rotation",
+        "coding::codex::official_accounts::usage_credential_tests::local_success_rejects_root_switch_even_for_the_same_identity",
+        "coding::codex::official_accounts::usage_credential_tests::local_success_rejects_missing_or_malformed_runtime_without_rewriting_it",
+        "coding::codex::official_accounts::usage_credential_tests::followup_concurrent_401_reuses_already_recovered_credential",
+        "coding::codex::official_accounts::usage_credential_tests::concurrent_401_reuses_equal_expiry_rotations_for_saved_and_local_accounts",
+        "coding::codex::official_accounts::usage_credential_tests::concurrent_401_forces_then_reuses_opaque_rotations_for_saved_and_local_accounts",
+        "coding::codex::official_accounts::usage_credential_tests::local_401_replacement_that_is_expired_still_refreshes"
       ]
     },
     "neighboring-accounts": {
@@ -249,18 +260,22 @@
       ]
     }
   },
-  "probe": {
-    "sha": "12e9811fb33e2bd8127cb3538649bfe6d9dec564",
-    "tree": "68af030c0c2d9ddaaff4844448a358a739f72648",
+  "regressions": {
     "path": "tauri/src/coding/codex/official_accounts.rs",
-    "delta_sha256": "a04467a8c943893112af76f20940c857132a98c2667362a2555714cae0ed56e3",
     "prefix": "coding::codex::official_accounts::usage_credential_tests::followup_",
     "tests": [
       "coding::codex::official_accounts::usage_credential_tests::followup_shared_workspace_different_user_is_not_adopted",
       "coding::codex::official_accounts::usage_credential_tests::followup_local_success_after_runtime_switch_is_rejected",
       "coding::codex::official_accounts::usage_credential_tests::followup_concurrent_401_reuses_already_recovered_credential"
     ],
-    "source_commit": "6bdf35214fd523c0f79ba6f852723e15cbb7b008",
-    "scope": "Only cfg(test) usage_credential_tests overlay; assertions unexecuted when sealed, not established product defects."
+    "function_sha256": {
+      "coding::codex::official_accounts::usage_credential_tests::followup_shared_workspace_different_user_is_not_adopted": "9ef139691bcaf12727bd3f25eb9f5439e1b899a89964890a651bd827aedd9b74",
+      "coding::codex::official_accounts::usage_credential_tests::followup_local_success_after_runtime_switch_is_rejected": "52edaeac0cba68a917fda191ac1e2b874373c4bf8b229c33251c7caef75abac7",
+      "coding::codex::official_accounts::usage_credential_tests::followup_concurrent_401_reuses_already_recovered_credential": "1124f7e6a5a09ef0bafb103be553e97841466557afae81af35fae0e2af51da70"
+    },
+    "baseline_product_sha": "2f9f378a9a32d0d5386a3dd725fe8432c073cb81",
+    "red_probe_sha": "12e9811fb33e2bd8127cb3538649bfe6d9dec564",
+    "red_run_id": 40223996205,
+    "scope": "Permanent product regressions retain the exact functions that failed on the baseline probe. Run separately from the same product binary and again in the full default suite; no overlay compilation. Local stale-success rejection is a defensive current-request contract, not evidence of runtime overwrite or cross-account display."
   }
 }
