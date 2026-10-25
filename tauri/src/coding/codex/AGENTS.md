@@ -73,6 +73,7 @@ sequenceDiagram
 - **OAuth 锁内必须重读**：`OAUTH_REFRESH_LOCK` 只提供互斥，不提供新鲜度。进入锁后要重新读取持久化/运行时凭证再判断 `exp`，否则两个并发刷新会先后消费同一个 refresh token（第二个会拿到 `refresh_token_reused`）。`ensure_fresh_official_runtime_auth` 现在只做「判断 + 拿锁 + 调用 locked 版本」；需要强制续期时直接调 `exchange_official_auth_locked(db, auth, true)`。
 - **401 恢复有明确上限**：usage 请求返回 `UsageRequestError`（保留 HTTP status），只有 401 触发 `recover_persisted_account_credential` / `prepare_local_credential(force)`，且只重试一次；第二次 401 或 refresh token 缺失/被拒统一返回 `codex_reauth_error`（带 `codex_reauth_required:` 前缀）。**超时 / 429 / 5xx / JSON 解析失败一律不交换 token**，保留原有语义。`ensure_fresh` 只看 `exp`，对「未过期但被服务端拒绝」的 token 是空操作，这正是必须有强制续期分支的原因。
 - **写 live 前再确认归属**：`write_runtime_credential_if_still_applied` 会重新加载账号并核对 `is_applied` 与 runtime 身份。用户在 await 期间切走账号时函数返回 `false`、不改文件；不要为了「保证写入成功」去掉这层检查。
+- **当前本地请求的过期结果防御**：`__local__` usage 成功后核对当前 root 和登录身份，已切换/删除/损坏时返回重试错误，不写回旧结果；同身份 token 正常轮换仍可返回，usage 始终配对实际回答请求的 credential。这是当前请求一致性防御，不等于已证实跨账号显示或覆盖写；前端 identity fence 仍须保留。
 - **写 live 必须发同步事件**：`prepare_*` / `recover_*` 返回的 `runtime_written` 为真时，命令层要调 `emit_runtime_credential_changed`（`config-changed` + Windows 下的 `wsl-sync-request-codex`），与 apply 对齐；后台 pass 用一个累积 flag 在循环结束后发一次。漏掉会让托盘和 WSL 副本继续持有旧 token。
 - **后台 pass 必须走同一套准备逻辑**：`refresh_applied_codex_accounts_if_needed` 现在直接调 `prepare_persisted_account_credential`。不要为它另写一份「先读 snapshot 再 ensure_fresh」的简版——那正是旧实现让 DB 永久落后于 runtime 的原因。
 - `codex_reauth_required:` 是前后端契约：前端 `formatCodexOfficialAccountError` 只把这一前缀换成 `codex.provider.officialAccountReauthRequired` 的本地化文案，其余错误原样展示。后端错误文案可以改，前缀不能改。

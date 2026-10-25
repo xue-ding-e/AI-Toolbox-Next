@@ -2681,8 +2681,10 @@ struct LocalUsageResult {
 }
 
 /// Usage for the `__local__` virtual account. The runtime credential is rotated
-/// and written back like any applied account: it *is* the login.
+/// and written back like any applied account: it *is* the login. A successful
+/// response is accepted only while that login and root are still current.
 async fn refresh_local_account_usage(db: &SqliteDbState) -> Result<LocalUsageResult, String> {
+    let auth_root = codex_auth_root(Some(db)).await?;
     let auth = read_auth_json_from_disk(Some(db)).await?;
     if !auth_has_official_runtime(&auth) {
         return Err(
@@ -2690,7 +2692,7 @@ async fn refresh_local_account_usage(db: &SqliteDbState) -> Result<LocalUsageRes
         );
     }
     let (mut credential, mut runtime_written) = prepare_local_credential(db, &auth, false).await?;
-    match request_usage_from_local(db, &credential).await {
+    let result = match request_usage_from_local(db, &credential).await {
         Ok(usage) => Ok(LocalUsageResult {
             credential,
             usage,
@@ -2718,7 +2720,18 @@ async fn refresh_local_account_usage(db: &SqliteDbState) -> Result<LocalUsageRes
                 })
         }
         Err(error) => Err(error.message),
+    }?;
+    let current_auth = read_auth_json_from_disk(Some(db)).await?;
+    if codex_auth_root(Some(db)).await? != auth_root
+        || !auth_has_official_runtime(&current_auth)
+        || (current_auth != result.credential
+            && !auth_identities_match(&result.credential, &current_auth))
+    {
+        // This is a stale-result guard, not a claim of atomic exclusion with
+        // external writers. Same-login token rotation remains a valid result.
+        return Err("The local Codex login changed during the refresh; retry".to_string());
     }
+    Ok(result)
 }
 
 async fn request_usage_from_local(
@@ -3773,6 +3786,7 @@ mod usage_credential_tests {
     struct MockReply {
         status: u16,
         body: String,
+        before_reply: Option<Box<dyn Fn() + Send>>,
     }
 
     /// Distinct email per account id keeps the identity checks meaningful: with
@@ -3863,10 +3877,16 @@ mod usage_credential_tests {
                     let (status, body) = if request.path.contains("/oauth/token") {
                         let index = token_thread.fetch_add(1, Ordering::SeqCst);
                         let reply = &token_replies[index];
+                        if let Some(before_reply) = &reply.before_reply {
+                            before_reply();
+                        }
                         (reply.status, reply.body.clone())
                     } else {
                         let index = usage_thread.fetch_add(1, Ordering::SeqCst);
                         let reply = &usage_replies[index];
+                        if let Some(before_reply) = &reply.before_reply {
+                            before_reply();
+                        }
                         (reply.status, reply.body.clone())
                     };
                     requests_thread.lock().expect("requests lock").push(request);
@@ -3976,6 +3996,7 @@ mod usage_credential_tests {
         MockReply {
             status,
             body: body.into(),
+            before_reply: None,
         }
     }
 
@@ -4789,5 +4810,112 @@ mod usage_credential_tests {
         assert_eq!(server.authorization_headers(), vec![format!("Bearer {}", rotated["tokens"]["access_token"].as_str().unwrap())]);
         assert_eq!(server.token_calls(), 0);
         assert_eq!(env.read_runtime_auth(), rotated);
+    }
+    #[tokio::test]
+    async fn followup_local_success_after_runtime_switch_is_rejected() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let first = auth_with(&token("followup-local-a", 20 * 86400), "synthetic-local-a", "account-a");
+        let second = auth_with(&token("followup-local-b", 30 * 86400), "synthetic-local-b", "account-b");
+        env.write_runtime_auth(&first);
+        let path = env._root.path().join("auth.json");
+        let replacement = second.clone();
+        let mut delayed = ok_usage(12.0);
+        delayed.before_reply = Some(Box::new(move || {
+            // An external runtime switches after the production HTTP request
+            // arrives, before the response reaches the awaiting refresh.
+            std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+        }));
+        let server = MockServer::start(vec![delayed], Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        let result = refresh_local_account_usage(&env.db).await;
+
+        assert_eq!(env.read_runtime_auth(), second, "the new runtime must remain unchanged");
+        assert_eq!(server.usage_calls(), 1);
+        assert_eq!(server.token_calls(), 0);
+        // A failure here demonstrates a stale successful __local__ result,
+        // NOT a claim that the runtime was overwritten.
+        assert!(result.is_err(), "late usage for a replaced local login must not be reported as current success");
+    }
+
+    #[tokio::test]
+    async fn local_success_allows_same_identity_token_rotation() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let first = auth_with(&token("local-rotation-old", 20 * 86400), "synthetic-local-old", "account-a");
+        let rotated = auth_with(&token("local-rotation-next", 30 * 86400), "synthetic-local-next", "account-a");
+        env.write_runtime_auth(&first);
+        let path = env._root.path().join("auth.json");
+        let replacement = rotated.clone();
+        let mut delayed = ok_usage(12.0);
+        delayed.before_reply = Some(Box::new(move || {
+            std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+        }));
+        let server = MockServer::start(vec![delayed], Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        let result = refresh_local_account_usage(&env.db).await.expect("same login remains current");
+
+        assert_eq!(result.credential, first, "usage stays paired with the answering credential");
+        assert_eq!(env.read_runtime_auth(), rotated);
+        assert!(!result.runtime_written);
+        assert_eq!(server.usage_calls(), 1);
+        assert_eq!(server.token_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn local_success_rejects_root_switch_even_for_the_same_identity() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let auth = auth_with(&token("local-root", 20 * 86400), "synthetic-local-root", "account-a");
+        env.write_runtime_auth(&auth);
+        let other_root = tempfile::tempdir().expect("other synthetic root");
+        let other_path = other_root.path().to_path_buf();
+        std::fs::write(other_path.join("auth.json"), serde_json::to_vec(&auth).unwrap()).unwrap();
+        let mut delayed = ok_usage(12.0);
+        delayed.before_reply = Some(Box::new(move || {
+            *TEST_AUTH_ROOT.lock().expect("test auth root lock") = Some(other_path.clone());
+        }));
+        let server = MockServer::start(vec![delayed], Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        let result = refresh_local_account_usage(&env.db).await;
+
+        assert!(result.is_err(), "a different current root needs its own refresh");
+        assert_eq!(env.read_runtime_auth(), auth);
+        assert_eq!(serde_json::from_slice::<Value>(&std::fs::read(other_root.path().join("auth.json")).unwrap()).unwrap(), auth);
+        assert_eq!(server.usage_calls(), 1);
+        assert_eq!(server.token_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn local_success_rejects_missing_or_malformed_runtime_without_rewriting_it() {
+        let _guard = TEST_GUARD.lock().await;
+        for malformed in [false, true] {
+            let env = TestEnv::new();
+            let auth = auth_with(&token("local-removed", 20 * 86400), "synthetic-local-removed", "account-a");
+            env.write_runtime_auth(&auth);
+            let path = env._root.path().join("auth.json");
+            let mut delayed = ok_usage(12.0);
+            delayed.before_reply = Some(Box::new(move || {
+                if malformed {
+                    std::fs::write(&path, b"{").unwrap();
+                } else {
+                    std::fs::remove_file(&path).unwrap();
+                }
+            }));
+            let server = MockServer::start(vec![delayed], Vec::new());
+            set_test_endpoints(&server.usage_url, &server.token_url);
+
+            assert!(refresh_local_account_usage(&env.db).await.is_err());
+            if malformed {
+                assert_eq!(std::fs::read(env._root.path().join("auth.json")).unwrap(), b"{");
+            } else {
+                assert!(!env._root.path().join("auth.json").exists());
+            }
+            assert_eq!(server.usage_calls(), 1);
+            assert_eq!(server.token_calls(), 0);
+        }
     }
 }
