@@ -631,18 +631,42 @@ fn auth_email(auth: &Value) -> Option<String> {
         .filter(|email| !email.is_empty())
 }
 
-/// Two credentials belong to the same ChatGPT login.
+fn auth_user_id(auth: &Value) -> Option<String> {
+    ["/tokens/id_token", "/tokens/access_token"]
+        .into_iter()
+        .find_map(|path| {
+            auth.pointer(path)
+                .and_then(Value::as_str)
+                .map(parse_id_token)
+                .and_then(|parsed| parsed.chatgpt_user_id)
+                .map(|user_id| user_id.trim().to_string())
+                .filter(|user_id| !user_id.is_empty())
+        })
+}
+
+/// Two credentials belong to the same ChatGPT login and workspace.
 ///
 /// Refresh tokens are compared last on purpose: rotation legitimately changes
-/// them, so an equal account id or email must win.
+/// them. A workspace can contain several users, so matching workspace ids must
+/// not hide conflicting user ids or emails. Stable explicit user ids take
+/// precedence over email, which can legitimately change for the same user.
 fn auth_identities_match(left: &Value, right: &Value) -> bool {
-    if let (Some(left_id), Some(right_id)) =
-        (usage_account_id_from_auth(left), usage_account_id_from_auth(right))
-    {
-        return left_id == right_id;
+    let workspace_ids = (usage_account_id_from_auth(left), usage_account_id_from_auth(right));
+    if let (Some(left_id), Some(right_id)) = &workspace_ids {
+        if left_id != right_id {
+            return false;
+        }
+    }
+    if let (Some(left_user), Some(right_user)) = (auth_user_id(left), auth_user_id(right)) {
+        return left_user == right_user;
     }
     if let (Some(left_email), Some(right_email)) = (auth_email(left), auth_email(right)) {
         return left_email == right_email;
+    }
+    // Preserve compatibility with older snapshots that carry only a workspace
+    // id, but never let that fallback override the stronger comparisons above.
+    if matches!(workspace_ids, (Some(_), Some(_))) {
+        return true;
     }
     match (auth_refresh_token(left), auth_refresh_token(right)) {
         (Some(left_token), Some(right_token)) => left_token == right_token,
@@ -4673,5 +4697,97 @@ mod usage_credential_tests {
         assert_eq!(stored.last_limits_fetched_at, first_fetched_at);
         // Credits are the exception: the cached balance is invalidated.
         assert_eq!(stored.credits, None);
+    }
+    // These follow-ups are adapted from the synthetic issue440 regressions in
+    // xue-ding-e/AI-Toolbox-Next ed843373, not from private account data. They run
+    // the production usage entry points; a failed assertion is not a compile
+    // result and each scenario distinguishes its actual effect.
+    fn followup_identity_auth(user: &str, expires_in: i64) -> Value {
+        let payload = serde_json::json!({
+            "exp": chrono::Utc::now().timestamp() + expires_in,
+            "sub": user,
+            "email": format!("{user}@example.invalid"),
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "synthetic-shared-workspace",
+                "chatgpt_user_id": user,
+                "chatgpt_plan_type": "team"
+            }
+        });
+        let jwt = format!("e30.{}.synthetic", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string()));
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {"access_token": jwt, "id_token": jwt,
+                "refresh_token": format!("synthetic-refresh-{user}"),
+                "account_id": "synthetic-shared-workspace"}
+        })
+    }
+
+    #[tokio::test]
+    async fn followup_shared_workspace_different_user_is_not_adopted() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = followup_identity_auth("synthetic-user-a", 20 * 86400);
+        let other_user = followup_identity_auth("synthetic-user-b", 30 * 86400);
+        let account = env.save_account(&stored, true).await;
+        env.write_runtime_auth(&other_user);
+        let server = MockServer::start(vec![ok_usage(12.0)], Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        env.refresh(&account.id).await.expect("own credential usage");
+
+        // This is an identity isolation assertion, not an exchange-count test:
+        // a workspace id must not authorize adopting another user's tokens.
+        assert_eq!(env.stored_snapshot(&account.id).await, stored,
+            "same workspace but different explicit user must not replace saved credentials");
+        assert_eq!(server.authorization_headers(), vec![format!("Bearer {}", stored["tokens"]["access_token"].as_str().unwrap())]);
+        assert_eq!(server.token_calls(), 0);
+        assert_eq!(env.read_runtime_auth(), other_user);
+    }
+
+    fn identity_auth_with_claims(user: Option<&str>, email: Option<&str>, workspace: Option<&str>) -> Value {
+        let payload = serde_json::json!({
+            "email": email,
+            "https://api.openai.com/auth": {"chatgpt_user_id": user, "chatgpt_account_id": workspace}
+        });
+        let jwt = format!("e30.{}.synthetic", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string()));
+        serde_json::json!({"tokens": {"id_token": jwt, "refresh_token": "synthetic-legacy-refresh"}})
+    }
+
+    #[test]
+    fn identity_matching_preserves_stable_user_and_legacy_fallbacks() {
+        let auth = |user, email, workspace| identity_auth_with_claims(user, email, workspace);
+        let a = auth(Some("user-a"), Some("old@example.invalid"), Some("workspace-a"));
+        assert!(auth_identities_match(&a, &auth(Some("user-a"), Some("new@example.invalid"), Some("workspace-a"))));
+        assert!(!auth_identities_match(&a, &auth(Some("user-b"), Some("old@example.invalid"), Some("workspace-a"))));
+        assert!(!auth_identities_match(&a, &auth(Some("user-a"), Some("old@example.invalid"), Some("workspace-b"))));
+        assert!(auth_identities_match(&auth(None, Some(" USER@EXAMPLE.INVALID "), None), &auth(None, Some("user@example.invalid"), None)));
+        assert!(!auth_identities_match(&auth(None, Some("a@example.invalid"), Some("workspace-a")), &auth(None, Some("b@example.invalid"), Some("workspace-a"))));
+        assert!(auth_identities_match(&auth(None, None, Some("workspace-a")), &auth(None, None, Some("workspace-a"))));
+        assert!(auth_identities_match(&auth(None, None, None), &auth(None, None, None)));
+        let mut rotated = auth(None, None, None);
+        rotated["tokens"]["refresh_token"] = serde_json::json!("synthetic-rotated-refresh");
+        assert!(!auth_identities_match(&auth(None, None, None), &rotated));
+    }
+
+    #[tokio::test]
+    async fn same_user_changed_email_runtime_rotation_is_adopted() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = followup_identity_auth("synthetic-user-a", 20 * 86400);
+        let mut rotated = followup_identity_auth("synthetic-user-a", 30 * 86400);
+        let claims = identity_auth_with_claims(Some("synthetic-user-a"), Some("changed@example.invalid"), Some("synthetic-shared-workspace"));
+        rotated["tokens"]["id_token"] = claims["tokens"]["id_token"].clone();
+        rotated["tokens"]["refresh_token"] = serde_json::json!("synthetic-rotated-refresh");
+        let account = env.save_account(&stored, true).await;
+        env.write_runtime_auth(&rotated);
+        let server = MockServer::start(vec![ok_usage(12.0)], Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+
+        env.refresh(&account.id).await.expect("same user's newer credential remains valid");
+
+        assert_eq!(env.stored_snapshot(&account.id).await, rotated);
+        assert_eq!(server.authorization_headers(), vec![format!("Bearer {}", rotated["tokens"]["access_token"].as_str().unwrap())]);
+        assert_eq!(server.token_calls(), 0);
+        assert_eq!(env.read_runtime_auth(), rotated);
     }
 }
