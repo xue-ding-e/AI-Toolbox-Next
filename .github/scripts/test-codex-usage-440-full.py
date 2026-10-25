@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -52,32 +54,59 @@ class FullDriverTests(unittest.TestCase):
             self.assertTrue(env['CARGO_HOME'].startswith(temporary))
             self.assertEqual(env['RUSTC'], '/synthetic/rustc')
 
+    def inventory(self):
+        return [case['name'] for case in driver.MANIFEST['ignored']] + ['synthetic::positive']
+
+    def test_zero_tests_rejected(self):
+        with self.assertRaises(AssertionError):
+            driver.classify_rust(0, self.successful_rust_log().replace('1 passed', '0 passed'), self.inventory())
+
+    def test_missing_executed_identity_rejected(self):
+        with self.assertRaises(AssertionError):
+            driver.classify_rust(0, self.successful_rust_log().replace('test synthetic::positive ... ok', ''), self.inventory())
+
+    def test_filtered_tests_rejected(self):
+        with self.assertRaises(AssertionError):
+            driver.classify_rust(0, self.successful_rust_log().replace('0 filtered out', '1 filtered out'), self.inventory())
+
+    def test_ignored_only_inventory_rejected(self):
+        with self.assertRaises(AssertionError):
+            driver.full_inventory(self.listing())
+
+    def test_full_inventory(self):
+        self.assertEqual(len(driver.full_inventory(self.listing() + '\nsynthetic::positive: test')), 14)
+
+    def test_optimized_python_rejected(self):
+        result = subprocess.run([sys.executable, '-B', '-O', str(HERE / 'verify-codex-usage-440-full.py')], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Optimized Python is unsupported', result.stderr)
+
     def successful_rust_log(self):
-        return '\n'.join('test ' + c['name'] + ' ... ignored' for c in driver.MANIFEST['ignored']) + '\ntest result: ok.\nDoc-tests ai_toolbox_lib\ntest result: ok.\n'
+        return '\n'.join('test ' + c['name'] + ' ... ignored' for c in driver.MANIFEST['ignored']) + '\ntest synthetic::positive ... ok\ntest result: ok. 1 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out;\nDoc-tests ai_toolbox_lib\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n'
 
     def test_rust_full_pass(self):
-        self.assertEqual(driver.classify_rust(0, self.successful_rust_log()), 'passed')
+        self.assertEqual(driver.classify_rust(0, self.successful_rust_log(), self.inventory()), 'passed')
 
     def test_no_doc_execution_rejected(self):
         with self.assertRaises(AssertionError):
-            driver.classify_rust(0, self.successful_rust_log().replace('Doc-tests', 'not-doc-tests'))
+            driver.classify_rust(0, self.successful_rust_log().replace('Doc-tests', 'not-doc-tests'), self.inventory())
 
     def test_hidden_test_failure_rejected(self):
         with self.assertRaises(AssertionError):
-            driver.classify_rust(0, self.successful_rust_log() + 'test result: FAILED')
+            driver.classify_rust(0, self.successful_rust_log() + 'test result: FAILED', self.inventory())
 
     def test_runtime_new_skip_rejected(self):
         with self.assertRaises(AssertionError):
-            driver.classify_rust(0, self.successful_rust_log() + 'test extra::test ... ignored\n')
+            driver.classify_rust(0, self.successful_rust_log() + 'test extra::test ... ignored\n', self.inventory())
 
     def test_compile_not_test_failure(self):
-        self.assertEqual(driver.classify_rust(101, 'error[E0433]: unresolved name'), 'compile-or-doc-compile-failure')
+        self.assertEqual(driver.classify_rust(101, 'error[E0433]: unresolved name', []), 'compile-or-doc-compile-failure')
 
     def test_real_test_failure_classified(self):
-        self.assertEqual(driver.classify_rust(101, 'test result: FAILED'), 'test-failure')
+        self.assertEqual(driver.classify_rust(101, 'test result: FAILED', []), 'test-failure')
 
     def test_unknown_failure_is_not_pass(self):
-        self.assertEqual(driver.classify_rust(1, 'environment unavailable'), 'environment-or-unclassified-failure')
+        self.assertEqual(driver.classify_rust(1, 'environment unavailable', []), 'environment-or-unclassified-failure')
 
     def test_sealed_manifest_matches_checkout_contents(self):
         root = HERE.parents[1]

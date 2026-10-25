@@ -1,4 +1,5 @@
 """Manual sealed-product Linux validation, not Windows or live OAuth acceptance."""
+from collections import Counter
 import hashlib
 import importlib.util
 import json
@@ -9,6 +10,9 @@ import signal
 import subprocess
 import sys
 import time
+
+if not __debug__:
+    raise RuntimeError("Optimized Python is unsupported: validation assertions must remain enabled")
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("reviewed_guards", HERE / "verify-codex-usage-440.py")
@@ -52,12 +56,26 @@ def isolated_env(profile, tool_paths):
     return env
 
 
-def classify_rust(code, content):
+def full_inventory(listing):
+    names = [line.removesuffix(": test") for line in listing.splitlines() if line.endswith(": test")]
+    assert names, "Default suite inventory is empty"
+    assert set(case["name"] for case in MANIFEST["ignored"]) < set(names), "No runnable tests in default inventory"
+    return names
+
+
+def classify_rust(code, content, inventory):
     if code == 0:
-        assert "test result: ok." in content and "Doc-tests" in content, "Missing default suite/doc-test execution"
+        assert inventory, "No default test inventory"
+        assert "Doc-tests" in content, "Missing default suite/doc-test execution"
         assert not re.search(r"test result: FAILED|^error(?:\[|:)", content, re.MULTILINE)
-        observed = sorted(re.findall(r"^test (\S+) \.{3} ignored(?:,.*)?$", content, re.MULTILINE))
-        assert observed == sorted(case["name"] for case in MANIFEST["ignored"]), "Execution ignore inventory changed"
+        observed = re.findall(r"^test (.+?) \.{3} (ok|ignored(?:,.*)?|FAILED)$", content, re.MULTILINE)
+        assert Counter(name for name, status in observed) == Counter(inventory), "Executed test identities do not match complete default inventory"
+        ignored = sorted(name for name, status in observed if status.startswith("ignored"))
+        assert ignored == sorted(case["name"] for case in MANIFEST["ignored"]), "Execution ignore inventory changed"
+        summaries = re.findall(r"^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;", content, re.MULTILINE)
+        assert summaries, "No numeric test summary"
+        totals = [sum(int(summary[i]) for summary in summaries) for i in range(5)]
+        assert totals == [len(inventory) - len(ignored), 0, len(ignored), 0, 0] and totals[0] > 0, "Incomplete/zero/filtered test execution"
         return "passed"
     if re.search(r"^error(?:\[|:)|could not compile", content, re.MULTILINE):
         return "compile-or-doc-compile-failure"
@@ -190,11 +208,15 @@ def main():
                 artifacts.append({"target": item["target"], "binary": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         assert artifacts and any(a["target"]["name"] == "ai_toolbox_lib" for a in artifacts)
         (output / "binary-identities.json").write_text(json.dumps(artifacts, indent=2) + "\n")
+        code, content = checked(cargo + ["--", "--list"], "rust-full-inventory", 180, env, "inventory-not-execution")
+        assert code == 0
+        inventory = full_inventory(content)
+        (output / "full-test-inventory.json").write_text(json.dumps(inventory, indent=2) + "\n")
         code, content = checked(cargo + ["--", "--ignored", "--list"], "rust-ignored-inventory", 180, env, "inventory-not-execution")
         assert code == 0
         verify_ignored(content)
         code, content = checked(cargo + ["--", "--test-threads=1"], "rust-default-tests-and-docs", 1200, env, "rust-test")
-        results[-1]["classification"] = classify_rust(code, content)
+        results[-1]["classification"] = classify_rust(code, content, inventory)
         results[-1]["summaries"] = re.findall(r"^test result: .*", content, re.MULTILINE)
         if code == 0:
             for artifact in artifacts:
@@ -204,7 +226,7 @@ def main():
             assert hashlib.sha256(Path(artifact["binary"]).read_bytes()).hexdigest() == artifact["sha256"]
     verify_source(root)
     assert all(result["passed"] for result in results), "One or more required stages failed; see stage-results.json"
-    assert len(results) == len(MANIFEST["test_chain"]) + 6, "Required stage missing"
+    assert len(results) == len(MANIFEST["test_chain"]) + 7, "Required stage missing"
     (output / "PASS.txt").write_text("Sealed Linux default cargo suite/docs and complete pnpm test chain passed. Not Windows/live OAuth acceptance.\n")
 
 

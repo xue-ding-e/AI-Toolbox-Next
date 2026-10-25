@@ -3,6 +3,10 @@ on:
   push:
     branches: [validation/cloud-checks]
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
