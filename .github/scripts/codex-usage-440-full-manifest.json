@@ -1,6 +1,6 @@
 {
-  "product_sha": "1fcb0c30636289f7fdacd674609040931d63fe84",
-  "product_tree": "96ce21ea8415e1da155c00ad2fb96706db99c2b7",
+  "product_sha": "a1905cc34617dab44af81a115db262e90275cddf",
+  "product_tree": "7dcdf0446e3c900a697a25b02ae6ad0e19718b87",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

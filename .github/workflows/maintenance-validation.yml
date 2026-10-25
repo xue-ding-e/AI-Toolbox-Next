@@ -649,7 +649,7 @@ jobs:
           python3 -B driver/.github/scripts/verify-codex-usage-440.py --admission "$GITHUB_WORKSPACE" | tee evidence/admission-initial.log
       - uses: actions/checkout@v4
         with:
-          ref: 1fcb0c30636289f7fdacd674609040931d63fe84
+          ref: a1905cc34617dab44af81a115db262e90275cddf
           path: product
           persist-credentials: false
       - uses: pnpm/action-setup@v4
