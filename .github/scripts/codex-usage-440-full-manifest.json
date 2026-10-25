@@ -277,5 +277,25 @@
     "red_probe_sha": "12e9811fb33e2bd8127cb3538649bfe6d9dec564",
     "red_run_id": 40223996205,
     "scope": "Permanent product regressions retain the exact functions that failed on the baseline probe. Run separately from the same product binary and again in the full default suite; no overlay compilation. Local stale-success rejection is a defensive current-request contract, not evidence of runtime overwrite or cross-account display."
-  }
+  },
+  "compile_only_doctests": [
+    {
+      "name": "src/http_client.rs - http_client (line 9)",
+      "path": "tauri/src/http_client.rs",
+      "line": 9,
+      "marker": "//! ```rust,no_run"
+    },
+    {
+      "name": "src/http_client.rs - http_client::client (line 61)",
+      "path": "tauri/src/http_client.rs",
+      "line": 61,
+      "marker": "/// ```rust,no_run"
+    },
+    {
+      "name": "src/http_client.rs - http_client::client_with_timeout (line 89)",
+      "path": "tauri/src/http_client.rs",
+      "line": 89,
+      "marker": "/// ```rust,no_run"
+    }
+  ]
 }

@@ -30,6 +30,7 @@ def verify_source(root):
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True).strip()
     assert json.loads((root / "package.json").read_text())["scripts"] == MANIFEST["scripts"]
     verify_focused_source((root / MANIFEST["regressions"]["path"]).read_text())
+    verify_compile_only_source(root)
     observed = []
     for path in sorted((root / "tauri").rglob("*.rs")):
         for line in path.read_text().splitlines():
@@ -79,9 +80,39 @@ def isolated_env(profile, tool_paths, runtime_tmp):
     return env
 
 
+def compile_only_aliases():
+    aliases = {}
+    for case in MANIFEST["compile_only_doctests"]:
+        name = case["name"]
+        match = re.fullmatch(r"(src/[^\n]+\.rs) - [\w:]+ \(line (\d+)\)", name)
+        assert match and case["path"] == "tauri/" + match[1] and case["line"] == int(match[2]), "Invalid sealed doctest identity"
+        assert case["marker"] in ["//! ```rust,no_run", "/// ```rust,no_run"], "Only sealed no_run examples use compile aliases"
+        assert name + " - compile" not in aliases, "Duplicate compile-only doctest identity"
+        aliases[name + " - compile"] = name
+    assert aliases and len(set(aliases.values())) == len(aliases), "Empty/ambiguous compile-only inventory"
+    return aliases
+
+
+def verify_compile_only_source(root):
+    compile_only_aliases()
+    for case in MANIFEST["compile_only_doctests"]:
+        lines = (root / case["path"]).read_text().splitlines()
+        assert len(lines) >= case["line"] and lines[case["line"] - 1] == case["marker"], "Sealed no_run doctest source changed"
+
+
+def canonical_execution_name(name):
+    aliases = compile_only_aliases()
+    if name in aliases.values():
+        raise AssertionError("Sealed no_run doctest lacks its compile-only execution marker")
+    # Do not strip an arbitrary suffix: only these exact source-sealed names
+    # differ between rustdoc --list and execution. Counts/statuses stay intact.
+    return aliases.get(name, name)
+
+
 def full_inventory(listing):
     names = [line.removesuffix(": test") for line in listing.splitlines() if line.endswith(": test")]
     assert names, "Default suite inventory is empty"
+    assert set(compile_only_aliases().values()) <= set(names), "Sealed compile-only doctest missing from runtime inventory"
     assert set(case["name"] for case in MANIFEST["ignored"]) < set(names), "No runnable tests in default inventory"
     return names
 
@@ -92,6 +123,7 @@ def classify_rust(code, content, inventory):
         assert "Doc-tests" in content, "Missing default suite/doc-test execution"
         assert not re.search(r"test result: FAILED|^error(?:\[|:)", content, re.MULTILINE)
         observed = re.findall(r"^test (.+?) \.{3} (ok|ignored(?:,.*)?|FAILED)$", content, re.MULTILINE)
+        observed = [(canonical_execution_name(name), status) for name, status in observed]
         assert Counter(name for name, status in observed) == Counter(inventory), "Executed test identities do not match complete default inventory"
         ignored = sorted(name for name, status in observed if status.startswith("ignored"))
         assert ignored == sorted(case["name"] for case in MANIFEST["ignored"]), "Execution ignore inventory changed"

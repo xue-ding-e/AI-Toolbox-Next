@@ -135,7 +135,7 @@ class FullDriverTests(unittest.TestCase):
             driver.classify_rust(0, content, ['fixture'])
 
     def inventory(self):
-        return [case['name'] for case in driver.MANIFEST['ignored']] + ['synthetic::positive']
+        return [case['name'] for case in driver.MANIFEST['ignored']] + ['synthetic::positive'] + [case['name'] for case in driver.MANIFEST['compile_only_doctests']]
 
     def test_zero_tests_rejected(self):
         with self.assertRaises(AssertionError):
@@ -154,7 +154,7 @@ class FullDriverTests(unittest.TestCase):
             driver.full_inventory(self.listing())
 
     def test_full_inventory(self):
-        self.assertEqual(len(driver.full_inventory(self.listing() + '\nsynthetic::positive: test')), 14)
+        self.assertEqual(driver.full_inventory('\n'.join(name + ': test' for name in self.inventory())), self.inventory())
 
     def test_optimized_python_rejected(self):
         result = subprocess.run([sys.executable, '-B', '-O', str(HERE / 'verify-codex-usage-440-full.py')], capture_output=True, text=True)
@@ -162,7 +162,64 @@ class FullDriverTests(unittest.TestCase):
         self.assertIn('Optimized Python is unsupported', result.stderr)
 
     def successful_rust_log(self):
-        return '\n'.join('test ' + c['name'] + ' ... ignored' for c in driver.MANIFEST['ignored']) + '\ntest synthetic::positive ... ok\ntest result: ok. 1 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out;\nDoc-tests ai_toolbox_lib\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n'
+        ignored = '\n'.join('test ' + c['name'] + ' ... ignored' for c in driver.MANIFEST['ignored'])
+        docs = '\n'.join('test ' + c['name'] + ' - compile ... ok' for c in driver.MANIFEST['compile_only_doctests'])
+        return ignored + '\ntest synthetic::positive ... ok\ntest result: ok. 1 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out;\nDoc-tests ai_toolbox_lib\n' + docs + '\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n'
+
+    def test_rustdoc_compile_aliases_are_only_the_three_source_sealed_names(self):
+        aliases = driver.compile_only_aliases()
+        self.assertEqual(len(aliases), 3)
+        for executed, listed in aliases.items():
+            self.assertEqual(driver.canonical_execution_name(executed), listed)
+            with self.assertRaises(AssertionError):
+                driver.canonical_execution_name(listed)
+        unknown = 'src/other.rs - other (line 9) - compile'
+        self.assertEqual(driver.canonical_execution_name(unknown), unknown)
+        self.assertEqual(driver.canonical_execution_name('ordinary::test - compile'), 'ordinary::test - compile')
+
+    def test_unknown_compile_suffix_is_not_silently_stripped(self):
+        changed = self.successful_rust_log().replace('test synthetic::positive ... ok', 'test synthetic::positive - compile ... ok')
+        with self.assertRaises(AssertionError):
+            driver.classify_rust(0, changed, self.inventory())
+
+    def test_compile_aliases_preserve_missing_duplicate_ignored_and_count_rejection(self):
+        name = driver.MANIFEST['compile_only_doctests'][0]['name']
+        row = 'test ' + name + ' - compile ... ok'
+        content = self.successful_rust_log()
+        for changed in [content.replace(row, ''), content + row + '\n',
+                        content.replace(row, row.replace(' ... ok', ' ... ignored')),
+                        content.replace('3 passed', '0 passed'),
+                        content.replace(row, row.replace(' - compile', ''))]:
+            with self.assertRaises(AssertionError):
+                driver.classify_rust(0, changed, self.inventory())
+
+    def test_compile_only_runtime_inventory_cannot_omit_a_sealed_example(self):
+        names = self.inventory()
+        with self.assertRaises(AssertionError):
+            driver.full_inventory('\n'.join(name + ': test' for name in names[:-1]))
+
+    def test_compile_alias_manifest_rejects_duplicate_or_unproven_formats(self):
+        cases = driver.MANIFEST['compile_only_doctests']
+        for changed in [[], cases + [cases[0]],
+                        [dict(cases[0], name='ordinary::test')],
+                        [dict(cases[0], line=10)],
+                        [dict(cases[0], marker='/// ```rust')]]:
+            with patch.dict(driver.MANIFEST, {'compile_only_doctests': changed}), self.assertRaises(AssertionError):
+                driver.compile_only_aliases()
+
+    def test_compile_only_source_requires_the_exact_no_run_markers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'tauri/src/http_client.rs'
+            source.parent.mkdir(parents=True)
+            lines = ['// synthetic source'] * 90
+            for case in driver.MANIFEST['compile_only_doctests']:
+                lines[case['line'] - 1] = case['marker']
+            source.write_text('\n'.join(lines))
+            driver.verify_compile_only_source(root)
+            source.write_text(source.read_text().replace('rust,no_run', 'rust', 1))
+            with self.assertRaises(AssertionError):
+                driver.verify_compile_only_source(root)
 
     def test_rust_full_pass(self):
         self.assertEqual(driver.classify_rust(0, self.successful_rust_log(), self.inventory()), 'passed')
