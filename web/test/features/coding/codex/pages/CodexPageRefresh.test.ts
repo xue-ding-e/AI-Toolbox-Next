@@ -6,9 +6,8 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import type { CodexOfficialAccount } from '../../../../../types/codex.ts';
+import * as accountRefresh from '../../../../../features/coding/codex/utils/codexAccountRefresh.ts';
 import {
-  matchesOfficialAccountRefresh,
-  markOfficialAccountRefreshFailed,
   reconcileOfficialAccountUsage,
   type OfficialAccountUsageResult,
 } from '../../../../../features/coding/codex/utils/codexAccountRefresh.ts';
@@ -69,9 +68,7 @@ function harness(initial = local) {
     officialAccountRefreshVersions: { current: new Map<string, number>() },
     officialAccountUsageResults: state.cache,
     officialAccountUsageRevision: state.revision,
-    matchesOfficialAccountRefresh,
-    markOfficialAccountRefreshFailed,
-    reconcileOfficialAccountUsage,
+    ...accountRefresh,
     setRefreshingOfficialAccountId: (next: Update<string | null>) => {
       state.refreshing = update(state.refreshing, next);
     },
@@ -159,4 +156,27 @@ test('superseded page failure cannot evict a newer successful refresh', async ()
   assert.equal(h.state.rows[provider.id][0].credits?.balance, 7);
   assert.equal(h.state.errors.length, 0);
   assert.equal(h.state.successes.length, 1);
+});
+
+test('page localizes reauthorization only in the toast and retains the raw row marker', async () => {
+  const h = harness();
+  const pending = h.refresh();
+  const raw = 'codex_reauth_required: synthetic rejected credential';
+  h.requests[0].reject(new Error(raw));
+  await pending;
+  assert.equal(h.state.errors[0], 'codex.provider.officialAccountReauthRequired');
+  assert.equal(h.state.rows[provider.id][0].lastError, raw);
+  assert.equal(h.state.details?.account.lastError, raw);
+  assert.equal(h.state.cache.current.size, 0);
+});
+
+test('page preserves transient errors instead of labeling them as reauthorization', async () => {
+  for (const raw of ['HTTP 429 Too Many Requests', 'HTTP 503 Service Unavailable', 'synthetic timeout']) {
+    const h = harness();
+    const pending = h.refresh();
+    h.requests[0].reject(new Error(raw));
+    await pending;
+    assert.equal(h.state.errors[0], raw);
+    assert.equal(h.state.rows[provider.id][0].lastError, raw);
+  }
 });
