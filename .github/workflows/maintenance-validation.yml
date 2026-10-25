@@ -3,6 +3,10 @@ on:
   push:
     branches: [validation/cloud-checks]
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -620,3 +624,65 @@ jobs:
       - name: Run migration and neighboring preferences tests serially
         run: |
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
+  codex-usage-440-regression:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/codex-usage-440-rg-20261025' && github.sha == inputs.expected_sha
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 0
+      CARGO_TARGET_DIR: ${{ github.workspace }}/shared-target
+      EXPECTED_VALIDATION_SHA: ${{ inputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: driver
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - name: Synthetic resource and RED-classifier checks
+        run: python3 -B driver/.github/scripts/test-codex-usage-440-driver.py
+      - name: Read-only resource admission
+        run: |
+          set -euo pipefail
+          test "$(git -C driver rev-parse HEAD)" = "$EXPECTED_VALIDATION_SHA"
+          mkdir -p evidence
+          python3 driver/.github/scripts/verify-codex-usage-440.py --admission "$GITHUB_WORKSPACE" | tee evidence/admission-initial.log
+      - uses: actions/checkout@v4
+        with:
+          ref: bae5a78387be2a9365c0b2bafa41fc4bfc14c65b
+          path: sources/red
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ed843373628fed574c20d61ffa259a01bd0c60ee
+          path: sources/green
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install standard Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record tools and recheck resources
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          { git -C driver rev-parse HEAD; rustc --version; cargo --version; node --version; df -h; } | tee evidence/toolchain.log
+          python3 driver/.github/scripts/verify-codex-usage-440.py --admission "$GITHUB_WORKSPACE" | tee evidence/admission.log
+      - name: Compile each sealed tree and run only synthetic regressions
+        run: python3 driver/.github/scripts/verify-codex-usage-440.py sources evidence "$EXPECTED_VALIDATION_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codex-usage-440-sealed-evidence
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            evidence/*.log
+            evidence/*.json
+            evidence/PASS.txt
