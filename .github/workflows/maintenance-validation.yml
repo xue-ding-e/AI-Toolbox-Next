@@ -26,7 +26,7 @@ jobs:
         with:
           path: harness
           ref: ${{ inputs.expected_sha }}
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -45,16 +45,19 @@ jobs:
         run: |
           set -euo pipefail
           cd harness
-          test "$(git rev-parse HEAD^)" = a1905cc34617dab44af81a115db262e90275cddf
+          test "$(git rev-parse HEAD^)" = 78bb497696f7130952277b9f209f1e6caca46bd5
+          test "$(git rev-parse HEAD^^)" = a1905cc34617dab44af81a115db262e90275cddf
           test "$(git rev-parse HEAD)" = "${{ inputs.expected_sha }}"
           test -z "$(git status --porcelain)"
-          git diff --name-only HEAD^ HEAD | sort > "$RUNNER_TEMP/grok-harness-files"
-          printf '%s\n' .github/workflows/maintenance-validation.yml validation/grok-editor/audited-functions.json validation/grok-editor/memory_observation.py validation/grok-editor/source.json validation/grok-editor/test_contract.py validation/grok-editor/test_linear_seal.py validation/grok-editor/test_memory_guard.py validation/grok-editor/test_memory_observation.py validation/grok-editor/test_scanner.py validation/grok-editor/validate.py | sort | diff - "$RUNNER_TEMP/grok-harness-files"
+          git diff --name-only HEAD^^ HEAD | sort > "$RUNNER_TEMP/grok-harness-files"
+          printf '%s\n' .github/workflows/maintenance-validation.yml validation/grok-editor/audited-baseline-f617d51.py.txt validation/grok-editor/audited-functions.json validation/grok-editor/memory_observation.py validation/grok-editor/source.json validation/grok-editor/test_contract.py validation/grok-editor/test_linear_seal.py validation/grok-editor/test_memory_guard.py validation/grok-editor/test_memory_observation.py validation/grok-editor/test_scanner.py validation/grok-editor/validate.py | sort | diff - "$RUNNER_TEMP/grok-harness-files"
           cd validation/grok-editor
-          echo 'c3655eb2b4caa2b8896580c5da2cc0436ddb4b78888626398df6e7ace90284eb  audited-functions.json' | sha256sum -c -
+          echo 'c4230e5646ccc6678a706e60e0f689dab663f7683c31e1eb176702f71f0994e8  audited-baseline-f617d51.py.txt' | sha256sum -c -
+          echo '0a884f22b4dd74a8dc11bdb736d90129886ce0e2e72fb0a45ece0c05d0b9462c  audited-functions.json' | sha256sum -c -
           echo '2b8c55db52df60b8cae0ce717848f4248ff72e908d310630b21dd3ac8a376d98  memory_observation.py' | sha256sum -c -
           echo '587f212ff8638aa5a4b17e700cf67cea743ba4f2b9300b48416b913dbe2b9c60  source.json' | sha256sum -c -
-          echo '6421789d111a3b13f2ab1050aaaaf36aab53d8a23b0c5fb9ab0aad1d0bb19b48  test_contract.py' | sha256sum -c -
+          echo 'bcc9b7e76949204d476ff5b5504a02b4b79cb728c25a6ba0f35f32feda272496  test_contract.py' | sha256sum -c -
+          python3 --version
           echo '9a0d181c6bce8e956d48bcfcbb217f0ffb5abb194c9231cb844d6ab1e261669e  test_linear_seal.py' | sha256sum -c -
           echo '967a4d4b2fc2e5b5f1163ebd4d18e8d0e8f8a2756a07c162ea0f9f898d7b4db8  test_memory_guard.py' | sha256sum -c -
           echo '897a4a067ffdf442ed498f9e32ea880080574d78987d3e67f1c6908197d8aacd  test_memory_observation.py' | sha256sum -c -
