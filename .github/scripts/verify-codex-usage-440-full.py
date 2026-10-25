@@ -64,10 +64,14 @@ def isolated_env(profile, tool_paths, runtime_tmp):
     # Allowlist rather than deleting a few known credential variable names.
     env = {key: os.environ[key] for key in ["PATH", "LANG", "LC_ALL", "TZ", "LD_LIBRARY_PATH"] if key in os.environ}
     profile.mkdir(parents=True, exist_ok=False)
-    for key in ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CARGO_HOME"]:
+    for key in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CARGO_HOME"]:
         directory = profile / key.lower()
         directory.mkdir()
         env[key] = str(directory)
+    # Cross-platform resolvers may prefer USERPROFILE while dirs::home_dir uses
+    # HOME on Linux. Both must identify this same newly-created synthetic home,
+    # not two artificial users, and neither may inherit the runner's profile.
+    env["USERPROFILE"] = env["HOME"]
     env["TMPDIR"] = str(runtime_tmp)
     env.update(RUSTC=tool_paths["rustc"], RUSTDOC=tool_paths["rustdoc"], CARGO_TARGET_DIR=str(profile / "target"),
                CARGO_BUILD_JOBS="2", CARGO_PROFILE_DEV_DEBUG="0", CARGO_PROFILE_TEST_DEBUG="0", CARGO_INCREMENTAL="0",

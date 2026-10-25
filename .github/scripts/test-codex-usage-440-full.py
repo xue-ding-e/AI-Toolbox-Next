@@ -56,6 +56,34 @@ class FullDriverTests(unittest.TestCase):
             self.assertEqual(env['RUSTC'], '/synthetic/rustc')
             self.assertEqual(env['TMPDIR'], str(Path(temporary) / 'short-tmp'))
 
+    def test_home_aliases_are_one_new_synthetic_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tools = {'rustc': '/synthetic/rustc', 'rustdoc': '/synthetic/rustdoc'}
+            inherited = {'HOME': '/synthetic-forbidden-home', 'USERPROFILE': '/synthetic-forbidden-userprofile',
+                         'KIMI_CODE_HOME': '/synthetic-forbidden-kimi', 'CODEX_HOME': '/synthetic-forbidden-codex',
+                         'GITHUB_TOKEN': 'synthetic-forbidden', 'OPENAI_API_KEY': 'synthetic-forbidden',
+                         'ANTHROPIC_API_KEY': 'synthetic-forbidden', 'AWS_SECRET_ACCESS_KEY': 'synthetic-forbidden'}
+            with patch.dict(os.environ, inherited):
+                first = driver.isolated_env(Path(temporary) / 'first', tools, Path(temporary) / 'short-tmp')
+                second = driver.isolated_env(Path(temporary) / 'second', tools, Path(temporary) / 'short-tmp')
+                self.assertEqual(os.environ['HOME'], inherited['HOME'])
+                self.assertEqual(os.environ['USERPROFILE'], inherited['USERPROFILE'])
+            self.assertEqual(first['HOME'], first['USERPROFILE'])
+            self.assertEqual(Path(first['HOME']), Path(temporary) / 'first' / 'home')
+            self.assertTrue(Path(first['HOME']).is_dir())
+            self.assertEqual(list(Path(first['HOME']).iterdir()), [])
+            self.assertFalse((Path(temporary) / 'first' / 'userprofile').exists())
+            self.assertNotEqual(first['HOME'], second['HOME'])
+            self.assertEqual(second['HOME'], second['USERPROFILE'])
+            # Mirror the two default resolver inputs without compiling/running
+            # product code: USERPROFILE-first and HOME-first now agree.
+            self.assertEqual(Path(first['USERPROFILE']) / '.kimi-code', Path(first['HOME']) / '.kimi-code')
+            for key in ['GITHUB_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'AWS_SECRET_ACCESS_KEY', 'KIMI_CODE_HOME']:
+                self.assertNotIn(key, first)
+            self.assertNotEqual(first['CODEX_HOME'], inherited['CODEX_HOME'])
+            self.assertNotEqual(first['CODEX_HOME'], first['HOME'])
+            self.assertEqual(first['TMPDIR'], str(Path(temporary) / 'short-tmp'))
+
     def test_private_short_tmp_is_owned_unique_and_removed(self):
         with driver.short_private_tmpdir() as first:
             with driver.short_private_tmpdir() as second:
