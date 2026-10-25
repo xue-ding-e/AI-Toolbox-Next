@@ -10,6 +10,7 @@ use super::constants::{AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_LOCAL_PROV
 use super::history_sync;
 use super::official_accounts::{
     auth_has_official_runtime, clear_all_codex_official_account_apply_status,
+    ACCOUNT_OPERATION_LOCK, lock_codex_auth_file,
     codex_provider_has_official_accounts, ensure_codex_provider_has_no_official_accounts,
     sync_codex_official_account_apply_status,
 };
@@ -214,6 +215,10 @@ fn resolve_local_provider_meta(
 pub(super) async fn get_codex_root_dir_from_db_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<PathBuf, String> {
+    #[cfg(test)]
+    if let Some(root) = super::official_accounts::issue440_runtime_root_override(db).await {
+        return root;
+    }
     Ok(runtime_location::get_codex_runtime_location_async(db)
         .await?
         .host_path)
@@ -4862,14 +4867,6 @@ async fn update_is_applied_status(
 // Codex Config File Commands
 // ============================================================================
 
-/// Internal function: apply provider config to files
-async fn apply_config_to_file(
-    db: &crate::db::SqliteDbState,
-    provider_id: &str,
-) -> Result<(), String> {
-    apply_config_to_file_with_previous_managed_config(db, provider_id, None).await
-}
-
 /// Public version for tray module
 pub async fn apply_config_to_file_public(
     db: &crate::db::SqliteDbState,
@@ -4878,7 +4875,17 @@ pub async fn apply_config_to_file_public(
     apply_config_to_file_with_previous_managed_config(db, provider_id, None).await
 }
 
+/// Internal function: apply provider config to files.
 async fn apply_config_to_file_with_previous_managed_config(
+    db: &crate::db::SqliteDbState,
+    provider_id: &str,
+    previous_managed_config_toml: Option<String>,
+) -> Result<(), String> {
+    let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
+    apply_config_to_file_account_locked(db, provider_id, previous_managed_config_toml).await
+}
+
+async fn apply_config_to_file_account_locked(
     db: &crate::db::SqliteDbState,
     provider_id: &str,
     previous_managed_config_toml: Option<String>,
@@ -4971,6 +4978,9 @@ async fn write_codex_config_files(
             .map_err(|e| format!("Failed to create .codex directory: {}", e))?;
     }
 
+    // Await the shared file fence without blocking a Tokio worker, including
+    // when a cancelled refresh still has a filesystem operation finishing.
+    let _auth_file = lock_codex_auth_file().await?;
     // Replace only AI Toolbox-managed auth fields and keep runtime-owned OAuth data.
     let auth_path = config_dir.join("auth.json");
     let existing_auth = if auth_path.exists() {
@@ -5123,11 +5133,35 @@ async fn apply_config_internal_with_events<R: tauri::Runtime>(
     emit_config_changed: bool,
     emit_sync_request: bool,
 ) -> Result<(), String> {
+    let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
+    apply_config_internal_account_locked_with_events(
+        db, app, provider_id, from_tray, emit_config_changed, emit_sync_request,
+    ).await
+}
+
+// Official-account apply already owns the operation lock across preparation,
+// provider projection and the final credential write. Do not reacquire it.
+pub(super) async fn apply_config_internal_account_locked<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+) -> Result<(), String> {
+    apply_config_internal_account_locked_with_events(db, app, provider_id, false, true, true).await
+}
+
+async fn apply_config_internal_account_locked_with_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+    from_tray: bool,
+    emit_config_changed: bool,
+    emit_sync_request: bool,
+) -> Result<(), String> {
     if provider_id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be applied".to_string());
     }
     // Apply config to files
-    apply_config_to_file(db, provider_id).await?;
+    apply_config_to_file_account_locked(db, provider_id, None).await?;
 
     // Update is_applied status in SQLite.
     update_is_applied_status(db, provider_id).await?;

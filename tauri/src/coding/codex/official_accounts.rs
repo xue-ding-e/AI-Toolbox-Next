@@ -14,7 +14,7 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 
 use super::adapter;
 use super::commands::{
-    apply_config_internal, get_codex_root_dir_from_db_async, get_codex_root_dir_without_db,
+    apply_config_internal_account_locked, get_codex_root_dir_from_db_async, get_codex_root_dir_without_db,
 };
 use super::constants::CODEX_LOCAL_PROVIDER_ID;
 use super::types::{CodexCredits, CodexOfficialAccount, CodexOfficialAccountContent, CodexProvider};
@@ -43,6 +43,13 @@ const WEEK_WINDOW_SECONDS: i64 = 604_800;
 const MONTH_WINDOW_MIN_SECONDS: i64 = 28 * 24 * 60 * 60;
 const MONTH_WINDOW_MAX_SECONDS: i64 = 31 * 24 * 60 * 60;
 const AUTH_REFRESH_LEAD_SECONDS: i64 = 3 * 24 * 60 * 60;
+pub(super) static ACCOUNT_OPERATION_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+static CODEX_AUTH_FILE_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+
+pub(super) async fn lock_codex_auth_file() -> Result<tokio::sync::MutexGuard<'static, ()>, String> {
+    tokio::time::timeout(crate::coding::file_io::DEFAULT_CONFIG_FILE_IO_TIMEOUT, CODEX_AUTH_FILE_LOCK.lock())
+        .await.map_err(|_| "Timed out waiting for the current Codex credential file operation".to_string())
+}
 static OAUTH_REFRESH_LOCK: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 static OAUTH_REFRESH_CACHE: LazyLock<
     AsyncMutex<HashMap<String, (std::time::Instant, OAuthTokenResponse)>>,
@@ -137,6 +144,8 @@ struct JwtProfileClaims {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct JwtClaims {
+    #[serde(default)]
+    sub: Option<String>,
     #[serde(default)]
     email: Option<String>,
     #[serde(default)]
@@ -394,13 +403,32 @@ async fn exchange_authorization_code(
         .map_err(|error| format!("Failed to parse OAuth token response: {error}"))
 }
 
+// The production path always uses the unified proxy/TLS client and fixed endpoints.
+// Tests inject only synthetic loopback endpoints, scoped to the current async task.
+async fn account_http_client(
+    db: &SqliteDbState,
+) -> Result<(reqwest::Client, String, String), String> {
+    #[cfg(test)]
+    {
+        let _ = db;
+        return usage_refresh_tests::http_override()
+            .ok_or_else(|| "Synthetic Codex HTTP scope is required in tests".to_string());
+    }
+    #[cfg(not(test))]
+    Ok((
+        crate::http_client::client_with_timeout(db, 20).await?,
+        CODEX_OAUTH_TOKEN_URL.to_string(),
+        CODEX_USAGE_URL.to_string(),
+    ))
+}
+
 async fn refresh_oauth_token(
     db: &SqliteDbState,
     refresh_token: &str,
 ) -> Result<OAuthTokenResponse, String> {
-    let client = crate::http_client::client_with_timeout(db, 20).await?;
+    let (client, token_url, _) = account_http_client(db).await?;
     let response = client
-        .post(CODEX_OAUTH_TOKEN_URL)
+        .post(token_url)
         .form(&OAuthRefreshRequest {
             grant_type: "refresh_token",
             client_id: CODEX_OAUTH_CLIENT_ID,
@@ -426,14 +454,18 @@ async fn refresh_oauth_token(
             || body.contains("refresh_token_reused")
         {
             return Err(
-                "refresh_token_reused: Codex refresh token has already been rotated; sign in again"
+                "CODEX_REAUTH_REQUIRED: Codex refresh token has already been rotated; sign in again"
                     .to_string(),
             );
         }
-        return Err(format!("OAuth token refresh failed ({status}): {body}"));
+        if matches!(error_code.as_deref(), Some("invalid_grant" | "refresh_token_expired" | "refresh_token_invalid")) {
+            return Err("CODEX_REAUTH_REQUIRED: Codex refresh credential is expired or revoked; sign in to this account again".to_string());
+        }
+        // OAuth error bodies may echo credentials or other private account data.
+        return Err(format!("OAuth token refresh failed (HTTP {status})"));
     }
     serde_json::from_str::<OAuthTokenResponse>(&body)
-        .map_err(|error| format!("Failed to parse refreshed OAuth token response: {error}"))
+        .map_err(|_| "Failed to parse refreshed OAuth token response".to_string())
 }
 
 fn decode_jwt_payload(value: &str) -> Result<JwtClaims, String> {
@@ -561,12 +593,20 @@ async fn ensure_fresh_official_runtime_auth(
     db: &SqliteDbState,
     auth: &Value,
 ) -> Result<Value, String> {
-    if !official_auth_needs_refresh(auth) {
+    ensure_fresh_official_runtime_auth_with_force(db, auth, false).await
+}
+
+async fn ensure_fresh_official_runtime_auth_with_force(
+    db: &SqliteDbState,
+    auth: &Value,
+    force: bool,
+) -> Result<Value, String> {
+    if !force && !official_auth_needs_refresh(auth) {
         return Ok(auth.clone());
     }
 
     let _refresh_guard = OAUTH_REFRESH_LOCK.lock().await;
-    if !official_auth_needs_refresh(auth) {
+    if !force && !official_auth_needs_refresh(auth) {
         return Ok(auth.clone());
     }
     let refresh_token = auth
@@ -574,12 +614,15 @@ async fn ensure_fresh_official_runtime_auth(
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Official account is missing refresh token".to_string())?;
+        .ok_or_else(|| "CODEX_REAUTH_REQUIRED: Official account is missing refresh token; sign in again".to_string())?;
     let cached_response = OAUTH_REFRESH_CACHE
         .lock()
         .await
         .get(refresh_token)
-        .filter(|(created_at, _)| created_at.elapsed() <= Duration::from_secs(30))
+        .filter(|(created_at, response)| {
+            created_at.elapsed() <= Duration::from_secs(30)
+                && (!force || Some(response.access_token.as_str()) != auth.pointer("/tokens/access_token").and_then(Value::as_str))
+        })
         .map(|(_, response)| response.clone());
     let refreshed_token_response = match cached_response {
         Some(response) => response,
@@ -641,10 +684,19 @@ async fn write_auth_json_to_disk(
             .map_err(|error| format!("Failed to create Codex root directory: {error}"))?;
     }
     let auth_path = root_dir.join("auth.json");
+    let _file = lock_codex_auth_file().await?;
     write_auth_json_atomic(&auth_path, auth)
 }
 
 fn write_auth_json_atomic(auth_path: &std::path::Path, auth: &Value) -> Result<(), String> {
+    write_auth_json_atomic_if(auth_path, auth, || true).map(|_| ())
+}
+
+fn write_auth_json_atomic_if(
+    auth_path: &std::path::Path,
+    auth: &Value,
+    can_commit: impl FnOnce() -> bool,
+) -> Result<bool, String> {
     let root_dir = auth_path
         .parent()
         .ok_or_else(|| "Codex auth.json path has no parent directory".to_string())?;
@@ -655,10 +707,12 @@ fn write_auth_json_atomic(auth_path: &std::path::Path, auth: &Value) -> Result<(
     temporary
         .write_all(b"\n")
         .map_err(|error| format!("Failed to finalize auth.json: {error}"))?;
+    if !can_commit() { return Ok(false); }
     temporary
         .persist(&auth_path)
         .map_err(|error| format!("Failed to replace auth.json: {}", error.error))?;
-    set_codex_auth_permissions(&auth_path)
+    set_codex_auth_permissions(&auth_path)?;
+    Ok(true)
 }
 
 #[cfg(unix)]
@@ -1384,35 +1438,8 @@ pub(crate) async fn fetch_usage_snapshot(
     account_id: Option<&str>,
     plan_type: Option<&str>,
 ) -> Result<UsageSnapshot, String> {
-    let client = crate::http_client::client_with_timeout(db, 20).await?;
-
-    let mut request = client
-        .get(CODEX_USAGE_URL)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AI-Toolbox Codex OAuth",
-        )
-        .header("Content-Type", "application/json");
-    if let Some(account_id) = account_id
-        .map(str::trim)
-        .filter(|account_id| !account_id.is_empty())
-    {
-        request = request.header("Chatgpt-Account-Id", account_id);
-    }
-
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("Failed to fetch usage: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Codex usage request failed: {error}"))?;
-
-    let body = response
-        .json::<Value>()
-        .await
-        .map_err(|error| format!("Failed to parse usage response: {error}"))?;
-    Ok(parse_usage_snapshot(&body, plan_type))
+    usage_refresh::fetch_usage(db, access_token, account_id, plan_type)
+        .await.map_err(|error| error.to_string())
 }
 
 fn build_account_content_from_auth_snapshot(
@@ -1624,6 +1651,12 @@ async fn persist_refreshed_account_snapshot(
     )?;
     let payload = adapter::to_db_value_official_account(&parsed_content);
     db.with_conn(|conn| {
+        let current = db_get(conn, DbTable::CodexOfficialAccount, &account.id)?
+            .map(adapter::from_db_value_official_account)
+            .ok_or_else(|| "Official account was removed during credential refresh".to_string())?;
+        if current.provider_id != account.provider_id || current.auth_snapshot != account.auth_snapshot {
+            return Err("Official account credentials changed during refresh; retry using the latest account".to_string());
+        }
         let fields = [
             "email", "auth_snapshot", "auth_mode", "account_id", "plan_type",
             "last_refresh", "updated_at",
@@ -2009,6 +2042,7 @@ pub async fn save_codex_official_local_account(
     provider_id: String,
 ) -> Result<CodexOfficialAccount, String> {
     let db = state.db();
+    let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
     ensure_persisted_provider_id(&provider_id)?;
     let provider = query_provider(&db, &provider_id).await?;
     if provider.category != "official" {
@@ -2130,6 +2164,7 @@ pub async fn apply_codex_official_account(
     account_id: String,
 ) -> Result<(), String> {
     let db = state.db();
+    let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
     ensure_persisted_provider_id(&provider_id)?;
     let provider = query_provider(&db, &provider_id).await?;
     if provider.category != "official" {
@@ -2151,7 +2186,7 @@ pub async fn apply_codex_official_account(
         }
         let refreshed_auth = ensure_fresh_official_runtime_auth(&db, &local_auth).await?;
         let merged_auth = merge_official_runtime_auth(&local_auth, &refreshed_auth);
-        apply_config_internal(&db, &app, &provider_id, false).await?;
+        apply_config_internal_account_locked(&db, &app, &provider_id).await?;
         write_auth_json_to_disk(&db, &merged_auth).await?;
         update_official_account_apply_status(&db, None).await?;
     } else {
@@ -2159,23 +2194,18 @@ pub async fn apply_codex_official_account(
         if account.provider_id != provider_id {
             return Err("Official account does not belong to the selected provider".to_string());
         }
+        let mut wrote_runtime = false;
+        let refreshed_snapshot = usage_refresh::prepare_persisted_locked(
+            &db, &provider_id, &account_id, None, &mut wrote_runtime,
+        ).await?;
+        apply_config_internal_account_locked(&db, &app, &provider_id).await?;
         let current_auth = read_auth_json_from_disk(Some(&db)).await?;
-        let snapshot = account
-            .auth_snapshot
-            .as_deref()
-            .ok_or_else(|| "Official account snapshot is missing".to_string())?;
-        let snapshot_auth = auth_json_from_snapshot(snapshot)?;
-        let refreshed_snapshot = ensure_fresh_official_runtime_auth(&db, &snapshot_auth).await?;
-        if refreshed_snapshot != snapshot_auth {
-            let _ = persist_refreshed_account_snapshot(&db, &account, &refreshed_snapshot).await?;
-        }
         let merged_auth = merge_official_runtime_auth(&current_auth, &refreshed_snapshot);
-        apply_config_internal(&db, &app, &provider_id, false).await?;
         write_auth_json_to_disk(&db, &merged_auth).await?;
         update_official_account_apply_status(&db, Some(&account_id)).await?;
     }
 
-    let _ = app.emit("config-changed", "window");
+    emit_account_runtime_changed(&app);
     Ok(())
 }
 
@@ -2187,6 +2217,7 @@ pub async fn delete_codex_official_account(
     account_id: String,
 ) -> Result<(), String> {
     let db = state.db();
+    let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
     ensure_persisted_provider_id(&provider_id)?;
     if account_id == LOCAL_OFFICIAL_ACCOUNT_ID {
         return Err("The local official account cannot be deleted".to_string());
@@ -2210,9 +2241,9 @@ pub async fn delete_codex_official_account(
 ///
 /// Non-applied accounts still refresh OAuth into SQLite so login-only tokens do not die.
 /// Live `auth.json` is rewritten only for applied accounts.
-pub async fn refresh_applied_codex_accounts_if_needed(
+pub async fn refresh_applied_codex_accounts_if_needed<R: tauri::Runtime>(
     db: &SqliteDbState,
-    app: &tauri::AppHandle,
+    app: &tauri::AppHandle<R>,
 ) -> Result<(), String> {
     let accounts = db.with_conn(|conn| {
         Ok(db_list(conn, DbTable::CodexOfficialAccount, None)?
@@ -2221,79 +2252,32 @@ pub async fn refresh_applied_codex_accounts_if_needed(
             .filter(|account| account.id != LOCAL_OFFICIAL_ACCOUNT_ID)
             .collect::<Vec<_>>())
     })?;
-
     let mut wrote_runtime = false;
     for account in accounts {
-        let Some(snapshot) = account.auth_snapshot.as_deref() else {
-            continue;
-        };
-        let snapshot_auth = match auth_json_from_snapshot(snapshot) {
-            Ok(value) => value,
-            Err(error) => {
-                log::debug!(
-                    "Codex official account '{}' snapshot parse failed: {error}",
-                    account.id
-                );
-                continue;
-            }
-        };
-        match ensure_fresh_official_runtime_auth(db, &snapshot_auth).await {
-            Ok(refreshed) => {
-                if refreshed != snapshot_auth {
-                    if let Err(error) =
-                        persist_refreshed_account_snapshot(db, &account, &refreshed).await
-                    {
-                        log::debug!(
-                            "Codex official account '{}' persist failed: {error}",
-                            account.id
-                        );
-                        continue;
-                    }
-                    if !account.is_applied {
-                        continue;
-                    }
-                    match read_auth_json_from_disk(Some(db)).await {
-                        Ok(current_auth) => {
-                            let merged = merge_official_runtime_auth(&current_auth, &refreshed);
-                            if let Err(error) = write_auth_json_to_disk(db, &merged).await {
-                                log::debug!(
-                                    "Codex official account '{}' runtime write failed: {error}",
-                                    account.id
-                                );
-                            } else {
-                                wrote_runtime = true;
-                            }
-                        }
-                        Err(error) => {
-                            log::debug!(
-                                "Codex official account '{}' runtime read failed: {error}",
-                                account.id
-                            );
-                        }
-                    }
-                }
-            }
-            Err(error) => {
-                log::debug!(
-                    "Codex official account '{}' ensure_fresh failed: {error}",
-                    account.id
-                );
-            }
+        let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
+        // The list is only a set of IDs. Reload credentials and applied flags
+        // under the same lock as manual preparation and explicit account apply.
+        if let Err(error) = usage_refresh::prepare_persisted_locked(
+            db, &account.provider_id, &account.id, None, &mut wrote_runtime,
+        ).await {
+            log::debug!("Codex official account '{}' ensure_fresh failed: {error}", account.id);
         }
     }
-
-    if wrote_runtime {
-        let _ = app.emit("config-changed", "window");
-        // Align with apply_config_internal: host auth.json change should sync to WSL.
-        #[cfg(target_os = "windows")]
-        let _ = app.emit("wsl-sync-request-codex", ());
-    }
+    if wrote_runtime { emit_account_runtime_changed(app); }
     Ok(())
+}
+
+fn emit_account_runtime_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let _ = app.emit("config-changed", "window");
+    // Align with apply_config_internal: host auth.json change should sync to WSL.
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-codex", ());
 }
 
 #[tauri::command]
 pub async fn refresh_codex_official_account_limits(
     state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
     provider_id: String,
     account_id: String,
 ) -> Result<CodexOfficialAccount, String> {
@@ -2303,83 +2287,27 @@ pub async fn refresh_codex_official_account_limits(
     if provider.category != "official" {
         return Err("Only official Codex providers can refresh official account usage".to_string());
     }
-
-    if account_id == LOCAL_OFFICIAL_ACCOUNT_ID {
-        let auth = read_auth_json_from_disk(Some(&db)).await?;
-        if !auth_has_official_runtime(&auth) {
-            return Err(
-                "Current local auth.json does not contain an official Codex login".to_string(),
-            );
+    let mut wrote_runtime = false;
+    let result = if account_id == LOCAL_OFFICIAL_ACCOUNT_ID {
+        usage_refresh::refresh_local(&db, &provider_id, &mut wrote_runtime).await
+    } else {
+        let account = load_official_account(&db, &account_id).await?;
+        if account.provider_id != provider_id {
+            return Err("Official account does not belong to the selected provider".to_string());
         }
-        let access_token = auth
-            .pointer("/tokens/access_token")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Local official auth is missing access token".to_string())?;
-        let plan_type = usage_plan_type_from_auth(&auth);
-        let usage_account_id = usage_account_id_from_auth(&auth);
-        let usage_snapshot = fetch_usage_snapshot(
-            &db,
-            access_token,
-            usage_account_id.as_deref(),
-            plan_type.as_deref(),
-        )
-        .await?;
-        let mut account = assign_provider_id(build_virtual_local_account(&auth), &provider_id);
-        account.limit_short_label = usage_snapshot.limit_short_label;
-        account.limit_5h_text = usage_snapshot.limit_5h_text;
-        account.limit_weekly_text = usage_snapshot.limit_weekly_text;
-        account.limit_monthly_text = usage_snapshot.limit_monthly_text;
-        account.limit_5h_reset_at = usage_snapshot.limit_5h_reset_at;
-        account.limit_weekly_reset_at = usage_snapshot.limit_weekly_reset_at;
-        account.limit_monthly_reset_at = usage_snapshot.limit_monthly_reset_at;
-        account.reset_credits_available = usage_snapshot.reset_credits_available;
-        account.credits = usage_snapshot.credits;
-        account.last_limits_fetched_at = Some(Local::now().to_rfc3339());
-        return Ok(account);
-    }
-
-    let account = load_official_account(&db, &account_id).await?;
-    if account.provider_id != provider_id {
-        return Err("Official account does not belong to the selected provider".to_string());
-    }
-    refresh_persisted_account_usage(&db, &account).await
+        usage_refresh::refresh_persisted(&db, &account, &mut wrote_runtime).await
+    };
+    // Credential rotation can succeed even when the later usage request fails.
+    if wrote_runtime { emit_account_runtime_changed(&app); }
+    result
 }
 
+#[cfg(test)]
 async fn refresh_persisted_account_usage(
     db: &SqliteDbState,
     account: &CodexOfficialAccount,
 ) -> Result<CodexOfficialAccount, String> {
-    // Preparation errors invalidate cached credits just like HTTP errors do.
-    let result = async {
-        let snapshot = account
-            .auth_snapshot
-            .as_deref()
-            .ok_or_else(|| "Official account snapshot is missing".to_string())?;
-        let auth_snapshot = auth_json_from_snapshot(snapshot)?;
-        let access_token = auth_snapshot
-            .pointer("/tokens/access_token")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Official account is missing access token".to_string())?;
-        let usage_account_id = account
-            .account_id
-            .clone()
-            .or_else(|| usage_account_id_from_auth(&auth_snapshot));
-        let usage_snapshot = fetch_usage_snapshot(
-            db,
-            access_token,
-            usage_account_id.as_deref(),
-            account.plan_type.as_deref(),
-        )
-        .await;
-
-        usage_snapshot
-    }
-    .await;
-    persist_usage_result(db, &account.id, result).await
+    usage_refresh::refresh_persisted(db, account, &mut false).await
 }
 
 #[tauri::command]
@@ -3225,6 +3153,7 @@ pub async fn codex_provider_has_official_accounts(
 pub async fn clear_all_codex_official_account_apply_status(
     db: &crate::db::SqliteDbState,
 ) -> Result<(), String> {
+    let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
     let now = Local::now().to_rfc3339();
     db.with_conn_mut(|conn| {
         db_update_applied_status(conn, DbTable::CodexOfficialAccount, None, &now)
@@ -3236,6 +3165,7 @@ pub async fn sync_codex_official_account_apply_status(
     db: &crate::db::SqliteDbState,
     provider_id: &str,
 ) -> Result<(), String> {
+    let _operation = ACCOUNT_OPERATION_LOCK.lock().await;
     let local_auth = read_auth_json_from_disk(Some(db)).await?;
     if !auth_has_official_runtime(&local_auth) {
         return update_official_account_apply_status(db, None).await;
@@ -3248,4 +3178,18 @@ pub async fn sync_codex_official_account_apply_status(
         .map(|account| account.id.clone());
 
     update_official_account_apply_status(db, matched_account_id.as_deref()).await
+}
+
+#[cfg(test)]
+mod usage_refresh_tests;
+
+mod usage_refresh;
+
+#[cfg(test)]
+pub(super) async fn issue440_runtime_root_override(db: &SqliteDbState) -> Option<Result<std::path::PathBuf, String>> {
+    if usage_refresh_tests::http_override().is_some() {
+        Some(usage_refresh::runtime_root(db).await)
+    } else {
+        None
+    }
 }

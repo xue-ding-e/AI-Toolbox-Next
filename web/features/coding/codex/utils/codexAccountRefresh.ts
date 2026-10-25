@@ -5,12 +5,15 @@ export function matchesOfficialAccountRefresh(
   current: CodexOfficialAccount,
   requested: CodexOfficialAccount,
 ): boolean {
-  return current.id === requested.id
-    && current.providerId === requested.providerId
-    && current.isVirtual === requested.isVirtual
-    && current.accountId === requested.accountId
+  if (current.id !== requested.id || current.providerId !== requested.providerId
+    || current.isVirtual !== requested.isVirtual) return false;
+  // A saved row has a stable database ID. Credential recovery can correct old
+  // account/email metadata; that must not discard its successful usage response.
+  // The caller's request generation and list revision fences still apply.
+  if (!current.isVirtual) return true;
+  return current.accountId === requested.accountId
     && current.email === requested.email
-    && (!current.isVirtual || Boolean(current.accountId || current.email)
+    && (Boolean(current.accountId || current.email)
       || (Boolean(current.refreshTokenPreview || current.accessTokenPreview)
         && current.refreshTokenPreview === requested.refreshTokenPreview
         && current.accessTokenPreview === requested.accessTokenPreview));
