@@ -27,6 +27,8 @@
 
 ## Source of Truth
 
+- 固定官方卡只认 `claude-desktop-official` 保留 ID：列表确保该 seed 存在，后端删除与前端单删/批选/详情按钮共用这一身份边界。不得收养首个 `category=official` 行；带凭据导入行和复制行不是固定卡，仍可删除，已有 seed 编辑不被初始化覆盖。restore predicate 比固定卡更宽，不能互相代用。
+
 - 供应商列表、`isApplied`、`isDisabled`、`sortIndex` 全部以后端 `listClaudeDesktopProviders()` 返回为准；页面只在**乐观拖拽**时短暂持有本地副本，失败即回滚。
 - 磁盘上的 4 个受管文件（两个 `claude_desktop_config.json`、`configLibrary/<PROFILE_ID>.json`、`configLibrary/_meta.json`）是运行时事实，只在"应用"时被改写；**前端不解析它们做状态判断**，只通过 `getClaudeDesktopPreview()` 原样展示。
 - 生效态由 `provider.isApplied`（DB）表达。**不要用 `deploymentMode` 判断**——那只是写盘标记，也不要用 `category === 'official'` 推断"当前是官方模式"。

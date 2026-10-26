@@ -64,6 +64,11 @@ fn put_provider_to_sqlite(
 }
 
 fn delete_provider_from_sqlite(db: &SqliteDbState, provider_id: &str) -> Result<(), String> {
+    // Only the canonical seed is protected. Imported/copy rows can share the
+    // official category without being the built-in restore channel.
+    if provider_id == OFFICIAL_PROVIDER_ID {
+        return Err("The built-in Claude Desktop official provider cannot be deleted".to_string());
+    }
     db.with_conn(|conn| db_delete(conn, DbTable::ClaudeDesktopProvider, provider_id).map(|_| ()))
 }
 
@@ -168,7 +173,12 @@ pub async fn get_claude_desktop_preview() -> Result<Value, String> {
 pub async fn list_claude_desktop_providers(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<Vec<ClaudeDesktopProvider>, String> {
-    list_providers_from_sqlite(state.db())
+    list_providers_with_official(state.db())
+}
+
+fn list_providers_with_official(db: &SqliteDbState) -> Result<Vec<ClaudeDesktopProvider>, String> {
+    ensure_official_provider_row(db)?;
+    list_providers_from_sqlite(db)
 }
 
 /// Create a new Claude Desktop provider.
@@ -854,9 +864,21 @@ pub async fn ensure_claude_desktop_official_provider(
     state: tauri::State<'_, SqliteDbState>,
     app: tauri::AppHandle,
 ) -> Result<ClaudeDesktopProvider, String> {
-    let db = state.db();
-    if let Some(existing) = get_provider_from_sqlite(db, OFFICIAL_PROVIDER_ID)? {
-        return Ok(existing);
+    let (provider, created) = ensure_official_provider_row(state.db())?;
+    if created {
+        let _ = app.emit("config-changed", "window");
+    }
+    Ok(provider)
+}
+
+/// Seed only the reserved identity. Never adopt a category=official import or
+/// replace an existing seed's edited settings with defaults.
+fn ensure_official_provider_row(db: &SqliteDbState) -> Result<(ClaudeDesktopProvider, bool), String> {
+    // Hold the database lock across check-and-insert: concurrent list requests
+    // must not replace a row another caller has just created or edited.
+    db.with_conn(|conn| {
+    if let Some(existing) = db_get(conn, DbTable::ClaudeDesktopProvider, OFFICIAL_PROVIDER_ID)? {
+        return Ok((adapter::from_db_value_provider(existing), false));
     }
 
     let now = Local::now().to_rfc3339();
@@ -877,10 +899,9 @@ pub async fn ensure_claude_desktop_official_provider(
         updated_at: now,
     };
 
-    put_provider_to_sqlite(db, OFFICIAL_PROVIDER_ID, &content)?;
-    let _ = app.emit("config-changed", "window");
+    db_put(conn, DbTable::ClaudeDesktopProvider, OFFICIAL_PROVIDER_ID, &adapter::to_db_value_provider(&content))?;
 
-    Ok(ClaudeDesktopProvider {
+    Ok((ClaudeDesktopProvider {
         id: OFFICIAL_PROVIDER_ID.to_string(),
         name: content.name,
         category: content.category,
@@ -896,6 +917,7 @@ pub async fn ensure_claude_desktop_official_provider(
         is_disabled: content.is_disabled,
         created_at: content.created_at,
         updated_at: content.updated_at,
+    }, true))
     })
 }
 
@@ -967,6 +989,59 @@ mod tests {
     #[test]
     fn official_restore_settings_handles_invalid_json() {
         assert!(!official_restore_settings("not json"));
+    }
+
+    mod canonical_official_pin {
+        use super::super::*;
+
+        fn row(settings: &str) -> ClaudeDesktopProviderContent {
+            ClaudeDesktopProviderContent {
+                name: "Synthetic imported official".into(), category: "official".into(),
+                settings_config: settings.into(), source_provider_id: Some("claude:synthetic".into()),
+                website_url: None, notes: Some("retain".into()), icon: None, icon_color: None,
+                sort_index: Some(-1), meta: None, is_applied: false, is_disabled: false,
+                created_at: "2026-10-26T00:00:00Z".into(), updated_at: "2026-10-26T00:00:00Z".into(),
+            }
+        }
+
+        #[test]
+        fn listing_seeds_only_the_reserved_identity_without_adopting_imported_credentials() {
+            let db = SqliteDbState::in_memory_for_test().unwrap();
+            let settings = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"synthetic-not-real"}}"#;
+            put_provider_to_sqlite(&db, "imported", &row(settings)).unwrap();
+            let before = serde_json::to_value(get_provider_from_sqlite(&db, "imported").unwrap()).unwrap();
+            let providers = list_providers_with_official(&db).unwrap();
+            assert_eq!(providers.len(), 2);
+            assert!(providers.iter().any(|p| p.id == OFFICIAL_PROVIDER_ID));
+            assert_eq!(serde_json::to_value(get_provider_from_sqlite(&db, "imported").unwrap()).unwrap(), before);
+            assert_eq!(list_providers_with_official(&db).unwrap().len(), 2);
+        }
+
+        #[test]
+        fn seed_initialization_preserves_existing_user_edits() {
+            let db = SqliteDbState::in_memory_for_test().unwrap();
+            let mut edited = row(r#"{"env":{},"edited":true}"#);
+            edited.name = "Renamed official".into();
+            put_provider_to_sqlite(&db, OFFICIAL_PROVIDER_ID, &edited).unwrap();
+            let before = serde_json::to_value(get_provider_from_sqlite(&db, OFFICIAL_PROVIDER_ID).unwrap()).unwrap();
+            let (_, created) = ensure_official_provider_row(&db).unwrap();
+            assert!(!created);
+            list_providers_with_official(&db).unwrap();
+            assert_eq!(serde_json::to_value(get_provider_from_sqlite(&db, OFFICIAL_PROVIDER_ID).unwrap()).unwrap(), before);
+        }
+
+        #[test]
+        fn deletion_protects_only_the_seed_not_official_imports_or_copies() {
+            let db = SqliteDbState::in_memory_for_test().unwrap();
+            ensure_official_provider_row(&db).unwrap();
+            for id in ["imported", "copy"] {
+                put_provider_to_sqlite(&db, id, &row(r#"{"env":{}}"#)).unwrap();
+                delete_provider_from_sqlite(&db, id).unwrap();
+                assert!(get_provider_from_sqlite(&db, id).unwrap().is_none());
+            }
+            assert!(delete_provider_from_sqlite(&db, OFFICIAL_PROVIDER_ID).is_err());
+            assert!(get_provider_from_sqlite(&db, OFFICIAL_PROVIDER_ID).unwrap().is_some());
+        }
     }
 
     mod profile_apply_purpose {

@@ -93,6 +93,8 @@ import ClaudeDesktopProviderFormModal from '../components/ClaudeDesktopProviderF
 import {
   canPreserveImportedClaudeDesktopCredentials,
   isClaudeDesktopOfficialRestoreProvider,
+  isClaudeDesktopPinnedOfficialProvider,
+  canDeleteClaudeDesktopProvider,
 } from '../utils/officialRestore';
 import ClaudeDesktopCommonConfigModal from '../components/ClaudeDesktopCommonConfigModal';
 import SectionSidebarLayout, {
@@ -553,7 +555,7 @@ const ClaudeDesktopPage: React.FC = () => {
   );
 
   const canBatchDeleteProvider = React.useCallback(
-    (provider: ClaudeDesktopProvider) => Boolean(provider.id),
+    (provider: ClaudeDesktopProvider) => canDeleteClaudeDesktopProvider(provider),
     [],
   );
 
@@ -563,10 +565,10 @@ const ClaudeDesktopPage: React.FC = () => {
       // `canBatchDeleteProvider` also drops rows without an id; without a branch
       // here those rows would render a disabled checkbox with no explanation.
       if (!provider.id) return 'unnamed';
-      if (provider.id === officialChannelProviderId) return 'official';
+      if (isClaudeDesktopPinnedOfficialProvider(provider)) return 'official';
       return undefined;
     },
-    [officialChannelProviderId],
+    [],
   );
 
   const handleBatchDeleteProviders = React.useCallback(
@@ -729,6 +731,7 @@ const ClaudeDesktopPage: React.FC = () => {
   };
 
   const handleDeleteProvider = (provider: ClaudeDesktopProvider) => {
+    if (!canDeleteClaudeDesktopProvider(provider)) return;
     Modal.confirm({
       title: t('claudecode.provider.confirmDelete', { name: provider.name }),
       icon: <ExclamationCircleOutlined />,

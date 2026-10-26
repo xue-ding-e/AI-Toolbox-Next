@@ -6,6 +6,8 @@
 
 ## Source of Truth
 
+- 固定官方卡只认 `claude-desktop-official` 保留 ID：列表确保该 seed 存在，后端删除与前端单删/批选/详情按钮共用这一身份边界。不得收养首个 `category=official` 行；带凭据导入行和复制行不是固定卡，仍可删除，已有 seed 编辑不被初始化覆盖。restore predicate 比固定卡更宽，不能互相代用。
+
 - Claude Desktop 是"配置文件路径模块",不是"根目录模块":它不改任何 CLI 根目录,只改平台固定路径下的几个 JSON 文件。
 - 路径决议只依赖平台 + 环境变量(`LOCALAPPDATA` / `HOME`),不读取 DB、环境变量或 shell 配置推导根目录。
 - Provider 与 common config 的主存储是 SQLite JSONB(表 `claude_desktop_provider`);磁盘文件是运行时事实,apply 时才改写。

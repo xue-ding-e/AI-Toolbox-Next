@@ -1,5 +1,18 @@
 import type { ClaudeDesktopProvider } from '@/types/claudedesktop';
 
+// Keep in sync with tauri/src/coding/claude_desktop/constants.rs.
+export const CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID = 'claude-desktop-official';
+
+/** Pin identity is narrower than restore semantics: copies and imported rows
+ * retain their own identity, even when their category is official. */
+export function isClaudeDesktopPinnedOfficialProvider(provider?: Pick<ClaudeDesktopProvider, 'id'> | null): boolean {
+  return provider?.id === CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
+}
+
+export function canDeleteClaudeDesktopProvider(provider?: Pick<ClaudeDesktopProvider, 'id'> | null): boolean {
+  return Boolean(provider?.id) && !isClaudeDesktopPinnedOfficialProvider(provider);
+}
+
 type RestoreProvider = Pick<ClaudeDesktopProvider, 'id' | 'category' | 'settingsConfig'>;
 
 /** Mirror the backend's seed-id override and official_restore_settings predicate.
@@ -8,7 +21,7 @@ type RestoreProvider = Pick<ClaudeDesktopProvider, 'id' | 'category' | 'settings
  */
 export function isClaudeDesktopOfficialRestoreProvider(provider?: RestoreProvider | null): boolean {
   if (!provider) return false;
-  if (provider.id === 'claude-desktop-official') return true;
+  if (isClaudeDesktopPinnedOfficialProvider(provider)) return true;
   if (provider.category !== 'official') return false;
 
   let settings: unknown;

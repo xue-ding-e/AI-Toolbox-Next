@@ -8,6 +8,7 @@ import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import type { ClaudeDesktopProvider } from '@/types/claudedesktop';
+import { canDeleteClaudeDesktopProvider } from '../utils/officialRestore';
 import {
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -577,7 +578,7 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
       onEdit: () => onEdit(provider),
       onCopy: () => onCopy(provider),
       onShare: onShare ? () => onShare(provider) : undefined,
-      onDelete: () => onDelete(provider),
+      onDelete: canDeleteClaudeDesktopProvider(provider) ? () => onDelete(provider) : undefined,
       enabledStateLabel: provider.isDisabled
         ? t('claudecode.configDisabled')
         : t('claudecode.configEnabled'),
@@ -714,9 +715,11 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
                 {t('common.share')}
               </Button>
             )}
-            <Button size="small" type="text" danger onClick={() => onDelete(provider)}>
-              {t('common.delete')}
-            </Button>
+            {canDeleteClaudeDesktopProvider(provider) && (
+              <Button size="small" type="text" danger onClick={() => onDelete(provider)}>
+                {t('common.delete')}
+              </Button>
+            )}
           </Space>
         ),
       }}
