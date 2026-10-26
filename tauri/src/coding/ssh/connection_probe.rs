@@ -165,7 +165,7 @@ mod tests {
     use super::*;
 
     #[derive(Clone, Copy)]
-    enum Mode { Ok, Fail, Pending, Streaming, UnclosedStream }
+    enum Mode { Ok, Fail, Pending, Streaming, UnclosedStream, DrainedWithoutClose }
 
     struct Fake {
         auth: Mode,
@@ -173,11 +173,16 @@ mod tests {
         cleanup: Mode,
         calls: Vec<&'static str>,
         chunks: usize,
+        pending_close: Option<tokio::sync::oneshot::Receiver<u32>>,
+        drained: Option<tokio::sync::oneshot::Sender<()>>,
     }
 
     impl Default for Fake {
         fn default() -> Self {
-            Self { auth: Mode::Ok, probe: Mode::Ok, cleanup: Mode::Ok, calls: vec![], chunks: 0 }
+            Self {
+                auth: Mode::Ok, probe: Mode::Ok, cleanup: Mode::Ok, calls: vec![], chunks: 0,
+                pending_close: None, drained: None,
+            }
         }
     }
 
@@ -212,6 +217,12 @@ mod tests {
                     let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
                     closed_tx.send(7).unwrap();
                     collect(&mut queue, closed_rx, 7).await
+                }
+                Mode::DrainedWithoutClose => {
+                    let mut queue = Queue::new(success_messages());
+                    queue.drained = self.drained.take();
+                    let closed = self.pending_close.take().expect("close receiver provided by test");
+                    collect(&mut queue, closed, 7).await
                 }
                 Mode::Ok => {
                     let mut output = ProbeOutput::default();
@@ -377,6 +388,52 @@ mod tests {
             )
         }).await.expect("drain and close confirmation must finish");
         assert_eq!(output.unwrap().capability(), (SSHSyncCapability::Supported, None));
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn drained_stream_without_close_notification_obeys_probe_deadline() {
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+        let (drained_tx, mut drained_rx) = tokio::sync::oneshot::channel();
+        let mut fake = Fake {
+            probe: Mode::DrainedWithoutClose,
+            pending_close: Some(closed_rx),
+            drained: Some(drained_tx),
+            ..Fake::default()
+        };
+        let limits = Deadlines::default();
+        let started = tokio::time::Instant::now();
+        let mut lifecycle = Box::pin(run(
+            &mut fake, super::super::super::capabilities::POSIX_SYNC_PROBE, limits,
+        ));
+
+        // No task is spawned and no await occurs before this observation. Poll
+        // the real lifecycle once: auth succeeds, the queue yields all bytes and
+        // status followed by None, then collect must wait for the real callback.
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(lifecycle.as_mut().poll(&mut context).is_pending());
+        drained_rx.try_recv().expect("the stream must have actually yielded None");
+        assert!(!closed_tx.is_closed(), "collect must still own the close receiver");
+        assert_eq!(started.elapsed(), Duration::ZERO);
+
+        // Keep the sender alive and never send. Paused Tokio time advances to
+        // run's existing probe deadline, not a wall-clock sleep or fake timeout.
+        // The wider outer bound fails if that production deadline is removed.
+        let outcome = tokio::time::timeout(
+            limits.probe + limits.cleanup + Duration::from_secs(1), lifecycle,
+        ).await.expect("the production probe deadline must bound the callback wait");
+        let elapsed = started.elapsed();
+        assert!(elapsed >= limits.probe);
+        assert!(elapsed < limits.probe + limits.cleanup);
+        assert!(closed_tx.is_closed(), "timeout must drop the waiting receiver");
+        drop(closed_tx);
+
+        assert_eq!(outcome.cleanup_warning, None);
+        let result = outcome.into_result();
+        assert!(result.connected);
+        assert!(result.error.is_none());
+        assert_eq!(result.sync_capability, Some(SSHSyncCapability::Unknown));
+        assert_eq!(result.probe_reason, Some(ProbeReason::ProbeTimeout));
+        assert_eq!(fake.calls, ["auth", "probe", "disconnect"]);
     }
 
     #[tokio::test]

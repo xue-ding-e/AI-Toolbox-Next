@@ -114,6 +114,9 @@ zbus-secret-service-keyring-store = "1"
 libc = "0.2"
 
 [dev-dependencies]
+# Paused time drives SSH probe deadline regressions without wall-clock sleeps.
+# Keep this feature out of normal builds (edition 2021's resolver version 2).
+tokio = { version = "1.49.0", features = ["test-util"] }
 # Reuse the tauri version already declared in [dependencies]; only enable the
 # `test` feature (tauri::test::mock_app) during test builds. Keeping a loose
 # "2" range avoids re-pinning the exact version in two places.

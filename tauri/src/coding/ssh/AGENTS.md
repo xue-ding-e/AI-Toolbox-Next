@@ -82,6 +82,7 @@ sequenceDiagram
 
 ## 最小验证
 
+- 连接探测的流结束与远端 close callback 是独立信号。`drained_stream_without_close_notification_obeys_probe_deadline` 用 dev-only Tokio paused clock 驱动真实 `run -> collect`，先独立确认流已 drain 到 `None`、sender 仍存活且 receiver 未关闭，再验证统一 probe 超时、认证结果保留及一次 disconnect；不能用墙钟 sleep 或直接返回假 `ProbeTimeout` 替代。它不验证真实 SSH 远端关闭、外部取消清理或同步私钥预处理。
 - 同步警告回归：`cargo test --lib saving_sync_preferences_preserves_latest_skills_warnings` 和 `cargo test --lib concurrent_sync_status_and_warnings_preserve_both_snapshots` 验证旧表单保存不会覆盖新的警告/状态，以及独立链路并发写入时字段不丢失。
 - 至少验证：手动点击 Sync Now 会执行同步，并带出进度事件。
 - 至少验证：启用 SSH 或切换 active connection 时能完成一次全量同步。
