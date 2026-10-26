@@ -77,8 +77,11 @@
     {
       "upstream_commit": "7f486ef80f014087377290a64fccbb2fffd8fa3c",
       "subject": "fix(claudedesktop): pin the official channel, and route mapped providers through the gateway",
-      "decision": "already-enhanced",
-      "reason": "Next central Direct projection guard and imported official configuration preservation retained"
+      "decision": "adapted-functional-port",
+      "reason": "Next already retained the Direct projection guard; complete the official-row prerequisite using the reserved identity, never category adoption. Imported/copy rows and edited seed settings are preserved.",
+      "next_commits": [
+        "567789981ca39f0091cb081454b8d37ad44b7a2e"
+      ]
     },
     {
       "upstream_commit": "c9bcc6c0334503a76aeb5ce2733fdad11d673dd5",
@@ -470,6 +473,10 @@
     {
       "commit": "6b477b57cb6ae96611f30f9a0812cb98a78bccae",
       "scope": "Only infer Pi SSE support from the exact enabled MCP adapter extension"
+    },
+    {
+      "commit": "567789981ca39f0091cb081454b8d37ad44b7a2e",
+      "scope": "Complete canonical official-row list/delete/UI prerequisites while retaining imported credentials and atomic seed initialization"
     }
   ],
   "lightweight_evidence": {
@@ -487,6 +494,10 @@
     "handler_inventory": {
       "passed": 6,
       "scope": "Fresh generated handler inventory; not implemented CLI/MCP business coverage"
+    },
+    "official_pin_and_restore": {
+      "passed": 11,
+      "scope": "Four actual helper/Page/Card AST tests plus seven existing imported-credential controls; not browser or Rust execution"
     }
   }
 }
