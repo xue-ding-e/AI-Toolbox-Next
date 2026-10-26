@@ -303,10 +303,12 @@ function fixtureInvoke(routing: string | null = null) {
 test('only the exact synthetic OMP mount read returns a fresh empty readonly account list', async () => {
   const first = fixtureInvoke();
   const result = await first.invoke('list_omp_codex_accounts', { rootPath: '/fixture/omp' });
+  // Keep the mutation alias before deepEqual narrows the empty array to never[].
+  const accounts: unknown[] = result.accounts;
   assert.deepEqual(result, { accounts: [], canWrite: false, error: null });
   assert.deepEqual(first.state.syntheticReads, [{ command: 'list_omp_codex_accounts', args: { rootPath: '/fixture/omp' } }]);
   assert.deepEqual(first.state.unexpectedIPC, []);
-  result.accounts.push('synthetic mutation');
+  accounts.push('synthetic mutation');
   const second = fixtureInvoke();
   assert.deepEqual(await second.invoke('list_omp_codex_accounts', { rootPath: '/fixture/omp' }), { accounts: [], canWrite: false, error: null });
 });
