@@ -398,27 +398,37 @@ fn user_npmrc_path(runtime_location: &RuntimeLocationInfo) -> Option<PathBuf> {
     }
 }
 
-fn npmrc_key(line: &str) -> Option<&str> {
-    let line = line.trim();
-    if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-        return None;
+/// Accept only unambiguous root assignments. This is intentionally not an INI
+/// parser: duplicate keys, sections, interpolation, arrays, escapes and quoted
+/// values require npm's own interpretation, so automatic repair must abstain.
+fn simple_npmrc_allow_scripts(content: &str) -> Result<Option<String>, ()> {
+    let mut keys = std::collections::HashSet::new();
+    let mut policy = None;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        let (key, value) = line.split_once('=').ok_or(())?;
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty()
+            || !key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-".contains(&b))
+            || !value.bytes().all(|b| b.is_ascii_alphanumeric() || b"@/._-,:".contains(&b))
+            || !keys.insert(key)
+        {
+            return Err(());
+        }
+        if key == "allow-scripts" {
+            if value.is_empty() { return Err(()); }
+            policy = Some(format!("allow-scripts={value}"));
+        }
     }
-    line.split_once('=').map(|(key, _)| key.trim())
-}
-
-fn npmrc_has_allow_scripts(content: &str) -> bool {
-    content
-        .lines()
-        .any(|line| npmrc_key(line) == Some("allow-scripts"))
+    Ok(policy)
 }
 
 fn read_npmrc_allow_scripts(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()?
-        .lines()
-        .map(str::trim)
-        .find(|line| npmrc_key(line) == Some("allow-scripts"))
-        .map(str::to_string)
+    simple_npmrc_allow_scripts(&std::fs::read_to_string(path).ok()?).ok()?
 }
 
 fn repair_npm_allow_scripts(project_npmrc: &Path, user_npmrc: &Path) -> Result<bool, String> {
@@ -437,7 +447,7 @@ fn repair_npm_allow_scripts(project_npmrc: &Path, user_npmrc: &Path) -> Result<b
         }
     };
     // 用户自己已经给该目录配过 allow-scripts 时不覆盖，哪怕重试仍失败。
-    if npmrc_has_allow_scripts(&existing) {
+    if !matches!(simple_npmrc_allow_scripts(&existing), Ok(None)) {
         return Ok(false);
     }
     if let Some(parent) = project_npmrc.parent() {
@@ -2828,4 +2838,30 @@ npm error --allow-scripts is not allowed in project-scoped installs. Add the ent
         assert!(!repair_npm_allow_scripts(&project_npmrc, &user_npmrc).unwrap());
         assert!(!project_npmrc.exists());
     }
+    #[test]
+    fn npm_policy_repair_rejects_ambiguous_or_scoped_assignments() {
+        for content in [
+            "allow-scripts=a,b\nallow-scripts=b\n",
+            "allow-scripts=true\nallow-scripts=false\n",
+            "[section]\nallow-scripts=true\n",
+            "allow-scripts[]=a\n", "allow-scripts=\"true\"\n",
+            "allow-scripts=${POLICY}\n", "allow-scripts=true ; note\n",
+            "allow-scripts = a\\b\n", "allow-scripts\n",
+        ] {
+            assert!(simple_npmrc_allow_scripts(content).is_err(), "{content}");
+            let directory = tempfile::tempdir().unwrap();
+            let user = directory.path().join("user.npmrc");
+            let project = directory.path().join("project.npmrc");
+            std::fs::write(&user, content).unwrap();
+            std::fs::write(&project, "registry=https://example.com\n").unwrap();
+            assert!(!repair_npm_allow_scripts(&project, &user).unwrap());
+            assert_eq!(std::fs::read_to_string(&project).unwrap(), "registry=https://example.com\n");
+            std::fs::write(&user, "allow-scripts=true\n").unwrap();
+            std::fs::write(&project, content).unwrap();
+            assert!(!repair_npm_allow_scripts(&project, &user).unwrap());
+            assert_eq!(std::fs::read_to_string(&project).unwrap(), content);
+        }
+        assert_eq!(simple_npmrc_allow_scripts("# comment\nregistry=https://example.com\nallow-scripts=a,b\n"), Ok(Some("allow-scripts=a,b".into())));
+    }
+
 }

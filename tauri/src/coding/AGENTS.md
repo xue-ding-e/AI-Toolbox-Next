@@ -94,3 +94,5 @@ sequenceDiagram
 
 - 改 `runtime_location` 后，至少验证一个本机路径场景和一个 WSL UNC 路径场景。
 - 改事件约定后，至少验证主窗口保存、托盘刷新、WSL 设置页状态三者是否仍一致。
+
+- npm `allow-scripts` 自动修复只接受无重复键、无 section 的简单 root 赋值；引号、插值、数组或其它复杂 INI 语法必须保留原错误，不猜测生效策略。目标 `.npmrc` 同样先通过该检查，避免追加到 section 或覆盖已有策略。
