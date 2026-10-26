@@ -1,9 +1,10 @@
 /**
- * Mounts the four migrated provider mapping layers directly, with no page and
+ * Mounts the migrated provider mapping layers directly, with no page and
  * synthetic props/callbacks. Import-time platform shims are retained, while
- * every backend invocation fails closed.
+ * only one exact synthetic OMP mount read is answered locally; every other
+ * backend invocation fails closed. No command reaches Tauri or a real profile.
  *
- * Why not the real pages: the four pages each call dozens of Tauri commands on
+ * Why not the real pages: provider pages call dozens of Tauri commands on
  * mount, and the claims this fixture guards belong to the mapping layers — the
  * layout they pick, the facts they state, and the guards they honour. A page
  * fixture would break the day a page gains an unrelated command.
@@ -58,9 +59,19 @@ document.documentElement.dataset.theme = resolvedTheme;
 updateGatewayProviderProfiles(gatewayProfiles);
 
 const noop = () => {};
-const state = { runId: parameters.get('runId'), callbacks: [], unexpectedIPC: [], antdContainer: null };
+const state = { runId: parameters.get('runId'), callbacks: [], syntheticReads: [], unexpectedIPC: [], antdContainer: null };
 window.__TAURI_INTERNALS__ = {
   invoke: async (command, args) => {
+    // The real Next subscription card loads its account list on mount. This
+    // sole synthetic read never reaches Tauri or a real profile; every other
+    // command/argument, duplicate read and routing-page read remains forbidden.
+    if (desktopGatewayCase === null && command === 'list_omp_codex_accounts'
+      && args && typeof args === 'object' && !Array.isArray(args)
+      && Reflect.ownKeys(args).length === 1 && Object.hasOwn(args, 'rootPath')
+      && args.rootPath === '/fixture/omp' && state.syntheticReads.length === 0) {
+      state.syntheticReads.push({ command, args: { rootPath: args.rootPath } });
+      return { accounts: [], canWrite: false, error: null };
+    }
     state.unexpectedIPC.push({ command, args });
     throw new Error('Unexpected migrated-card fixture IPC: ' + command);
   },

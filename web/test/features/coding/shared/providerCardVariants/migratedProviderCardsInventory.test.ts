@@ -288,3 +288,85 @@ test('all eight Desktop routing branches retain their exact callback and availab
   assert.equal(Object.keys(expected).length, 8);
   assert.equal(Object.values(expected as Record<string, number>).reduce((sum, value) => sum + value, 0), 28);
 });
+
+function fixtureInvoke(routing: string | null = null) {
+  const assignments = nodes(fixtureAst, node => ts.isBinaryExpression(node)
+    && node.left.getText(fixtureAst) === 'window.__TAURI_INTERNALS__') as ts.BinaryExpression[];
+  assert.equal(assignments.length, 1);
+  const state = { syntheticReads: [] as unknown[], unexpectedIPC: [] as unknown[] };
+  const api = new Function('state', 'desktopGatewayCase', 'return ' + assignments[0].right.getText(fixtureAst))(state, routing) as {
+    invoke: (command: string, args: unknown) => Promise<{ accounts: unknown[]; canWrite: boolean; error: null }>;
+  };
+  return { state, invoke: api.invoke };
+}
+
+test('only the exact synthetic OMP mount read returns a fresh empty readonly account list', async () => {
+  const first = fixtureInvoke();
+  const result = await first.invoke('list_omp_codex_accounts', { rootPath: '/fixture/omp' });
+  assert.deepEqual(result, { accounts: [], canWrite: false, error: null });
+  assert.deepEqual(first.state.syntheticReads, [{ command: 'list_omp_codex_accounts', args: { rootPath: '/fixture/omp' } }]);
+  assert.deepEqual(first.state.unexpectedIPC, []);
+  result.accounts.push('synthetic mutation');
+  const second = fixtureInvoke();
+  assert.deepEqual(await second.invoke('list_omp_codex_accounts', { rootPath: '/fixture/omp' }), { accounts: [], canWrite: false, error: null });
+});
+
+test('wrong root, missing, array, inherited, extra and symbolic IPC arguments remain rejected', async () => {
+  for (const args of [null, undefined, [], {}, { rootPath: '/other' }, { rootPath: '/fixture/omp', extra: true },
+    Object.create({ rootPath: '/fixture/omp' }), { rootPath: '/fixture/omp', [Symbol('extra')]: true }]) {
+    const run = fixtureInvoke();
+    await assert.rejects(run.invoke('list_omp_codex_accounts', args), /Unexpected migrated-card fixture IPC/);
+    assert.equal(run.state.unexpectedIPC.length, 1);
+    assert.equal(run.state.syntheticReads.length, 0);
+  }
+});
+
+test('all other IPC including account writes remains unexpected and rejected', async () => {
+  for (const command of ['import_omp_codex_account', 'switch_omp_codex_account', 'get_omp_codex_account_usage', 'unknown']) {
+    const run = fixtureInvoke();
+    await assert.rejects(run.invoke(command, { rootPath: '/fixture/omp' }), /Unexpected migrated-card fixture IPC/);
+    assert.equal(run.state.unexpectedIPC.length, 1);
+    assert.equal(run.state.syntheticReads.length, 0);
+  }
+});
+
+test('a duplicate mount read is a failure, not a second permitted backend operation', async () => {
+  const run = fixtureInvoke();
+  await run.invoke('list_omp_codex_accounts', { rootPath: '/fixture/omp' });
+  await assert.rejects(run.invoke('list_omp_codex_accounts', { rootPath: '/fixture/omp' }), /Unexpected migrated-card fixture IPC/);
+  assert.equal(run.state.syntheticReads.length, 1);
+  assert.equal(run.state.unexpectedIPC.length, 1);
+});
+
+test('Desktop routing pages do not permit the unrelated OMP mount read', async () => {
+  for (const routing of ['identity', 'mapped', 'takeover', 'stopped', '']) {
+    const run = fixtureInvoke(routing);
+    await assert.rejects(run.invoke('list_omp_codex_accounts', { rootPath: '/fixture/omp' }), /Unexpected migrated-card fixture IPC/);
+    assert.equal(run.state.syntheticReads.length, 0);
+    assert.equal(run.state.unexpectedIPC.length, 1);
+  }
+});
+
+test('real scenario guards require exactly one synthetic mount read, while routing requires zero', async () => {
+  const allowed = [{ command: 'list_omp_codex_accounts', args: { rootPath: '/fixture/omp' } }];
+  const messages = ['Exactly one synthetic OMP mount read per mapping document', 'Desktop routing has no synthetic OMP reads'];
+  for (const [index, message] of messages.entries()) {
+    const calls = nodes(checksAst, node => ts.isCallExpression(node) && node.arguments.some(argument =>
+      ts.isStringLiteral(argument) && argument.text === message));
+    assert.equal(calls.length, 1);
+    const guard = new Function('assert', 'fixture', 'observations', `return (async () => { ${calls[0].getText(checksAst)}; })();`);
+    const run = (ledger: unknown[]) => guard(assert, async (name: string) => {
+      assert.equal(name, 'state.syntheticReads'); return ledger;
+    }, { syntheticReads: ledger });
+    await run(index === 0 ? allowed : []);
+    for (const wrong of index === 0 ? [[], [...allowed, ...allowed], [{ command: 'other' }]] : [allowed]) {
+      await assert.rejects(run(wrong), /synthetic OMP/);
+    }
+  }
+  const reset = fixtureApi().properties.find(node => node.name?.getText(fixtureAst) === 'resetCallbacks');
+  assert.ok(reset);
+  const state = { callbacks: ['before'], syntheticReads: allowed };
+  new Function('state', `return ({${reset.getText(fixtureAst)}}).resetCallbacks;`)(state)();
+  assert.deepEqual(state.callbacks, []);
+  assert.equal(state.syntheticReads, allowed, 'Callback scenarios cannot reset the permitted-read ledger');
+});

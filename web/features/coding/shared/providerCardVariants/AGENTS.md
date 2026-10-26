@@ -118,6 +118,8 @@ Claude / Codex 式的菜单**固定为**：启用（含副标题）→ 编辑 �
 
 ## 最小验证
 
+- 真实 `OmpSubscriptionCard` mount 会读账号列表；映射夹具只提供一次、精确 `/fixture/omp` 的 `list_omp_codex_accounts` 空账号不可写 synthetic 响应，并单独核对读取 ledger。任何其它 IPC、写命令、错根、多参数、重复读及 Desktop routing 页面调用仍必须失败；导航才重建 ledger，不能用清空记录或通用 allowlist 换绿。
+
 - `test:migrated-provider-cards` 的完整挂载库存与主题表面矩阵是不同口径：新增 readonly/selection/builtin/订阅样例时，必须同步精确库存，但不能把非卡片 block 盲套进原主题循环。保留各场景计数及合计门；`migratedProviderCardsInventory.test.ts` 执行真实 FixtureHost 的 JSX 结构和检查 helper，以漏项、重项、额外项拦截库存漂移（仅 Node/mock，不代替浏览器）。
 - 合并 fixture API 时禁止重复对象方法名：JS 后置方法会静默覆盖前置实现。`expandModels` 必须是唯一异步方法，真实 header 单次点击后保留原等待，并确认展开且模型行已挂载，不能用 void 返回误报产品打不开。
 

@@ -69,6 +69,9 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
   const finishScenario = async name => {
     assert.equal(checks.length - scenarioStart, SCENARIO_COUNTS[name], 'Incomplete assertions: ' + name);
     assert.deepEqual(await fixture('state.unexpectedIPC'), [], 'Mapping fixture must not call a backend');
+    assert.deepEqual(await fixture('state.syntheticReads'), [
+      { command: 'list_omp_codex_accounts', args: { rootPath: '/fixture/omp' } },
+    ], 'Exactly one synthetic OMP mount read per mapping document');
     assert.equal(exceptions.length, 0, 'Unhandled browser exceptions remain failures');
     completed.push(name);
     scenarioStart = checks.length;
@@ -161,6 +164,7 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
         + " && Boolean(document.querySelector('[data-fixture=\"grok-custom-list\"]'))",
       `fixture ${query}`,
     );
+    await waitFor('migratedProviderCardsFixture.state.syntheticReads.length === 1', 'one synthetic OMP mount read');
     await delay(300);
   };
 
@@ -937,8 +941,10 @@ export async function verifyClaudeDesktopRouting({ send, evaluate, baseUrl, arti
   });
   const assertClean = async observations => {
     observations.unexpectedIPC = await fixture('state.unexpectedIPC');
+    observations.syntheticReads = await fixture('state.syntheticReads');
     observations.browserExceptions = [...exceptions];
     assert.deepEqual(observations.unexpectedIPC, [], 'Mapping fixture must not call a backend');
+    assert.deepEqual(observations.syntheticReads, [], 'Desktop routing has no synthetic OMP reads');
     assert.deepEqual(observations.browserExceptions, [], 'Browser exceptions remain failures');
   };
   const stableTarget = async (action, observations) => {
