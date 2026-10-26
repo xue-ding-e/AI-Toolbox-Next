@@ -118,6 +118,8 @@ Claude / Codex 式的菜单**固定为**：启用（含副标题）→ 编辑 �
 
 ## 最小验证
 
+- 共享紧凑卡片 Drawer 是 `closable=false`，真实关闭入口为 `[data-provider-detail-close]`；不得用 `.ant-drawer-close?.click()` 静默空操作。逐卡页脚检查必须从零旧面板开始，只读取本次唯一面板，再单次关闭并在共享原轮询预算内等到卸载，避免下一张卡误读上一张的动作。
+
 - 真实 `OmpSubscriptionCard` mount 会读账号列表；映射夹具只提供一次、精确 `/fixture/omp` 的 `list_omp_codex_accounts` 空账号不可写 synthetic 响应，并单独核对读取 ledger。任何其它 IPC、写命令、错根、多参数、重复读及 Desktop routing 页面调用仍必须失败；导航才重建 ledger，不能用清空记录或通用 allowlist 换绿。
 
 - `test:migrated-provider-cards` 的完整挂载库存与主题表面矩阵是不同口径：新增 readonly/selection/builtin/订阅样例时，必须同步精确库存，但不能把非卡片 block 盲套进原主题循环。保留各场景计数及合计门；`migratedProviderCardsInventory.test.ts` 执行真实 FixtureHost 的 JSX 结构和检查 helper，以漏项、重项、额外项拦截库存漂移（仅 Node/mock，不代替浏览器）。

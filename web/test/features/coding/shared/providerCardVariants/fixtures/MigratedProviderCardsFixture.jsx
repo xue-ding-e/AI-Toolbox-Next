@@ -730,23 +730,39 @@ window.migratedProviderCardsFixture = {
    * render; a card that never passes `secondaryActions` leaves it empty.
    */
   async detailFooterActions(name) {
-    const root = cards(name)[0];
-    const body = root?.querySelector('[data-provider-card-clickable]');
-    if (!body) return null;
-    body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const panelSelector = '[data-provider-detail-panel]';
+    if (document.querySelectorAll(panelSelector).length !== 0) {
+      throw new Error('Existing provider detail panel before opening: ' + name);
+    }
+    const roots = cards(name);
+    if (roots.length !== 1) throw new Error('Expected one fixture root: ' + name);
+    const bodies = roots[0].querySelectorAll('[data-provider-card-clickable]');
+    if (bodies.length !== 1) throw new Error('Expected one clickable card body: ' + name);
+    bodies[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    let openedPanel;
+    let labels;
+    // One shared original 60 x 50ms budget covers both mount and teardown.
+    // Read only this newly opened panel and click its actual custom close once.
     for (let attempt = 0; attempt < 60; attempt++) {
-      const footer = document.querySelector('[data-provider-detail-footer]');
-      if (footer) {
-        const labels = [...footer.querySelectorAll('button')]
-          .map(button => button.textContent.trim())
-          .filter(Boolean);
-        document.querySelector('.ant-drawer-close')?.click();
-        await new Promise(resolve => setTimeout(resolve, 250));
-        return labels;
+      const panels = document.querySelectorAll(panelSelector);
+      if (panels.length > 1) throw new Error('Expected one provider detail panel: ' + name);
+      if (openedPanel) {
+        if (panels.length === 0) return labels;
+        if (panels[0] !== openedPanel) throw new Error('Provider detail panel changed while closing: ' + name);
+      } else if (panels.length === 1) {
+        openedPanel = panels[0];
+        const footers = openedPanel.querySelectorAll('[data-provider-detail-footer]');
+        const closers = openedPanel.querySelectorAll('[data-provider-detail-close]');
+        if (footers.length !== 1 || closers.length !== 1) {
+          throw new Error('Expected one real detail footer and close control: ' + name);
+        }
+        labels = [...footers[0].querySelectorAll('button')]
+          .map(button => button.textContent.trim()).filter(Boolean);
+        closers[0].click();
       }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    return null;
+    throw new Error('Provider detail did not complete within the shared poll budget: ' + name);
   },
 
   /**

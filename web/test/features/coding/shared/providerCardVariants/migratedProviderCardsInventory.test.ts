@@ -370,3 +370,102 @@ test('real scenario guards require exactly one synthetic mount read, while routi
   assert.deepEqual(state.callbacks, []);
   assert.equal(state.syntheticReads, allowed, 'Callback scenarios cannot reset the permitted-read ledger');
 });
+
+function detailLifecycle(options: { stale?: boolean; duplicateBody?: boolean; duplicatePanel?: boolean; missingFooter?: boolean; missingClose?: boolean; neverOpen?: boolean; neverClose?: boolean; replaceAfterClose?: boolean } = {}) {
+  const method = fixtureApi().properties.find(node => node.name?.getText(fixtureAst) === 'detailFooterActions');
+  assert.ok(method);
+  let panels: any[] = options.stale ? [{}] : [];
+  let opens = 0;
+  let closes = 0;
+  let ticks = 0;
+  let closing = false;
+  let selected = '';
+  const delays: number[] = [];
+  const footer = { querySelectorAll: (selector: string) => {
+    assert.equal(selector, 'button'); return [{ textContent: selected + ' edit' }, { textContent: selected + ' copy' }];
+  } };
+  const close = { click: () => { closes++; closing = true; ticks = 0; } };
+  const panel: any = { querySelectorAll: (selector: string) => {
+    if (selector === '[data-provider-detail-footer]') return options.missingFooter ? [] : [footer];
+    assert.equal(selector, '[data-provider-detail-close]'); return options.missingClose ? [] : [close];
+  } };
+  const body = { dispatchEvent: (event: any) => {
+    assert.equal(event.type, 'click'); assert.equal(event.bubbles, true); opens++;
+    if (!options.neverOpen) panels = options.duplicatePanel ? [panel, panel] : [panel];
+  } };
+  const root = {
+    querySelector: (selector: string) => { assert.equal(selector, '[data-provider-card-clickable]'); return body; },
+    querySelectorAll: (selector: string) => { assert.equal(selector, '[data-provider-card-clickable]'); return options.duplicateBody ? [body, body] : [body]; },
+  };
+  const document = {
+    querySelectorAll: (selector: string) => { assert.equal(selector, '[data-provider-detail-panel]'); return panels; },
+    querySelector: (selector: string) => {
+      if (selector === '[data-provider-detail-footer]') return panels.length && !options.missingFooter ? footer : null;
+      assert.equal(selector, '.ant-drawer-close'); return null; // The actual shared Drawer has closable=false.
+    },
+  };
+  const invoke = new Function('cards', 'document', 'MouseEvent', 'setTimeout', `return ({${method.getText(fixtureAst)}}).detailFooterActions;`)(
+    (name: string) => { selected = name; return [root]; }, document,
+    class { type: string; bubbles: boolean; constructor(type: string, options: { bubbles: boolean }) { this.type = type; this.bubbles = options.bubbles; } },
+    (callback: () => void, milliseconds: number) => {
+      delays.push(milliseconds); ticks++;
+      if (closing && options.replaceAfterClose) panels = [{}];
+      else if (closing && !options.neverClose && ticks >= 3) { panels = []; closing = false; }
+      callback();
+    },
+  ) as (name: string) => Promise<string[]>;
+  return { invoke, stats: () => ({ opens, closes, panels: panels.length, delays }) };
+}
+
+test('each real footer helper opens its own card and uses the real close control before returning', async () => {
+  const run = detailLifecycle();
+  for (const name of ['pi-card', 'omp-card', 'dsh-card']) {
+    assert.deepEqual(await run.invoke(name), [name + ' edit', name + ' copy']);
+    assert.equal(run.stats().panels, 0, 'A previous panel cannot satisfy the next card assertion');
+  }
+  assert.equal(run.stats().opens, 3);
+  assert.equal(run.stats().closes, 3);
+  assert.ok(run.stats().delays.every(milliseconds => milliseconds === 50));
+});
+
+test('a stale panel is rejected before opening another card', async () => {
+  const run = detailLifecycle({ stale: true });
+  await assert.rejects(run.invoke('pi-card'), /Existing provider detail panel/);
+  assert.equal(run.stats().opens, 0);
+  assert.equal(run.stats().closes, 0);
+});
+
+test('ambiguous card bodies or panels cannot masquerade as a unique detail view', async () => {
+  for (const options of [{ duplicateBody: true }, { duplicatePanel: true }]) {
+    const run = detailLifecycle(options);
+    await assert.rejects(run.invoke('pi-card'), /Expected one/);
+    assert.equal(run.stats().closes, 0);
+  }
+});
+
+test('missing footer or real close button fails instead of taking an optional no-op click', async () => {
+  for (const options of [{ missingFooter: true }, { missingClose: true }]) {
+    const run = detailLifecycle(options);
+    await assert.rejects(run.invoke('pi-card'), /Expected one real detail/);
+    assert.equal(run.stats().opens, 1);
+    assert.equal(run.stats().closes, 0);
+  }
+});
+
+test('open and close share the original sixty-poll budget without retrying clicks', async () => {
+  for (const options of [{ neverOpen: true }, { neverClose: true }]) {
+    const run = detailLifecycle(options);
+    await assert.rejects(run.invoke('pi-card'), /did not complete within the shared poll budget/);
+    assert.equal(run.stats().delays.length, 60);
+    assert.ok(run.stats().delays.every(milliseconds => milliseconds === 50));
+    assert.equal(run.stats().opens, 1);
+    assert.equal(run.stats().closes, options.neverClose ? 1 : 0);
+  }
+});
+
+test('a replacement panel after closing is rejected, not accepted as the same card lifecycle', async () => {
+  const run = detailLifecycle({ replaceAfterClose: true });
+  await assert.rejects(run.invoke('pi-card'), /Provider detail panel changed/);
+  assert.equal(run.stats().opens, 1);
+  assert.equal(run.stats().closes, 1);
+});
