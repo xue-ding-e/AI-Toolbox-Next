@@ -1,0 +1,492 @@
+{
+  "upstream": "coulsontl/ai-toolbox",
+  "target_commit": "d49d29bc9ba53991917fced26ba8fbb03c8522ad",
+  "target_tree": "647238a38a45e9b3ca14eae473543c42d6fe23ac",
+  "last_full_upstream_baseline": "a6c569e127ceb57cb807b58f50492713684d71b0",
+  "next_start": "a18b38030c8f811481ed63d050d4c601fc29e044",
+  "scope": "Applicable runtime features/fixes, with Next enhancements retained. Not a byte-for-byte mirror and not official distribution automation.",
+  "source_commit_count": 66,
+  "license": "Existing LICENSE/NOTICE and bundled license notices retained byte-for-byte",
+  "validation_status": "Candidate preparation; final sealed Linux/default Rust/docs/frontend and Windows NSIS evidence must be recorded after execution. Prior CI is historical, not acceptance of this tree.",
+  "known_limits": [
+    "Grok additional 6+4 combined coverage remains resource-blocked; no memory threshold change or rerun included",
+    "Synthetic/browser fixture checks are not native desktop interaction or live account/session acceptance",
+    "Windows artifact is unsigned/manual and uses an independent Next identity; no official updater signing key or protocol ownership copied"
+  ],
+  "commits": [
+    {
+      "upstream_commit": "69ee959435c7efaba563f2e91d7adc2884225731",
+      "subject": "fix(gateway): dedupe Codex session usage by upstream response id",
+      "decision": "already-enhanced",
+      "reason": "Codex response identity and revision-7 recheck retained; not a duplicate port"
+    },
+    {
+      "upstream_commit": "8919328ad0d90e4b4b4314e38678f9c507c2dcc5",
+      "subject": "Merge branch 'fix/issue-432-codex-envelope-dedup'",
+      "decision": "merge-not-replayed",
+      "reason": "Source integration already represented; Next development history remains linear"
+    },
+    {
+      "upstream_commit": "ed57bc95c3e56c9993cdd5c1a853737bc9f9bb30",
+      "subject": "style(opencode): state the V2 auth note as plain secondary text",
+      "decision": "already-adapted",
+      "reason": "OpenCode V2 note retained"
+    },
+    {
+      "upstream_commit": "1b1cd65c7e142cad6b9394661875d30c9fc6c027",
+      "subject": "fix(opencode): gate the auth V2 note on the confirmed migration mode",
+      "decision": "already-enhanced",
+      "reason": "Confirmed migration-mode guard retained"
+    },
+    {
+      "upstream_commit": "bb161f226e108852891739776c0b209fe72f2d6a",
+      "subject": "fix(opencode): make auth.json view-only under the V2 migration",
+      "decision": "already-enhanced",
+      "reason": "Next auth write preflight is retained"
+    },
+    {
+      "upstream_commit": "e5d415badfec1c591cfdf3b8f2b3483ae77d1f8a",
+      "subject": "feat(gateway): mark native tools and gateway rewrites in the request detail",
+      "decision": "already-enhanced",
+      "reason": "Next privacy-safe observations and structured upstream SSE collector retained"
+    },
+    {
+      "upstream_commit": "cc9f71679ea8a484416672d42b23b4d7fa43904f",
+      "subject": "fix(gateway): keep request markers on streamed turns and scope stream scans",
+      "decision": "already-enhanced",
+      "reason": "Next structured pre-conversion collector replaces the upstream byte-scanner design"
+    },
+    {
+      "upstream_commit": "e5b51864b6aed8ef17b13702c5aac24116369ea1",
+      "subject": "feat(web): migrate the last three provider cards and finish the card view",
+      "decision": "already-adapted",
+      "reason": "Existing shared-card port and account pending regressions retained"
+    },
+    {
+      "upstream_commit": "88a8b51806fc83e47f712dfd9b9094efee157dc8",
+      "subject": "fix(ssh): block unsupported remote shells and decode GBK diagnostics",
+      "decision": "already-enhanced",
+      "reason": "Next bounded POSIX capability and GBK diagnostic decoder retained"
+    },
+    {
+      "upstream_commit": "114b7ed382535841161104c517908c99cac33b47",
+      "subject": "fix(skills): keep source grouping until the user owns custom groups",
+      "decision": "already-enhanced",
+      "reason": "Next grouping migration and stale-notice/save-failure guards retained"
+    },
+    {
+      "upstream_commit": "7f486ef80f014087377290a64fccbb2fffd8fa3c",
+      "subject": "fix(claudedesktop): pin the official channel, and route mapped providers through the gateway",
+      "decision": "already-enhanced",
+      "reason": "Next central Direct projection guard and imported official configuration preservation retained"
+    },
+    {
+      "upstream_commit": "c9bcc6c0334503a76aeb5ce2733fdad11d673dd5",
+      "subject": "fix(grok): fill fetched models from presets, and gate official apply",
+      "decision": "already-adapted",
+      "reason": "Grok fetched catalog preset enrichment and official-apply guard retained"
+    },
+    {
+      "upstream_commit": "9a2c4c9a8894f2d8ce85e6a4dae7d047bede504a",
+      "subject": "feat(web): migrate OpenClaw and Hermes to the shared provider cards",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "61f47f290ebf422003c64f5d104b840651d34081"
+      ]
+    },
+    {
+      "upstream_commit": "b3fcec8755b03dc4d0b9c0903f65aef3b3373165",
+      "subject": "feat(providers): grey out unselectable checkboxes and explain why",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "9c19f497ef0a858416398223ed978a73ba8f6a4c"
+      ]
+    },
+    {
+      "upstream_commit": "e6553eff808c68132055bb70c8da04577d7ec206",
+      "subject": "fix(providers): make provider drag order actually persist (OpenClaw, Hermes)",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "43f2a50d77d1edad954cd626b0e93ba48765fb23"
+      ]
+    },
+    {
+      "upstream_commit": "0d7df9ba3f2b5ee1c10c248b1359036f47e7575d",
+      "subject": "fix(hermes): fill the preset name on fetched models",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "26e31a9ec3a1712cfcdaf999178e16ad0b0c5059"
+      ]
+    },
+    {
+      "upstream_commit": "31ea04e42cbbc6257065a207a07b8ff14b5a0a16",
+      "subject": "feat(mcp): add copy-JSON to the card more menu",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "63b929d948b08b01a048fc53f568b58ce059842b"
+      ]
+    },
+    {
+      "upstream_commit": "6d7f4e353e9caa04a4218b1f7ea0a66a564aee92",
+      "subject": "fix(tray): stop the periodic refresh from racing the quit click",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "be44c8e5558f6b6735b36c938a2e25c198f3dfc3"
+      ]
+    },
+    {
+      "upstream_commit": "9f21b2ec0ccb5d2ed6d914d8e649f47967f12b63",
+      "subject": "fix(tray): only watchdog an exit the event loop never serviced",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "be44c8e5558f6b6735b36c938a2e25c198f3dfc3"
+      ]
+    },
+    {
+      "upstream_commit": "66f2960cf968e6406ec243cc548581930d20f8fd",
+      "subject": "fix(gateway): write adaptive thinking for Claude 4.6 and later",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "423ac6f2253c8bd7fe7ef140133f420da39cb1e7"
+      ]
+    },
+    {
+      "upstream_commit": "248d40ad84242b1f09519d9c943449e3591f648c",
+      "subject": "fix(gateway): keep non-Claude models on the legacy budget spelling",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "423ac6f2253c8bd7fe7ef140133f420da39cb1e7"
+      ]
+    },
+    {
+      "upstream_commit": "7002f87b117cda4eae83e77622f95a0369c7737e",
+      "subject": "feat(coding): migrate pi/oh_my_pi/dsh to shared cards, zero out orphan CSS",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "a99290e2422167f74d184785c2b7930fbad9f4bc"
+      ]
+    },
+    {
+      "upstream_commit": "074072e7a6ad90c6f456339e0345ee3df9d40317",
+      "subject": "fix(pi): align MCP target with Pi built-in support and repair npm 12 installs",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "a8ce18416e0ee62ae3e627571f726f0a3ba519c8",
+        "eb99f0c81122a60df9811bd90e4113f3fca01050"
+      ]
+    },
+    {
+      "upstream_commit": "0670fe581808727ef83e4856450fe28e8e31f85f",
+      "subject": "fix(gateway): release the rebuild slot on panic, isolate its progress panel, and cap max effort",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "7018d97af430552ef8dd9ff0f34a5f4b51f5f5d6",
+        "423ac6f2253c8bd7fe7ef140133f420da39cb1e7"
+      ]
+    },
+    {
+      "upstream_commit": "adc3995fc9d108b5db304dc61fe0dcf301ddd9e1",
+      "subject": "fix(providers): keep unnamed and duplicate Hermes providers through a drag reorder",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "99c78269818a9646faa594398c926c09d9d75025"
+      ]
+    },
+    {
+      "upstream_commit": "6ecab4f26b40aca2be1022f8002ed9851ea36355",
+      "subject": "feat(update): rolling beta channel on a fixed prerelease tag",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "7788067c0707464344bc69f5bc6580eec455355f",
+      "subject": "docs(skill): teach release-notes the rolling beta channel",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "7704fbb9baf377f1ef55d2e527fe31409c7f6909",
+      "subject": "ci(release): archive every beta build under a permanent version tag",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "5d68de260b22ace6b7ef133f8d7dd5194f5ca7a9",
+      "subject": "ci(release): prefix beta archive tags with beta- instead of beta/",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "2222f14c10e6cb831292347749aee8f564324786",
+      "subject": "ci(release): prune superseded beta archive tags on each dispatch",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "b3db08e98cc968ad2890d2b0392ea70f0fdbaec4",
+      "subject": "docs(skill): fill beta notes during the build, not after",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "24e9093f3668f4957e1fa0829c5921e0cb590deb",
+      "subject": "fix(gateway): make Qoder session-usage fixtures clock-relative",
+      "decision": "already-enhanced",
+      "reason": "Existing clock-relative Qoder fixture plus matching import clock retained"
+    },
+    {
+      "upstream_commit": "be2579fcb7c4f4cd76d2d217b07d1f0403c30442",
+      "subject": "ci(release): force-push the beta archive tag on same-day re-dispatches",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "7e67ea013b9f5004e88ef0025424ed312f781fa1",
+      "subject": "docs(skill): fill beta notes only after create-release overwrites the body",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "0bb2597b976dd2a060ca91e282eb009924d614a3",
+      "subject": "style(settings): drop the redundant Beta suffix from the update button",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "a026c2ec56cb8d871052486f5b442f9ed24b35d5",
+      "subject": "ci(release): ship the beta Windows channel as NSIS only",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "fb3831f994ed2f569daf00d5cece13a8a57b4444",
+      "subject": "ci(release): stop rewriting the rolling beta body on every dispatch",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "3302095d242ffc710939d6c6cf474fdd50f236e6",
+      "subject": "ci(release): purge only assets from previous beta builds",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "a866a022a4851393fa800969b3fbf9c9be30b8db",
+      "subject": "fix(update): never offer an update before every asset is downloadable",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "5534d61c5d0c94cde950b854332415685e373978",
+      "subject": "ci(release): restore updater artifact uploads, scope the purge by stamp",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "5e5ca170030e9f1e566d36631c3834a73ed7fddc",
+      "subject": "fix(update): keep the beta letter counting through a draft re-dispatch",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "406a3c5db791d11b58cfe6887522d6ba9464e226",
+      "subject": "chore(release): bump version to 1.2.1",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "167740781644753489ed50bbdc48905628362bdd",
+      "subject": "fix(gateway,ssh,claudedesktop): four isolation and reporting defects",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "ed3464cfe0a2d7cda10ccbe6553cdfa1c6a75987",
+        "d3cf5f9285c731ae14a5cbbb728682d1ae77118b"
+      ]
+    },
+    {
+      "upstream_commit": "139e601d6bffed9a00333e946152e9d01f58553e",
+      "subject": "fix(providers): keep grid cells whole and confirm menu deletes",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "fef315c6d910ed9d56db560d69b0d1b44ef15e8b"
+      ]
+    },
+    {
+      "upstream_commit": "fb84426204c64b4c448b0b255a49908aec6c7214",
+      "subject": "fix(hermes,openclaw): confirm batch model deletes",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "e71c53b28a7b3bb37d8ad9311856faf928c2ce65"
+      ]
+    },
+    {
+      "upstream_commit": "49a88a62db88334c9edb988753a80272f79e0976",
+      "subject": "fix(test): stop the browser fixture leaking orphan trees",
+      "decision": "not-replayed-test-harness",
+      "reason": "Keep reviewed Next owned browser cleanup; no Windows command-line process scans"
+    },
+    {
+      "upstream_commit": "64ee56e54a85f6c2620f2f89cdd269d2c4d6ce98",
+      "subject": "chore(skills): point release-notes at the shared memory-store body",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "f7eb8d662ea9f5ab49f663bb3747357de4d246fc",
+      "subject": "chore(skills): describe the junction accurately in .gitignore",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "dff3aa661ec3061d6d5b089ad3f54008dcf0fbf0",
+      "subject": "chore(cask): update ai-toolbox for v1.2.1",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "c96b963681a707bc52a1c521d5c0be89889b9289",
+      "subject": "chore(scoop): update ai-toolbox for v1.2.1",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "90748a64c76bc16c07849f619cb6b1a90d1aaa37",
+      "subject": "chore(skills): remove the duplicated release-notes body from the index",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "56ba13f47ef007f8952f357894df45a6a10dbfc5",
+      "subject": "chore(agents): relocate agent skills and drop the .codex directory",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "56d3b94ab3b76dddad1ef599af9be08d65b9d821",
+      "subject": "chore: stop publishing machine-local configuration and paths",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "06c20b33bab9ba99e391878ae4f529c79c0a9455"
+      ]
+    },
+    {
+      "upstream_commit": "b1d9213b8ad9c997a6bf2e0f24b04232a6840232",
+      "subject": "chore: ignore the whole .claude directory",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "375ffa507db30a710c185a3cd26c793fb14e44b7",
+      "subject": "chore: stop tracking the .claude directory",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "64bd7a5b678cde5734144d1df7b240ba2f8cffbe",
+      "subject": "chore: ignore the whole .agents directory",
+      "decision": "development-tooling-partial",
+      "reason": "Only machine-local settings stopped being tracked. Existing project rules/skills retained; their blobs match the last full upstream baseline; no local settings content inspected"
+    },
+    {
+      "upstream_commit": "f66bd8a335e43b111cf6cd04b0b1b4845c45e271",
+      "subject": "feat(codex): display additional credits independently of usage limits",
+      "decision": "already-adapted",
+      "reason": "Next originated additional credits support, retained"
+    },
+    {
+      "upstream_commit": "b7341dcde2dbdba4acc6a6baf3e4623b674bb6cb",
+      "subject": "Merge pull request #439 from xue-ding-e/feat/codex-extra-credits",
+      "decision": "merge-not-replayed",
+      "reason": "Source integration already represented; Next development history remains linear"
+    },
+    {
+      "upstream_commit": "dc3c80bd12c53dacd92c18b863f7073901e56466",
+      "subject": "fix(codex): stop a failed credits refresh from reverting newer usage",
+      "decision": "already-adapted",
+      "reason": "Failed credits refresh status fix retained"
+    },
+    {
+      "upstream_commit": "87334e96ae5ee838e03d8970c541a48f17aa580e",
+      "subject": "ci(release): serialize beta rounds and mark failed builds",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "585b25ef4d92a6cf3c969d1ba5b96a7cd6c6eb03",
+      "subject": "fix(release): fail loudly when the beta version lookup errors",
+      "decision": "distribution-specific-replaced",
+      "reason": "Official rolling beta/tag/signing/updater workflows and manifests are not imported; separately reviewed Next manual Windows distribution replaces the channel"
+    },
+    {
+      "upstream_commit": "4d5ae1cc086332a58bf6d93f2164309e34bb3376",
+      "subject": "fix(codex): prepare usage credentials and recover from a rejected token",
+      "decision": "already-enhanced",
+      "reason": "Usage credential recovery plus three permanent Next identity/concurrency regressions retained"
+    },
+    {
+      "upstream_commit": "9e052cdd85e150d1d7396403bfc4ce207d992d3c",
+      "subject": "feat(devtools): attach to the running webview for style and logic debugging",
+      "decision": "not-packaged-development-tool",
+      "reason": "Live CDP attach/debug scripts are not runtime dependencies; not enabled or executed for the package"
+    },
+    {
+      "upstream_commit": "00aede6ee4d6e01286d43ad709a9978215756d4b",
+      "subject": "fix(test): build the stored token once in the unapplied-account scenario",
+      "decision": "adapted-functional-port",
+      "next_commits": [
+        "81522f548896bd665fb84bca0a1458ec7811020d"
+      ]
+    },
+    {
+      "upstream_commit": "5bb8485235eb676ca41f57c88b7289ddf2d9d77c",
+      "subject": "fix(gateway): retain the selected model pricing page size",
+      "decision": "already-adapted",
+      "reason": "Next originated pricing pagination fix and regression retained"
+    },
+    {
+      "upstream_commit": "d49d29bc9ba53991917fced26ba8fbb03c8522ad",
+      "subject": "Merge pull request #442 from xue-ding-e/fix/model-pricing-page-size-441",
+      "decision": "merge-not-replayed",
+      "reason": "Source integration already represented; Next development history remains linear"
+    }
+  ],
+  "independent_integration_corrections": [
+    {
+      "commit": "ec61a8916ac1d869570f4cb2ce4569300706d1d7",
+      "scope": "Preserve readonly Hermes connectivity probes without enabling writes"
+    },
+    {
+      "commit": "b81199169c68ab525a897d7b74ab5702dedf1ad6",
+      "scope": "Remove already-unused page CSS uncovered by the upstream orphan guard"
+    },
+    {
+      "commit": "d560617d10f287e7db377e6db184c6f131f4275d",
+      "scope": "Retain owned browser cleanup; do not scan process command lines"
+    },
+    {
+      "commit": "dc41a94739955ddaf9f523c6312c041f1c4f9cc0",
+      "scope": "Refuse ambiguous npm policy recovery instead of expanding an execution policy"
+    },
+    {
+      "commit": "6b477b57cb6ae96611f30f9a0812cb98a78bccae",
+      "scope": "Only infer Pi SSE support from the exact enabled MCP adapter extension"
+    }
+  ],
+  "lightweight_evidence": {
+    "web_tests": {
+      "command": "node ./scripts/run-web-tests.mjs",
+      "passed": 1186,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Actual Node test entrypoint; not a browser"
+    },
+    "thinking_tests": {
+      "passed": 11,
+      "scope": "Actual pure thinking_config.rs built with rustc --test; not Tauri linkage"
+    },
+    "handler_inventory": {
+      "passed": 6,
+      "scope": "Fresh generated handler inventory; not implemented CLI/MCP business coverage"
+    }
+  }
+}
