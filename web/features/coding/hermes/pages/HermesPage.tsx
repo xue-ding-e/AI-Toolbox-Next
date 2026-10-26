@@ -1502,7 +1502,7 @@ const HermesPage: React.FC = () => {
         onCopyModel={isReadOnly ? undefined : (modelId) => setModelModal({ provider, copyFromId: modelId })}
         onDeleteModel={isReadOnly ? undefined : (modelId) => handleDeleteModel(provider.providerKey, modelId)}
         onSetPrimaryModel={isReadOnly ? undefined : (modelId) => handleSetDefaultModel(provider, modelId)}
-        onTestModels={isReadOnly ? undefined : () => handleOpenConnectivityTest(provider.providerKey)}
+        onTestModels={() => handleOpenConnectivityTest(provider.providerKey)}
         testModelsDisabled={!baseUrl || !hasModels}
         testModelsDisabledTooltip={!baseUrl ? t('common.baseUrlMissing') : t('common.modelMissing')}
         onFetchModels={isReadOnly ? undefined : () => handleOpenFetchModels(provider.providerKey)}
