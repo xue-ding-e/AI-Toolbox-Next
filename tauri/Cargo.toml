@@ -1,6 +1,6 @@
 [package]
 name = "ai-toolbox"
-version = "1.2.0"
+version = "1.2.1-next.1"
 description = "AI Toolbox - Personal AI Tools Collection"
 authors = ["you"]
 license = "AGPL-3.0-or-later"
@@ -14,6 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7.0", features = [] }
 
 [dependencies]
+semver = "1"
 ai-toolbox-codex-config = { path = "../crates/ai-toolbox-codex-config" }
 ai-toolbox-management = { path = "../crates/ai-toolbox-management" }
 ai-toolbox-storage = { path = "../crates/ai-toolbox-storage" }

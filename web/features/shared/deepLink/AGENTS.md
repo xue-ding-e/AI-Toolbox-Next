@@ -19,6 +19,8 @@
 
 ## Gotchas
 
+- Next 分享链接生成 `aitoolbox-next`，必须与后端注册协议一致，不能让 Next 分享按钮误打开上游应用。
+
 - 保留 sourceApp 供后端处理 SDK 版本路径差异。切换目标时不把源协议替换成目标工具默认协议。
 - API Key 使用可编辑密码输入。OAuth 和 env/file/command 引用不可移植，不能执行命令、解析任意文件或导出订阅 tokens 来补 Key。
 - 旧异步 preview/import 返回时不得覆盖或关闭后来收到的新链接；身份检查覆盖成功、失败和 finally。

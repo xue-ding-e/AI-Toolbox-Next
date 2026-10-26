@@ -39,7 +39,7 @@ fn get_macos_app_bundle_path(exe_path: &std::path::Path) -> Option<std::path::Pa
 fn get_auto_launch() -> Result<auto_launch::AutoLaunch, AutoLaunchError> {
     use auto_launch::AutoLaunchBuilder;
 
-    let app_name = "AI Toolbox";
+    let app_name = "AI Toolbox Next";
     let exe_path = std::env::current_exe().map_err(|e| AutoLaunchError::ExePath(e.to_string()))?;
 
     // macOS needs .app bundle path, otherwise AppleScript login item will open terminal

@@ -294,7 +294,7 @@ pub fn scan_tool_dir(
     }
 
     // Ignore paths containing our central repo
-    let ignore_hint = "Application Support/com.ai-toolbox/skills";
+    let ignore_hint = "Application Support/com.xue-ding-e.ai-toolbox-next/skills";
 
     for entry in std::fs::read_dir(dir).with_context(|| format!("read dir {:?}", dir))? {
         let entry = entry?;

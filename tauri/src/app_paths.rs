@@ -3,7 +3,7 @@
 //! App-owned data (SQLite DB, caches, the default Skills central repo, image
 //! assets, backup flags, …) is anchored to a single resolved directory. By
 //! default that directory is Tauri's `app_data_dir()` (equivalently
-//! `dirs::data_dir().join("com.ai-toolbox")` — see `default_data_dir`). A user
+//! `dirs::data_dir().join("com.xue-ding-e.ai-toolbox-next")` — see `default_data_dir`). A user
 //! can redirect it to a custom location via the settings UI; the chosen path is
 //! stored in a small **bootstrap JSON file** that lives at the *default*
 //! location (never inside the override target), so it can be read before the
@@ -91,9 +91,9 @@ pub struct AppDataDirInfo {
 /// launcher override when present, otherwise the platform default.
 ///
 /// This must stay equivalent to Tauri's `app.path().app_data_dir()` on every
-/// platform (Windows `%APPDATA%\com.ai-toolbox`, macOS
-/// `~/Library/Application Support/com.ai-toolbox`, Linux
-/// `~/.local/share/com.ai-toolbox`). `lib.rs` already relies on this
+/// platform (Windows `%APPDATA%\com.xue-ding-e.ai-toolbox-next`, macOS
+/// `~/Library/Application Support/com.xue-ding-e.ai-toolbox-next`, Linux
+/// `~/.local/share/com.xue-ding-e.ai-toolbox-next`). `lib.rs` already relies on this
 /// equivalence for its log directory. The home fallback mirrors the existing
 /// log/crash path fallback.
 ///
@@ -110,8 +110,8 @@ pub fn default_data_dir() -> PathBuf {
 /// isolated data dir could redirect the same process to production paths.
 fn platform_default_data_dir() -> PathBuf {
     dirs::data_dir()
-        .map(|p| p.join("com.ai-toolbox"))
-        .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox")))
+        .map(|p| p.join("com.xue-ding-e.ai-toolbox-next"))
+        .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox-next")))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -203,17 +203,17 @@ pub fn resolved_data_dir() -> PathBuf {
 }
 
 /// The platform-default cache dir (equivalent to Tauri's `app_cache_dir()`:
-/// `LOCALAPPDATA\com.ai-toolbox` on Windows, `~/Library/Caches/com.ai-toolbox`
-/// on macOS, `~/.cache/com.ai-toolbox` on Linux). Kept separate from the data
+/// `LOCALAPPDATA\com.xue-ding-e.ai-toolbox-next` on Windows, `~/Library/Caches/com.xue-ding-e.ai-toolbox-next`
+/// on macOS, `~/.cache/com.xue-ding-e.ai-toolbox-next` on Linux). Kept separate from the data
 /// dir so transient caches (git clones) stay out of roaming profiles by
 /// default.
 fn default_cache_dir() -> PathBuf {
     // The isolated launcher must not write caches into the production
-    // `%LOCALAPPDATA%\com.ai-toolbox` either, so an explicit data dir owns its
+    // `%LOCALAPPDATA%\com.xue-ding-e.ai-toolbox-next` either, so an explicit data dir owns its
     // cache subdirectory.
     env_data_dir()
         .map(|data| data.join("cache"))
-        .or_else(|| dirs::cache_dir().map(|p| p.join("com.ai-toolbox")))
+        .or_else(|| dirs::cache_dir().map(|p| p.join("com.xue-ding-e.ai-toolbox-next")))
         .unwrap_or_else(|| platform_default_data_dir().join("cache"))
 }
 
@@ -422,6 +422,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn next_paths_do_not_reuse_upstream_bootstrap() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], "com.xue-ding-e.ai-toolbox-next");
+        assert!(
+            platform_default_data_dir().ends_with("com.xue-ding-e.ai-toolbox-next")
+                || platform_default_data_dir().ends_with(".ai-toolbox-next")
+        );
+        assert_eq!(
+            bootstrap_file_path().parent(),
+            Some(platform_default_data_dir().as_path())
+        );
+    }
+
+    #[test]
     fn default_data_dir_under_data_dir() {
         // The process-level default is the launcher override when present and
         // the platform default otherwise; the immutable platform default itself
@@ -437,7 +452,7 @@ mod tests {
     fn default_cache_dir_under_cache_dir() {
         let expected = env_data_dir()
             .map(|data| data.join("cache"))
-            .or_else(|| dirs::cache_dir().map(|p| p.join("com.ai-toolbox")))
+            .or_else(|| dirs::cache_dir().map(|p| p.join("com.xue-ding-e.ai-toolbox-next")))
             .unwrap_or_else(|| platform_default_data_dir().join("cache"));
         assert_eq!(default_cache_dir(), expected);
     }
@@ -446,8 +461,8 @@ mod tests {
     /// fallback chain.
     fn dirs_default_data_dir() -> PathBuf {
         dirs::data_dir()
-            .map(|p| p.join("com.ai-toolbox"))
-            .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox")))
+            .map(|p| p.join("com.xue-ding-e.ai-toolbox-next"))
+            .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox-next")))
             .unwrap_or_else(|| PathBuf::from("."))
     }
 

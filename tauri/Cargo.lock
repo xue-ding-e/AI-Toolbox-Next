@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "ai-toolbox"
-version = "1.2.0"
+version = "1.2.1-next.1"
 dependencies = [
  "ai-toolbox-codex-config",
  "ai-toolbox-management",
@@ -135,6 +135,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rusty-leveldb",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

@@ -41,7 +41,7 @@ pub mod update;
 pub use db::SqliteDbState;
 pub(crate) static APP_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-const DEFAULT_APP_WINDOW_TITLE: &str = "AI Toolbox";
+const DEFAULT_APP_WINDOW_TITLE: &str = "AI Toolbox Next";
 const APP_WINDOW_TITLE_ENV: &str = "AI_TOOLBOX_WINDOW_TITLE";
 
 fn configured_window_title(value: Option<&str>) -> String {
@@ -62,9 +62,9 @@ mod app_identity_tests {
 
     #[test]
     fn window_title_defaults_to_ai_toolbox() {
-        assert_eq!(configured_window_title(None), "AI Toolbox");
-        assert_eq!(configured_window_title(Some("")), "AI Toolbox");
-        assert_eq!(configured_window_title(Some("   ")), "AI Toolbox");
+        assert_eq!(configured_window_title(None), "AI Toolbox Next");
+        assert_eq!(configured_window_title(Some("")), "AI Toolbox Next");
+        assert_eq!(configured_window_title(Some("   ")), "AI Toolbox Next");
     }
 
     #[test]
@@ -1037,7 +1037,6 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .setup(move |app| {
             info!("开始执行 setup()...");

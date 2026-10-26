@@ -19,6 +19,8 @@
 
 ## Gotchas
 
+- Next 只注册 `aitoolbox-next`，分享生成也用该 scheme。显式旧 `aitoolbox` 链接仍可解析，但禁止注册并抢占上游系统协议。
+
 - OpenCode AI SDK 与原生 Anthropic/Google SDK 的版本语义不同。保留 sourceApp，只适配已知终端版本路径；不能盲目删代理前缀、查询参数或 OpenAI /v1。
 - 认证方式属于连接信息，Anthropic API key 与 Bearer 不能互换。OpenCode 不能同时写 apiKey 和 authToken。OAuth access/refresh token 不能冒充共享 API Key。
 - 默认模型与列表独立。OpenCode alias 转真实模型 ID，ID 内的斜杠保持原样；Codex 不能把目录第一项当默认模型。

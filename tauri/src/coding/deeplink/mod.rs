@@ -79,7 +79,7 @@ impl DeepLinkState {
 /// `deep-link-import` (success) or `deep-link-error` (failure). Returns `true`
 /// if the URL was a recognized deep link (regardless of parse success).
 pub fn handle_deeplink_url(app: &AppHandle, url: &str, focus_window: bool) -> bool {
-    if !url.starts_with("aitoolbox://") {
+    if !url.starts_with("aitoolbox-next://") && !url.starts_with("aitoolbox://") {
         return false;
     }
 

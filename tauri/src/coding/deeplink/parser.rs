@@ -12,7 +12,8 @@ use super::portable::SharedConnection;
 use super::utils::tolerant_base64_decode;
 
 /// The scheme registered in `tauri.conf.json` (`plugins.deep-link.desktop.schemes`).
-pub const SCHEME: &str = "aitoolbox";
+// Register only Next; accepting explicitly supplied legacy links does not claim its OS protocol.
+pub const SCHEME: &str = "aitoolbox-next";
 /// The protocol version (sits in the URL host position, mirroring cc-switch).
 pub const VERSION: &str = "v1";
 /// The mandatory path.
@@ -149,7 +150,7 @@ pub fn parse_deeplink_url(raw: &str) -> Result<DeepLinkImportRequest, DeepLinkEr
         expected: SCHEME.to_string(),
     })?;
 
-    if url.scheme() != SCHEME {
+    if url.scheme() != SCHEME && url.scheme() != "aitoolbox" {
         return Err(DeepLinkError::BadScheme {
             expected: SCHEME.to_string(),
         });

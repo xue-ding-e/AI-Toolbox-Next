@@ -47,12 +47,12 @@ impl Drop for SingleInstanceLock {
 fn get_lock_file_path() -> PathBuf {
     // Try XDG_RUNTIME_DIR first (user-specific, cleared on logout)
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime_dir).join("ai-toolbox.lock");
+        return PathBuf::from(runtime_dir).join("ai-toolbox-next.lock");
     }
 
     // Fallback to /tmp with user ID to avoid conflicts
     let uid = unsafe { libc::getuid() };
-    PathBuf::from(format!("/tmp/ai-toolbox-{}.lock", uid))
+    PathBuf::from(format!("/tmp/ai-toolbox-next-{}.lock", uid))
 }
 
 /// Try to acquire a single instance lock.

@@ -1,26 +1,19 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager};
-use tauri_plugin_updater::UpdaterExt;
+use tauri::Manager;
 
 use crate::db::SqliteDbState;
 use crate::http_client;
 
-/// Response from GitHub latest.json
-#[derive(Debug, Serialize, Deserialize)]
-struct LatestRelease {
-    version: String,
-    notes: Option<String>,
-    pub_date: Option<String>,
-    platforms: HashMap<String, PlatformInfo>,
-}
+/// Next releases are manual downloads, never unsigned updater payloads.
+const NEXT_RELEASES_URL: &str = "https://github.com/xue-ding-e/AI-Toolbox-Next/releases";
+const NEXT_RELEASES_API: &str = "https://api.github.com/repos/xue-ding-e/AI-Toolbox-Next/releases";
 
-#[derive(Debug, Serialize, Deserialize)]
-struct PlatformInfo {
-    signature: Option<String>,
-    url: Option<String>,
+#[derive(Debug, Deserialize)]
+struct ManualRelease {
+    tag_name: String,
+    html_url: String,
+    body: Option<String>,
+    draft: bool,
 }
 
 /// Update check result
@@ -33,105 +26,75 @@ pub struct UpdateCheckResult {
     pub release_notes: String,
     pub signature: Option<String>,
     pub url: Option<String>,
-    /// Whether the running app is managed by Scoop. When true the in-app
-    /// installer payload is dropped (see `check_for_updates`) and the user
-    /// must upgrade via `scoop update ai-toolbox`.
+    /// Retained response fields for the shared UI. Next has no package-manager
+    /// distribution and always returns false rather than suggesting upstream packages.
     pub scoop_install: bool,
-    /// Whether the running app was installed from the release `.deb`. When true
-    /// the in-app installer payload is dropped (see `check_for_updates`) and the
-    /// user must reinstall the package or switch to the AppImage build.
     pub deb_install: bool,
 }
 
-/// Check for updates from GitHub releases.
-///
-/// Uses the DB-backed proxy client when the database is available (normal
-/// startup). When the database is not managed yet (recovery / "schema too
-/// new" startup path), falls back to `create_client_with_env_proxy` which
-/// honors `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` environment variables.
+/// Query the Next release list (including prereleases). No installer payload
+/// is exposed: distribution is manual until an independently authorized Next
+/// signing channel exists. A missing release is an error, not "up to date".
 #[tauri::command]
 pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResult, String> {
-    const GITHUB_REPO: &str = "coulsontl/ai-toolbox";
-    let latest_json_url = format!(
-        "https://github.com/{}/releases/latest/download/latest.json",
-        GITHUB_REPO
-    );
-
-    // Get current version from package info
     let current_version = app.package_info().version.to_string();
-
-    // Detect current platform
-    let current_platform = detect_current_platform();
-
-    // Fetch latest.json. Prefer DB-backed proxy client; in recovery mode
-    // (DB not managed) use an env-proxy client.
-    let response = match app.try_state::<SqliteDbState>() {
-        Some(state) => {
-            let client = http_client::client(&state).await?;
-            client.get(&latest_json_url).send().await
-        }
-        None => {
-            let client = http_client::create_client_with_env_proxy(30)?;
-            client.get(&latest_json_url).send().await
-        }
-    }
-    .map_err(|e| format!("Failed to fetch latest.json: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "Failed to fetch latest.json: HTTP {}",
-            response.status()
-        ));
-    }
-
-    let release: LatestRelease = response
+    let client = match app.try_state::<SqliteDbState>() {
+        Some(state) => http_client::client(&state).await?,
+        None => http_client::create_client_with_env_proxy(30)?,
+    };
+    let releases: Vec<ManualRelease> = client
+        .get(NEXT_RELEASES_API)
+        .header("User-Agent", "AI-Toolbox-Next")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch Next releases: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Failed to fetch Next releases: {e}"))?
         .json()
         .await
-        .map_err(|e| format!("Failed to parse latest.json: {}", e))?;
-
-    let latest_version = release.version.trim_start_matches('v').to_string();
-
-    let has_update = compare_versions(&latest_version, &current_version) > 0;
-
-    // Get signature and url for current platform
-    let platform_info = release.platforms.get(&current_platform);
-    let mut signature = platform_info
-        .and_then(|p| p.signature.clone())
-        .filter(|s| !s.is_empty());
-    let mut url = platform_info
-        .and_then(|p| p.url.clone())
-        .filter(|s| !s.is_empty());
-
-    let scoop_install = is_scoop_install();
-    let deb_install = is_deb_install_async().await;
-
-    // Package-managed installs cannot be replaced by the in-app updater:
-    // - Scoop lives under `<scoop>\apps\...`; running the in-app NSIS updater
-    //   would create a second copy outside Scoop's control while the
-    //   Scoop-managed copy stays stale.
-    // - A dpkg install lives at `/usr/bin/...`, which makes
-    //   `tauri-plugin-updater` take its deb branch and reject the AppImage
-    //   bytes that `latest.json` publishes under `linux-x86_64`.
-    // Drop the installer payload so every frontend path degrades to opening
-    // the release page instead.
-    if scoop_install || deb_install {
-        signature = None;
-        url = None;
-    }
-
-    Ok(UpdateCheckResult {
-        has_update,
+        .map_err(|e| format!("Failed to parse Next releases: {e}"))?;
+    let release = releases
+        .into_iter()
+        .find(|release| !release.draft)
+        .ok_or_else(|| format!("No Next release is published yet: {NEXT_RELEASES_URL}"))?;
+    manual_release_result(
+        release,
         current_version,
-        latest_version: latest_version.clone(),
-        release_url: format!(
-            "https://github.com/{}/releases/tag/v{}",
-            GITHUB_REPO, latest_version
-        ),
-        release_notes: release.notes.unwrap_or_default(),
-        signature,
-        url,
-        scoop_install,
-        deb_install,
+        is_scoop_install(),
+        is_deb_install_async().await,
+    )
+}
+
+fn manual_release_result(
+    release: ManualRelease,
+    current_version: String,
+    _scoop_install: bool,
+    _deb_install: bool,
+) -> Result<UpdateCheckResult, String> {
+    // Never let remote metadata redirect the manual-update button upstream.
+    if !release
+        .html_url
+        .starts_with(&format!("{NEXT_RELEASES_URL}/tag/"))
+    {
+        return Err("Release URL is outside the Next repository".to_string());
+    }
+    let latest_version = release.tag_name.trim_start_matches('v').to_string();
+    let latest = semver::Version::parse(&latest_version)
+        .map_err(|e| format!("Invalid Next release version: {e}"))?;
+    let current = semver::Version::parse(&current_version)
+        .map_err(|e| format!("Invalid current version: {e}"))?;
+    Ok(UpdateCheckResult {
+        has_update: latest > current,
+        current_version,
+        latest_version,
+        release_url: release.html_url,
+        release_notes: release.body.unwrap_or_default(),
+        signature: None,
+        url: None,
+        // No Next package-manager distribution exists. In particular, never
+        // tell a Next user to install the upstream Scoop package.
+        scoop_install: false,
+        deb_install: false,
     })
 }
 
@@ -229,252 +192,64 @@ async fn is_deb_install_async() -> bool {
         .unwrap_or(false)
 }
 
-/// Detect current platform string for matching latest.json
-#[allow(unreachable_code)]
-fn detect_current_platform() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        return "windows-x86_64".to_string();
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        return "linux-x86_64".to_string();
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        #[cfg(target_arch = "aarch64")]
-        {
-            return "darwin-aarch64".to_string();
-        }
-        #[cfg(target_arch = "x86_64")]
-        {
-            return "darwin-x86_64".to_string();
-        }
-    }
-
-    "unknown".to_string()
-}
-
-/// Run the updater plugin: check for an available update and, if present,
-/// download + install it while emitting `update-download-progress` events.
-///
-/// This is DB-free; proxy handling is the caller's responsibility (the
-/// `tauri-plugin-updater` reads `HTTP_PROXY` / `HTTPS_PROXY` env vars).
-async fn run_updater_download(app: &tauri::AppHandle) -> Result<bool, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("Failed to check for updates: {}", e))?;
-
-    match update {
-        Some(update) => {
-            // Emit download started event
-            let _ = app.emit(
-                "update-download-progress",
-                serde_json::json!({
-                    "status": "started",
-                    "progress": 0,
-                    "downloaded": 0,
-                    "total": 0,
-                    "speed": 0
-                }),
-            );
-
-            // Download and install with speed calculation
-            let downloaded = AtomicU64::new(0);
-            let mut last_downloaded = 0u64;
-            let mut last_time = Instant::now();
-            let mut speed: f64 = 0.0;
-
-            let install_result = update
-                .download_and_install(
-                    |chunk_length, content_length| {
-                        downloaded.fetch_add(chunk_length as u64, Ordering::SeqCst);
-                        let current_downloaded = downloaded.load(Ordering::SeqCst);
-
-                        // Calculate download speed
-                        let now = Instant::now();
-                        let elapsed = now.duration_since(last_time);
-
-                        if elapsed >= Duration::from_millis(200) {
-                            let bytes_since_last =
-                                current_downloaded.saturating_sub(last_downloaded);
-                            if bytes_since_last > 0 {
-                                // Speed in bytes per second
-                                let speed_calc = bytes_since_last as f64 / elapsed.as_secs_f64();
-                                // Use exponential moving average for smoother display
-                                if speed == 0.0 {
-                                    speed = speed_calc;
-                                } else {
-                                    speed = speed * 0.7 + speed_calc * 0.3;
-                                }
-                            }
-                            last_downloaded = current_downloaded;
-                            last_time = now;
-                        }
-
-                        if let Some(total) = content_length {
-                            let percentage =
-                                (current_downloaded as f64 / total as f64 * 100.0) as u32;
-                            // Emit progress event with speed
-                            let _ = app.emit(
-                                "update-download-progress",
-                                serde_json::json!({
-                                    "status": "downloading",
-                                    "progress": percentage,
-                                    "downloaded": current_downloaded,
-                                    "total": total,
-                                    "speed": speed as u64
-                                }),
-                            );
-                        }
-                    },
-                    || {
-                        let current_downloaded = downloaded.load(Ordering::SeqCst);
-                        // Emit installing event
-                        let _ = app.emit(
-                            "update-download-progress",
-                            serde_json::json!({
-                                "status": "installing",
-                                "progress": 100,
-                                "downloaded": current_downloaded,
-                                "total": current_downloaded,
-                                "speed": 0
-                            }),
-                        );
-                    },
-                )
-                .await;
-
-            match install_result {
-                Ok(_) => {
-                    println!("Update installed successfully");
-                    Ok(true)
-                }
-                Err(e) => {
-                    let error_msg = format!("Failed to install update: {}", e);
-                    // `tauri-plugin-updater`'s own records are filtered out of the
-                    // app log file (see `setup_logging`), so keep the reason on a
-                    // target the file accepts. Without this a failed auto-update
-                    // leaves no trace anywhere the user can retrieve.
-                    log::warn!("{}", error_msg);
-                    eprintln!("{}", error_msg);
-                    Err(error_msg)
-                }
-            }
-        }
-        None => Err("No update available".to_string()),
-    }
-}
-
-/// Install the update.
-///
-/// When the database is available (normal startup), the in-app proxy config is
-/// read from the DB and applied to `HTTP_PROXY` / `HTTPS_PROXY` env vars so
-/// the updater plugin picks it up. In recovery mode (DB not managed), env
-/// vars are left untouched and the updater inherits system / environment
-/// proxy settings.
+/// Next intentionally has no signed in-app installer. Fail before reading
+/// proxy credentials or changing process environment variables.
 #[tauri::command]
-pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
-    if is_scoop_install() {
-        return Err(
-            "Scoop-managed installations must be updated with scoop update ai-toolbox".to_string(),
-        );
-    }
-    if is_deb_install_async().await {
-        return Err(
-            "deb-managed installations must be updated by reinstalling the .deb package or by switching to the AppImage build".to_string(),
-        );
-    }
-    // Snapshot proxy-related env vars so we can always restore them, regardless
-    // of whether we touched them (no-op restore in recovery mode).
-    let old_http_proxy = std::env::var("HTTP_PROXY").ok();
-    let old_https_proxy = std::env::var("HTTPS_PROXY").ok();
-    let old_http_proxy_lower = std::env::var("http_proxy").ok();
-    let old_https_proxy_lower = std::env::var("https_proxy").ok();
-
-    // Only apply DB-backed proxy when the database is actually available.
-    if let Some(state) = app.try_state::<SqliteDbState>() {
-        let (proxy_mode, proxy_url) = http_client::get_proxy_from_settings(&state).await?;
-
-        // Set proxy environment variables for the updater plugin
-        // (tauri-plugin-updater reads these env vars for proxy configuration)
-        match proxy_mode {
-            http_client::ProxyMode::Direct => {
-                std::env::remove_var("HTTP_PROXY");
-                std::env::remove_var("HTTPS_PROXY");
-                std::env::remove_var("http_proxy");
-                std::env::remove_var("https_proxy");
-            }
-            http_client::ProxyMode::Custom => {
-                if !proxy_url.is_empty() {
-                    std::env::set_var("HTTP_PROXY", &proxy_url);
-                    std::env::set_var("HTTPS_PROXY", &proxy_url);
-                    std::env::set_var("http_proxy", &proxy_url);
-                    std::env::set_var("https_proxy", &proxy_url);
-                }
-            }
-            http_client::ProxyMode::System => {}
-        }
-    }
-    // else: recovery mode — leave env vars as-is (system / env proxy).
-
-    let result = run_updater_download(&app).await;
-
-    // Restore original environment variables
-    if let old @ Some(_) = old_http_proxy {
-        std::env::set_var("HTTP_PROXY", old.unwrap());
-    } else {
-        std::env::remove_var("HTTP_PROXY");
-    }
-    if let old @ Some(_) = old_https_proxy {
-        std::env::set_var("HTTPS_PROXY", old.unwrap());
-    } else {
-        std::env::remove_var("HTTPS_PROXY");
-    }
-    if let old @ Some(_) = old_http_proxy_lower {
-        std::env::set_var("http_proxy", old.unwrap());
-    } else {
-        std::env::remove_var("http_proxy");
-    }
-    if let old @ Some(_) = old_https_proxy_lower {
-        std::env::set_var("https_proxy", old.unwrap());
-    } else {
-        std::env::remove_var("https_proxy");
-    }
-
-    result
-}
-
-/// Compare two version strings (e.g., "1.2.3" vs "1.2.4")
-/// Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
-fn compare_versions(v1: &str, v2: &str) -> i32 {
-    let parts1: Vec<i32> = v1.split('.').filter_map(|s| s.parse().ok()).collect();
-    let parts2: Vec<i32> = v2.split('.').filter_map(|s| s.parse().ok()).collect();
-
-    let max_len = parts1.len().max(parts2.len());
-
-    for i in 0..max_len {
-        let num1 = parts1.get(i).copied().unwrap_or(0);
-        let num2 = parts2.get(i).copied().unwrap_or(0);
-
-        if num1 > num2 {
-            return 1;
-        }
-        if num1 < num2 {
-            return -1;
-        }
-    }
-
-    0
+pub async fn install_update(_app: tauri::AppHandle) -> Result<bool, String> {
+    Err(format!(
+        "AI Toolbox Next uses manual updates. Download from {NEXT_RELEASES_URL}"
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_deb_install_path, is_scoop_install_path};
+    use super::*;
+
+    fn release(tag: &str) -> ManualRelease {
+        ManualRelease {
+            tag_name: tag.into(),
+            html_url: format!("{NEXT_RELEASES_URL}/tag/{tag}"),
+            body: None,
+            draft: false,
+        }
+    }
+
+    #[test]
+    fn next_updates_are_manual_and_compare_prerelease_versions() {
+        let result = manual_release_result(
+            release("v1.2.1-next.2"),
+            "1.2.1-next.1".into(),
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(result.has_update);
+        assert!(result.url.is_none());
+        assert!(result.signature.is_none());
+        assert!(result.release_url.starts_with(NEXT_RELEASES_URL));
+        let older = manual_release_result(
+            release("v1.2.1-next.1"),
+            "1.2.1-next.2".into(),
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(!older.has_update);
+    }
+
+    #[test]
+    fn next_updates_reject_upstream_or_malformed_release_metadata() {
+        let mut upstream = release("v1.2.1-next.2");
+        upstream.html_url = "https://github.com/coulsontl/ai-toolbox/releases/tag/v1.2.1".into();
+        assert!(manual_release_result(upstream, "1.2.1-next.1".into(), false, false).is_err());
+        assert!(manual_release_result(
+            release("not-a-version"),
+            "1.2.1-next.1".into(),
+            false,
+            false
+        )
+        .is_err());
+    }
 
     #[test]
     fn detects_per_user_scoop_install() {

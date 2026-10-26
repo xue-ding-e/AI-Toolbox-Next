@@ -695,6 +695,12 @@ features/
 
 ## Data Storage Architecture
 
+### Next manual Windows distribution
+
+- Next uses its own product/installer identifier, default data/cache/bootstrap root, startup entry and registered `aitoolbox-next` URL scheme. An explicit `AI_TOOLBOX_DATA_DIR`, custom path or external CLI configuration can still be shared; default-path isolation is not a promise of safe simultaneous management. Never reuse the upstream database or silently migrate its configuration. Explicit legacy share links may be parsed without registering the upstream OS scheme.
+- Next updates query only `xue-ding-e/AI-Toolbox-Next` releases and return manual release-page links. Do not restore upstream updater keys/endpoints or expose unsigned installer payloads to the signed updater. `install_update` must fail explicitly until a separately authorized signing channel exists.
+- The manual Windows build workflow uploads unsigned candidate assets and SHA256 provenance only. Publishing requires reviewed, sealed full tests and the Windows build for the exact same source commit; a successful artifact upload alone is not release acceptance.
+
 ### Application Data Directory Bootstrap
 
 - 应用自身的数据根目录统一经 `app_paths::resolved_data_dir()` 读取；瞬时缓存统一经 `resolved_cache_dir()`。两者在进程首次访问时一起冻结，设置页保存只改变下次启动目录，禁止单独重读 bootstrap 让某个缓存提前切换。

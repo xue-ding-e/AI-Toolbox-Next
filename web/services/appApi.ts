@@ -16,9 +16,11 @@ import {
   type GatewayProviderProfileCatalog,
 } from '@/features/coding/shared/gateway/providerProfiles';
 
-const GITHUB_REPO = 'coulsontl/ai-toolbox';
-export { GITHUB_REPO };
-const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
+import { NEXT_GITHUB_REPO, NEXT_GITHUB_URL, NEXT_RELEASES_URL } from './releaseChannel';
+
+export const GITHUB_REPO = NEXT_GITHUB_REPO;
+export { UPSTREAM_GITHUB_REPO } from './releaseChannel';
+const GITHUB_URL = NEXT_GITHUB_URL;
 
 export interface UpdateInfo {
   hasUpdate: boolean;
@@ -83,7 +85,7 @@ export const installUpdate = async (): Promise<boolean> => {
  * Latest release download page (used as the manual-download fallback when
  * the in-app auto-updater is unavailable or fails).
  */
-export const LATEST_RELEASE_URL = `${GITHUB_URL}/releases/latest`;
+export const LATEST_RELEASE_URL = NEXT_RELEASES_URL;
 
 /**
  * Startup recovery: returns the user-facing error message if the app booted

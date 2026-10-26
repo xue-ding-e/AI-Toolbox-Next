@@ -24,7 +24,7 @@ test('buildProviderShareUrl emits the full param set for a complete provider', (
     iconColor: '#0958d9',
   });
 
-  assert.ok(url.startsWith('aitoolbox://v1/import?'), url);
+  assert.ok(url.startsWith('aitoolbox-next://v1/import?'), url);
   const params = new URLSearchParams(url.split('?')[1]);
   assert.equal(params.get('resource'), 'provider');
   assert.equal(params.get('app'), 'claude');

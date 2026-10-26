@@ -39,7 +39,7 @@ export interface ProviderShareUrlInput extends SharedConnectionFields {
   sourceProviderId?: string;
 }
 
-const SHARE_SCHEME = 'aitoolbox';
+const SHARE_SCHEME = 'aitoolbox-next';
 const SHARE_VERSION = 'v1';
 const SHARE_PATH = '/import';
 
