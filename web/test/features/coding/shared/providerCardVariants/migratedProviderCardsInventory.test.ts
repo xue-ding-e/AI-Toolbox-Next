@@ -101,18 +101,18 @@ test('duplicate and unknown fixtures remain failures even when total length is t
   }
 });
 
-test('the exact total assertion guard requires all 132 migration and 28 routing assertions', () => {
+test('the exact total assertion guard requires all 134 migration and 28 routing assertions', () => {
   const guards = nodes(checksAst, node => ts.isCallExpression(node) && node.arguments.some(argument =>
     ts.isStringLiteral(argument) && argument.text === 'Complete migration and Desktop routing coverage'));
   assert.equal(guards.length, 1);
   const guard = new Function('assert', 'checks', 'routingChecks', `${guards[0].getText(checksAst)};`);
-  guard(assert, Array(132), Array(28));
-  for (const [migrated, routing] of [[131, 28], [132, 27], [133, 28], [132, 29], [86, 28], [0, 0]]) {
+  guard(assert, Array(134), Array(28));
+  for (const [migrated, routing] of [[133, 28], [134, 27], [135, 28], [134, 29], [132, 28], [86, 28], [0, 0]]) {
     assert.throws(() => guard(assert, Array(migrated), Array(routing)), /Complete migration and Desktop routing coverage/);
   }
   const counts = new Function(variable('SCENARIO_COUNTS') + variable('DESKTOP_ROUTING_COUNTS')
     + 'return [SCENARIO_COUNTS, DESKTOP_ROUTING_COUNTS];')() as Record<string, number>[];
-  assert.deepEqual(counts.map(group => Object.values(group).reduce((sum, count) => sum + count, 0)), [132, 28]);
+  assert.deepEqual(counts.map(group => Object.values(group).reduce((sum, count) => sum + count, 0)), [134, 28]);
   assert.deepEqual(counts.map(group => Object.keys(group).length), [11, 8]);
 });
 
@@ -181,4 +181,110 @@ test('the helper does not report success when the fold stayed closed or rows nev
     assert.equal(await pending, false);
     assert.equal(run.clicks(), 1);
   }
+});
+
+test('render-light inventory counts actual check calls, fixed loop iterations and original surfaces', () => {
+  const main = checksAst.statements.find(node => ts.isFunctionDeclaration(node)
+    && node.name?.text === 'verifyMigratedProviderCards') as ts.FunctionDeclaration;
+  assert.ok(main?.body);
+  const statements = [...main.body.statements];
+  const first = statements.findIndex(node => node.getText(checksAst) === "await openFixture('theme=light');");
+  const last = statements.findIndex(node => node.getText(checksAst) === "await finishScenario('render-light');");
+  assert.ok(first >= 0 && last > first);
+  let assertions = 0;
+  let repeated = 0;
+  for (const statement of statements.slice(first + 1, last)) {
+    const calls = nodes(statement, node => ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression) && node.expression.text === 'check').length;
+    const loops = nodes(statement, node => ts.isForOfStatement(node) || ts.isForStatement(node)
+      || ts.isWhileStatement(node) || ts.isDoStatement(node));
+    if (loops.length) {
+      assert.equal(loops.length, 1, 'A new loop must have an explicitly reviewed assertion count');
+      assert.ok(ts.isForOfStatement(statement) && ts.isArrayLiteralExpression(statement.expression));
+      assert.equal(statement.expression.elements.length, 3);
+      assert.equal(calls, 1);
+      assertions += calls * statement.expression.elements.length;
+      repeated += statement.expression.elements.length;
+    } else {
+      assertions += calls;
+    }
+    const surfaceCalls = nodes(statement, node => ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression) && node.expression.text === 'checkSurfaces');
+    if (surfaceCalls.length) {
+      assert.equal(surfaceCalls.length, 1);
+      assert.equal(surfaceCalls[0].getText(checksAst), "checkSurfaces('light')");
+      assertions += originalSurfaces.length;
+    }
+  }
+  assert.equal(repeated, 3, 'Pi, OMP and DSH sidebar checks each execute');
+  assert.equal(assertions, 87, 'The real light path includes all three loop iterations, not one');
+  const counts = new Function(variable('SCENARIO_COUNTS') + 'return SCENARIO_COUNTS;')();
+  assert.equal(counts['render-light'], assertions, 'Fixed inventory must match actual source execution cardinality');
+});
+
+// Project only assertion cardinality, not values or browser behavior. Preserve
+// actual fixed loops/branch conditions and finish gates; unfamiliar counted
+// control flow fails closed instead of silently omitting a path.
+function projectedCounts(functionName: string): Record<string, number> {
+  const declaration = checksAst.statements.find(node => ts.isFunctionDeclaration(node)
+    && node.name?.text === functionName) as ts.FunctionDeclaration;
+  assert.ok(declaration?.body);
+  const isCounted = (node: ts.Node) => ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+    && ['check', 'checkSurfaces', 'finishScenario'].includes(node.expression.text);
+  function project(node: ts.Statement): string {
+    if (ts.isBlock(node)) return node.statements.map(project).join('\n').trim();
+    if (ts.isVariableStatement(node)) {
+      const selected = node.declarationList.declarations.filter(item => ['scenario', 'name'].includes(item.name.getText(checksAst)));
+      if (selected.length) return 'const ' + selected.map(item => item.getText(checksAst)).join(',') + ';';
+      // Local helpers are handled at their call sites, not as executed bodies.
+      return '';
+    }
+    if (ts.isForOfStatement(node)) {
+      const body = project(node.statement);
+      if (!body) return '';
+      assert.ok(ts.isArrayLiteralExpression(node.expression), 'Counted loops must have a fixed literal inventory');
+      return `for (${node.initializer.getText(checksAst)} of ${node.expression.getText(checksAst)}) { ${body} }`;
+    }
+    if (ts.isIfStatement(node)) {
+      const yes = project(node.thenStatement);
+      const no = node.elseStatement ? project(node.elseStatement) : '';
+      if (!yes && !no) return '';
+      return `if (${node.expression.getText(checksAst)}) { ${yes} } else { ${no} }`;
+    }
+    if (ts.isTryStatement(node)) {
+      assert.equal(node.catchClause ? nodes(node.catchClause, isCounted).length : 0, 0);
+      assert.equal(node.finallyBlock ? nodes(node.finallyBlock, isCounted).length : 0, 0);
+      return project(node.tryBlock);
+    }
+    if (ts.isExpressionStatement(node)) {
+      const expression = ts.isAwaitExpression(node.expression) ? node.expression.expression : node.expression;
+      if (ts.isCallExpression(expression)) {
+        const call = expression.expression.getText(checksAst);
+        if (call === 'check') return 'count++;';
+        if (call === 'checkSurfaces') return `count += ${originalSurfaces.length};`;
+        if (call === 'finishScenario') return `finish(${expression.arguments[0].getText(checksAst)});`;
+        if (call === 'assert.equal' && expression.arguments[1]?.getText(checksAst) === 'DESKTOP_ROUTING_COUNTS[name]') return 'finish(name);';
+      }
+    }
+    assert.equal(nodes(node, isCounted).length, 0, 'Unsupported counted statement: ' + node.getText(checksAst).slice(0, 100));
+    return '';
+  }
+  const projection = declaration.body.statements.map(project).join('\n');
+  return new Function('assert', `let count = 0; const totals = {}; const finish = name => {
+    assert.ok(!Object.hasOwn(totals, name)); totals[name] = count; count = 0;
+  }; ${projection}; assert.equal(count, 0); return totals;`)(assert);
+}
+
+test('every light, dark, interaction and Grok loop finish gate matches its actual source cardinality', () => {
+  const expected = new Function(variable('SCENARIO_COUNTS') + 'return SCENARIO_COUNTS;')();
+  assert.deepEqual(projectedCounts('verifyMigratedProviderCards'), expected);
+  assert.equal(Object.keys(expected).length, 11);
+  assert.equal(Object.values(expected as Record<string, number>).reduce((sum, value) => sum + value, 0), 134);
+});
+
+test('all eight Desktop routing branches retain their exact callback and availability assertion counts', () => {
+  const expected = new Function(variable('DESKTOP_ROUTING_COUNTS') + 'return DESKTOP_ROUTING_COUNTS;')();
+  assert.deepEqual(projectedCounts('verifyClaudeDesktopRouting'), expected);
+  assert.equal(Object.keys(expected).length, 8);
+  assert.equal(Object.values(expected as Record<string, number>).reduce((sum, value) => sum + value, 0), 28);
 });

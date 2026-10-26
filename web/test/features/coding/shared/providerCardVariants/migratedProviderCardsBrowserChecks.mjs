@@ -15,7 +15,7 @@ import path from 'node:path';
  * action.
  */
 const SCENARIO_COUNTS = {
-  'render-light': 85,
+  'render-light': 87,
   'menu-dismiss': 3,
   'menu-delete': 3,
   'menu-protected': 4,
@@ -888,13 +888,13 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
 
   assert.deepEqual(completed, Object.keys(SCENARIO_COUNTS), 'Every migrated-card scenario must execute');
   assert.equal(completed.length, 11, 'Fixed scenario count prevents zero-test success');
-  assert.equal(checks.length, 132, 'Fixed assertion count prevents partial success');
+  assert.equal(checks.length, 134, 'Fixed assertion count prevents partial success');
   await writeFile(path.join(artifactRoot, 'scenarios.json'), JSON.stringify({
     completed, assertionCounts: SCENARIO_COUNTS, checks, browserExceptions: exceptions,
   }, null, 2));
   console.log(`Passed ${completed.length} migrated-provider-card scenarios (${checks.length} assertions).`);
   const routingChecks = await verifyClaudeDesktopRouting({ send, evaluate, baseUrl, artifactRoot, exceptions });
-  assert.equal(checks.length + routingChecks.length, 160, 'Complete migration and Desktop routing coverage');
+  assert.equal(checks.length + routingChecks.length, 162, 'Complete migration and Desktop routing coverage');
   return [...checks, ...routingChecks];
 }
 
