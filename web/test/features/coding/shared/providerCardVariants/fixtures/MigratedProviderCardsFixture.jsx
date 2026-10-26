@@ -747,25 +747,19 @@ window.migratedProviderCardsFixture = {
    */
   async expandModels(name) {
     const root = cards(name)[0];
-    // The fold's header is antd's `role="button"` header div, not a <button>.
-    const header = [...root.querySelectorAll('[role="button"], button')]
-      .find(node => node.textContent.includes('模型列表'));
-    if (!header) return false;
+    // Select the actual collapse header, never a surrounding action button.
+    const header = root?.querySelector('.ant-collapse-header');
+    if (!header) throw new Error('Missing real model-list header: ' + name);
     header.click();
     await new Promise(resolve => setTimeout(resolve, 300));
-    return true;
+    return header.getAttribute('aria-expanded') === 'true'
+      && root.querySelectorAll('[data-model-row]').length > 0;
   },
 
   /** The second line of a compact cell, as written. */
   subtitle(name) {
     const node = cards(name)[0]?.querySelector('[data-provider-subtitle]');
     return node ? node.textContent.replace(/\s+/g, ' ').trim() : null;
-  },
-
-  expandModels(name) {
-    const header = cards(name)[0]?.querySelector('.ant-collapse-header');
-    if (!header) throw new Error('Missing real model-list header: ' + name);
-    header.click();
   },
 
   state,

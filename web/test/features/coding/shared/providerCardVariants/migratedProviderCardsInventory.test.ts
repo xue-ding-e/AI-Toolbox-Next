@@ -115,3 +115,70 @@ test('the exact total assertion guard requires all 132 migration and 28 routing 
   assert.deepEqual(counts.map(group => Object.values(group).reduce((sum, count) => sum + count, 0)), [132, 28]);
   assert.deepEqual(counts.map(group => Object.keys(group).length), [11, 8]);
 });
+
+function fixtureApi(): ts.ObjectLiteralExpression {
+  const assignments = nodes(fixtureAst, node => ts.isBinaryExpression(node)
+    && node.left.getText(fixtureAst) === 'window.migratedProviderCardsFixture') as ts.BinaryExpression[];
+  assert.equal(assignments.length, 1);
+  assert.ok(ts.isObjectLiteralExpression(assignments[0].right));
+  return assignments[0].right;
+}
+function modelExpansion(options: { missing?: boolean; mounted?: boolean; expanded?: boolean } = {}) {
+  const methods = fixtureApi().properties.filter(node => node.name?.getText(fixtureAst) === 'expandModels');
+  assert.ok(methods.length > 0);
+  let clicks = 0;
+  const timers: Array<() => void> = [];
+  const header = { click: () => { clicks++; }, getAttribute: (name: string) => {
+    assert.equal(name, 'aria-expanded'); return options.expanded === false ? 'false' : 'true';
+  } };
+  const root = {
+    querySelector: (selector: string) => { assert.equal(selector, '.ant-collapse-header'); return options.missing ? null : header; },
+    querySelectorAll: (selector: string) => { assert.equal(selector, '[data-model-row]'); return options.mounted === false ? [] : [{}]; },
+  };
+  // Keep JavaScript's actual last-key-wins semantics, so the old duplicate's
+  // undefined result is reproduced rather than testing the earlier dead method.
+  const expand = new Function('cards', 'setTimeout', `return ({${methods.map(node => node.getText(fixtureAst)).join(',')}}).expandModels;`)(
+    () => [root],
+    (callback: () => void, milliseconds: number) => { assert.equal(milliseconds, 300); timers.push(callback); },
+  ) as (name: string) => Promise<boolean>;
+  return { expand: () => expand('hermes-list'), timers, clicks: () => clicks };
+}
+
+test('fixture API has no duplicate keys that silently shadow upstream or Next helpers', () => {
+  const names = fixtureApi().properties.map(property => property.name?.getText(fixtureAst));
+  assert.ok(names.every(name => name !== undefined));
+  assert.equal(new Set(names).size, names.length);
+});
+
+test('the effective real expandModels helper clicks once and resolves true only after the existing wait', async () => {
+  const run = modelExpansion();
+  const pending = run.expand();
+  assert.ok(pending instanceof Promise, 'Expansion must preserve its asynchronous result');
+  let resolved = false;
+  pending.then(() => { resolved = true; });
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  assert.equal(run.clicks(), 1);
+  assert.equal(run.timers.length, 1);
+  run.timers[0]();
+  assert.equal(await pending, true);
+  assert.equal(run.clicks(), 1, 'No retry click can toggle the fold closed');
+});
+
+test('missing real model header fails without clicking or scheduling a wait', async () => {
+  const run = modelExpansion({ missing: true });
+  await assert.rejects(Promise.resolve().then(run.expand), /Missing real model-list header/);
+  assert.equal(run.clicks(), 0);
+  assert.equal(run.timers.length, 0);
+});
+
+test('the helper does not report success when the fold stayed closed or rows never mounted', async () => {
+  for (const options of [{ expanded: false }, { mounted: false }]) {
+    const run = modelExpansion(options);
+    const pending = run.expand();
+    assert.equal(run.timers.length, 1);
+    run.timers[0]();
+    assert.equal(await pending, false);
+    assert.equal(run.clicks(), 1);
+  }
+});
