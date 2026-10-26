@@ -1,0 +1,308 @@
+{
+  "product_sha": "a78c6c144c5723faae16f8b37b83fe7ba5364a7c",
+  "product_tree": "9428a2ecf46a17a72ea34935e2f60eaa45b83b47",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "design:lint": "designmd lint DESIGN.md",
+    "i18n:check": "node scripts/i18n-keys.mjs check",
+    "i18n:report": "node scripts/i18n-keys.mjs report",
+    "i18n:prune": "node scripts/i18n-keys.mjs prune",
+    "i18n:set-key": "node scripts/i18n-keys.mjs set-key",
+    "i18n:find-text": "node scripts/i18n-keys.mjs find-text",
+    "i18n:find-key": "node scripts/i18n-keys.mjs find-key",
+    "test:grok-fetched-models": "node ./scripts/verify-grok-fetched-models.mjs",
+    "test:web": "node ./scripts/run-web-tests.mjs",
+    "test:auth-config-guard": "node ./scripts/verify-auth-config-guard.mjs",
+    "test:codex-model-import": "node ./scripts/verify-codex-model-import.mjs",
+    "test:json-editor-blur": "node ./scripts/verify-json-editor-blur.mjs",
+    "test:form-modal-layout": "node ./scripts/verify-form-modal-layout.mjs",
+    "test:provider-card-layout": "node ./scripts/verify-provider-card-layout.mjs",
+    "test:provider-card-view": "node ./scripts/verify-provider-card-view.mjs",
+    "test:ime-autocomplete": "node ./scripts/verify-ime-safe-autocomplete.mjs",
+    "test": "pnpm run test:web && pnpm run test:grok-fetched-models && pnpm run test:form-modal-layout && pnpm run test:provider-card-layout && pnpm run test:provider-card-view && pnpm run test:codex-card-view && pnpm run test:zcode-card-view && pnpm run test:kimi-card-view && pnpm run test:provider-list-drag && pnpm run test:provider-list-locate && pnpm run test:official-account-card && pnpm run test:zcode-official-account && pnpm run test:codex-official-accounts && pnpm run test:codex-credits && pnpm run test:provider-card-spacing && pnpm run test:migrated-provider-cards && pnpm run test:gemini-account-pending && pnpm run test:official-account-pending && pnpm run test:official-accounts-shared && pnpm run test:connectivity-modal-layout && pnpm run test:gateway-trend && pnpm run test:gateway-heatmap && pnpm run test:auth-config-guard && pnpm run test:deeplink-handshake && pnpm run test:ssh-capability && pnpm run test:skills-group-mode && pnpm run test:claude-desktop-official-edit && pnpm run test:operation-inventory && pnpm run test:css-module-classes && pnpm run test:page-rhythm && pnpm run test:dsh-migration-notice",
+    "sync:version": "node scripts/sync-tauri-version.mjs",
+    "tauri": "tauri",
+    "prepare": "husky",
+    "test:provider-list-drag": "node ./scripts/verify-provider-list-drag.mjs",
+    "test:provider-list-locate": "node ./scripts/verify-provider-list-locate.mjs",
+    "test:official-account-card": "node ./scripts/verify-kimi-official-account-card.mjs",
+    "test:codex-official-accounts": "node ./scripts/verify-codex-official-accounts.mjs",
+    "test:codex-credits": "node ./scripts/verify-codex-credits.mjs",
+    "test:provider-card-spacing": "node ./scripts/verify-provider-card-spacing.mjs",
+    "test:page-rhythm": "node ./scripts/verify-page-rhythm.mjs",
+    "test:css-module-classes": "node ./scripts/verify-css-module-classes.mjs",
+    "test:dsh-migration-notice": "node ./scripts/verify-dsh-migration-notice.mjs",
+    "test:migrated-provider-cards": "node ./scripts/verify-migrated-provider-cards.mjs",
+    "test:official-accounts-shared": "node ./scripts/verify-official-accounts-shared.mjs",
+    "test:connectivity-modal-layout": "node ./scripts/verify-connectivity-modal-layout.mjs",
+    "test:zcode-official-account": "node ./scripts/verify-zcode-official-account-card.mjs",
+    "test:codex-card-view": "node ./scripts/verify-codex-card-view.mjs",
+    "test:zcode-card-view": "node ./scripts/verify-zcode-card-view.mjs",
+    "test:kimi-card-view": "node ./scripts/verify-kimi-card-view.mjs",
+    "test:gateway-trend": "node ./scripts/verify-gateway-trend.mjs",
+    "test:gateway-heatmap": "node ./scripts/verify-gateway-heatmap.mjs",
+    "test:gemini-account-pending": "node ./scripts/verify-gemini-account-pending.mjs",
+    "test:official-account-pending": "node ./scripts/verify-official-account-pending.mjs",
+    "test:ssh-request-race": "node ./scripts/verify-ssh-request-race.mjs",
+    "test:ssh-capability": "node ./web/test/features/settings/sshCapability/verify.mjs",
+    "test:deeplink-handshake": "node ./scripts/verify-deeplink-handshake.mjs",
+    "test:skills-group-mode": "node ./scripts/verify-skills-group-mode.mjs",
+    "test:claude-desktop-official-edit": "node ./web/test/features/coding/claudedesktop/officialEdit/run.mjs",
+    "operations:generate": "node scripts/generate-operation-coverage.mjs",
+    "operations:check": "node scripts/generate-operation-coverage.mjs --check",
+    "operations:complete": "node scripts/generate-operation-coverage.mjs --require-complete",
+    "test:operation-inventory": "node --test web/test/scripts/operationInventory.test.mjs"
+  },
+  "test_chain": [
+    "test:web",
+    "test:grok-fetched-models",
+    "test:form-modal-layout",
+    "test:provider-card-layout",
+    "test:provider-card-view",
+    "test:codex-card-view",
+    "test:zcode-card-view",
+    "test:kimi-card-view",
+    "test:provider-list-drag",
+    "test:provider-list-locate",
+    "test:official-account-card",
+    "test:zcode-official-account",
+    "test:codex-official-accounts",
+    "test:codex-credits",
+    "test:provider-card-spacing",
+    "test:migrated-provider-cards",
+    "test:gemini-account-pending",
+    "test:official-account-pending",
+    "test:official-accounts-shared",
+    "test:connectivity-modal-layout",
+    "test:gateway-trend",
+    "test:gateway-heatmap",
+    "test:auth-config-guard",
+    "test:deeplink-handshake",
+    "test:ssh-capability",
+    "test:skills-group-mode",
+    "test:claude-desktop-official-edit",
+    "test:operation-inventory",
+    "test:css-module-classes",
+    "test:page-rhythm",
+    "test:dsh-migration-notice"
+  ],
+  "ignored": [
+    {
+      "path": "tauri/src/coding/image/commands.rs",
+      "name": "coding::image::commands::tests::image_execute_generation_live_smoke_works_with_openai_compatible_gateway",
+      "attribute": "#[ignore = \"requires real image gateway credentials\"]",
+      "context": "            payload[\"id\"],\n            serde_json::Value::String(\"resp_123\".to_string())\n        );\n        assert_eq!(\n            payload[\"output\"][0][\"type\"],\n            serde_json::Value::String(\"image_generation_call\".to_string())\n        );\n        assert_eq!(\n            payload[\"output\"][0][\"result\"],\n            serde_json::Value::String(\"aGVsbG8=\".to_string())\n        );\n    }\n\n    #[tokio::test]\n    #[ignore = \"requires real image gateway credentials\"]\n    async fn image_execute_generation_live_smoke_works_with_openai_compatible_gateway() {\n        let test_db_state = create_test_db_state().await;\n        let base_url = require_live_env(\"AI_TOOLBOX_IMAGE_LIVE_BASE_URL\");\n        let api_key = require_live_env(\"AI_TOOLBOX_IMAGE_LIVE_API_KEY\");",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/proxy_gateway/session_import/cost_tests.rs",
+      "name": "coding::proxy_gateway::session_import::tests::native_tests::cost_tests::local_cost_reconciliation_all_sources_on_a_snapshot",
+      "attribute": "#[ignore = \"Read-only native cost review across Claude Code, Claude Desktop and DSH; writes only a temporary database copy\"]",
+      "context": "    write_jsonl(\n        &transcript_dir.join(\"cost-desktop-session.jsonl\"),\n        &[message],\n    );\n    run_sync(&db, GatewayUsageTool::ClaudeDesktop, root.path());\n    let summary =\n        usage_stats::usage_summary(&db, None, None, Some(GatewayUsageTool::ClaudeDesktop), true)\n            .unwrap();\n    assert_eq!(summary.total_cost_usd, \"2.800000\");\n    assert_eq!(summary.total_tokens, 3_100_000);\n    assert_eq!(summary.total_requests, 1);\n}\n\n#[test]\n#[ignore = \"Read-only native cost review across Claude Code, Claude Desktop and DSH; writes only a temporary database copy\"]\nfn local_cost_reconciliation_all_sources_on_a_snapshot() {\n    let source_path = dirs::data_dir()\n        .unwrap()\n        .join(\"com.ai-toolbox/ai-toolbox.db\");",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/proxy_gateway/session_import/cost_tests.rs",
+      "name": "coding::proxy_gateway::session_import::tests::native_tests::cost_tests::local_dsh_cost_reconciliation_on_a_snapshot",
+      "attribute": "#[ignore = \"Read-only local DSH cost audit: repairs a database copy and compares with freshly imported transcripts using the same prices\"]",
+      "context": "            after.total_cost_usd,\n            repaired,\n            started.elapsed().as_millis()\n        );\n        assert_eq!(after.total_requests, before.total_requests);\n        assert_eq!(after.total_tokens, before.total_tokens);\n        assert_eq!(\n            cost_reconciliation::reconcile_session_costs(&db, tool, &sources, &mut states).unwrap(),\n            0\n        );\n    }\n}\n\n#[test]\n#[ignore = \"Read-only local DSH cost audit: repairs a database copy and compares with freshly imported transcripts using the same prices\"]\nfn local_dsh_cost_reconciliation_on_a_snapshot() {\n    let source_path = dirs::data_dir()\n        .unwrap()\n        .join(\"com.ai-toolbox/ai-toolbox.db\");",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/proxy_gateway/session_import/cross_cli_cost_tests.rs",
+      "name": "coding::proxy_gateway::session_import::tests::native_tests::cost_tests::cross_cli::local_other_cli_costs_on_a_snapshot",
+      "attribute": "#[ignore = \"Read-only cost audit for other installed CLIs; writes only database snapshots and in-memory fresh imports\"]",
+      "context": "                summary_for(&db, GatewayUsageTool::Hermes).total_cost_usd,\n                \"2.000000\"\n            );\n            cost_pricing(&db, \"hermes-zero-model\", \"20\", \"40\", \"2\");\n            run_sync(&db, GatewayUsageTool::Hermes, root.path());\n            assert_eq!(\n                summary_for(&db, GatewayUsageTool::Hermes).total_cost_usd,\n                \"2.000000\"\n            );\n        }\n    }\n}\n\n#[test]\n#[ignore = \"Read-only cost audit for other installed CLIs; writes only database snapshots and in-memory fresh imports\"]\nfn local_other_cli_costs_on_a_snapshot() {\n    let path = dirs::data_dir()\n        .unwrap()\n        .join(\"com.ai-toolbox/ai-toolbox.db\");",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/proxy_gateway/session_import/native_tests.rs",
+      "name": "coding::proxy_gateway::session_import::tests::native_tests::local_native_sources_read_only_smoke",
+      "attribute": "#[ignore = \"Read-only developer session verification; writes usage to a temporary database only\"]",
+      "context": "                data_source: Some(\"proxy\".into()),\n                ..Default::default()\n            },\n            0,\n            10,\n            true,\n        )\n        .unwrap()\n        .total,\n        1\n    );\n}\n\n#[test]\n#[ignore = \"Read-only developer session verification; writes usage to a temporary database only\"]\nfn local_native_sources_read_only_smoke() {\n    let db = SqliteDbState::in_memory_for_test().unwrap();\n    let sources = [\n        GatewayUsageTool::Pi,",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/proxy_gateway/session_import/native_tests.rs",
+      "name": "coding::proxy_gateway::session_import::tests::native_tests::local_database_reconciliation_on_a_snapshot",
+      "attribute": "#[ignore = \"Copies the local application database through a read-only connection; reconciles only the temporary copy\"]",
+      "context": "        usage_stats::usage_summary_by_cli(&db, None, None, true).unwrap(),\n        before\n    );\n    println!(\n        \"scanned={} parsed={} inserted={} updated={} repeated_inserted={}\",\n        result.scanned_files,\n        result.parsed_records,\n        result.inserted_records,\n        result.updated_records,\n        repeated.inserted_records\n    );\n}\n\n#[test]\n#[ignore = \"Copies the local application database through a read-only connection; reconciles only the temporary copy\"]\nfn local_database_reconciliation_on_a_snapshot() {\n    let source_path = dirs::data_dir()\n        .unwrap()\n        .join(\"com.ai-toolbox/ai-toolbox.db\");",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/proxy_gateway/session_import/native_tests.rs",
+      "name": "coding::proxy_gateway::session_import::tests::native_tests::local_dsh_parser_upgrade_on_a_snapshot",
+      "attribute": "#[ignore = \"Verifies the local DSH parser upgrade on a temporary database copy; requires all original DSH transcripts\"]",
+      "context": "        })\n        .collect();\n    let reconciled = reconcile_late_proxy_rows(&db, &mut states, &mut claims).unwrap();\n    let after = usage_stats::usage_summary(&db, None, None, None, true).unwrap();\n    assert_eq!(proxy_count(&db), before_proxies);\n    assert_eq!(before.total_requests - after.total_requests, reconciled);\n    assert_eq!(\n        reconcile_late_proxy_rows(&db, &mut states, &mut claims).unwrap(),\n        0\n    );\n    println!(\"snapshot_reconciled={reconciled} token_contribution_removed={} gateway_rows_preserved={before_proxies}\",before.total_tokens-after.total_tokens);\n}\n\n#[test]\n#[ignore = \"Verifies the local DSH parser upgrade on a temporary database copy; requires all original DSH transcripts\"]\nfn local_dsh_parser_upgrade_on_a_snapshot() {\n    let source_path = dirs::data_dir()\n        .unwrap()\n        .join(\"com.ai-toolbox/ai-toolbox.db\");",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/proxy_gateway/session_import/tests.rs",
+      "name": "coding::proxy_gateway::session_import::tests::local_opencode_v2_store_imports_per_request_usage",
+      "attribute": "#[ignore = \"Audit against a real OpenCode 2.0 store via AI_TOOLBOX_OPENCODE_V2_DB\"]",
+      "context": "            Ok(rows)\n        })\n        .unwrap();\n    assert_eq!(models, vec![\"fork-model\", \"root-model\"]);\n    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();\n    assert_eq!(summary.total_requests, 2);\n    assert_eq!(summary.total_input_tokens, 300);\n    assert_eq!(summary.total_output_tokens, 30);\n}\n\n/// Read-only audit against a store written by a real OpenCode 2.0 install.\n/// Point `AI_TOOLBOX_OPENCODE_V2_DB` at its `opencode.db`; only a temp copy is\n/// ever opened for writing.\n#[test]\n#[ignore = \"Audit against a real OpenCode 2.0 store via AI_TOOLBOX_OPENCODE_V2_DB\"]\nfn local_opencode_v2_store_imports_per_request_usage() {\n    let path = std::env::var(\"AI_TOOLBOX_OPENCODE_V2_DB\")\n        .expect(\"set AI_TOOLBOX_OPENCODE_V2_DB to a real OpenCode 2.0 opencode.db\");\n    let root = tempfile::tempdir().unwrap();",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/session_manager/codex_scratch.rs",
+      "name": "coding::session_manager::codex_scratch::tests::codex_scratch_wsl_smoke",
+      "attribute": "#[ignore]",
+      "context": "    /// <home>/sessions/2026/09/25/rollout-..-<a>.jsonl     cwd = <docs>/Codex/2026-09-25/kept\n    /// <home>/archived_sessions/2026/09/24/rollout-..-<b>.jsonl  cwd = <docs>/Codex/2026-09-24/archived\n    /// <docs>/Codex/2026-09-25/orphan/<file>   unreferenced, must be cleaned\n    /// <docs>/Codex/2026-09-25/kept/           referenced, must survive\n    /// <docs>/Codex/2026-09-24/archived/       referenced from the archive, must survive\n    /// <docs>/Codex/2026-09-19/                empty dated directory, must be pruned\n    /// <docs>/Codex/../project/main.rs         real project, never a target\n    /// ```\n    ///\n    /// The unit tests cover this logic with Windows or synthetic paths; only a\n    /// real share shows what 9p and the UNC spelling do to it \u2014 a nested distro\n    /// prefix, a trust key that will not compare, an archived sibling that does\n    /// not resolve.\n    #[test]\n    #[ignore]\n    fn codex_scratch_wsl_smoke() {\n        let Ok(home) = std::env::var(\"CODEX_SMOKE_WSL_HOME\") else {\n            return;\n        };",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux. WSL smoke specifically requires a real WSL share."
+    },
+    {
+      "path": "tauri/src/coding/session_manager/codex_scratch.rs",
+      "name": "coding::session_manager::codex_scratch::tests::codex_scratch_local_smoke",
+      "attribute": "#[ignore]",
+      "context": "    /// (or the cleanup would not be offered at all), no real trust entry may be\n    /// mistaken for residue (the \"never touch a real project\" rule, on a config\n    /// that holds every project the user ever trusted), and the real rollout\n    /// `cwd`s must compare against the real trust keys Codex wrote \u2014 it\n    /// canonicalizes and lowercases those, while the `cwd` keeps the user's case.\n    ///\n    /// `CODEX_SMOKE_LOCAL_FIXTURE` names a home the caller prepared like the WSL\n    /// fixture (a scratch workspace with files, a referenced sibling, a real\n    /// project, real-style trust entries \u2014 including a lowercased one \u2014 and a\n    /// rollout per session) and *is emptied by this test*. Never point it at a\n    /// real home; point it at a copy.\n    ///\n    /// Run with `cargo test --lib -- --ignored codex_scratch_local_smoke`.\n    #[test]\n    #[ignore]\n    fn codex_scratch_local_smoke() {\n        if let Ok(fixture) = std::env::var(\"CODEX_SMOKE_LOCAL_FIXTURE\") {\n            local_clean_smoke(&PathBuf::from(fixture));\n        }",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/session_manager/dsh.rs",
+      "name": "coding::session_manager::dsh::tests::real_artifact_smoke",
+      "attribute": "#[ignore]",
+      "context": "        let events = format!(\n            \"{}\\n{}\",\n            sample_events(1_700_000_000_000).trim_end(),\n            r#\"{\"type\":\"session/title\",\"seq\":13,\"time\":13,\"data\":{\"title\":\"   \"}}\"#\n        );\n        write_artifact(dir.path(), \"proj-a\", false, &events);\n\n        let sessions = scan_sessions(dir.path());\n        assert_eq!(sessions[0].title.as_deref(), Some(\"Hello there\"));\n    }\n\n    /// Smoke test over a real artifact: point `DSH_SMOKE_SESSION` at a\n    /// `session[.v<N>].jsonl[.zstd]` path and run with `cargo test -- --ignored`.\n    #[test]\n    #[ignore]\n    fn real_artifact_smoke() {\n        let Ok(source) = std::env::var(\"DSH_SMOKE_SESSION\") else {\n            return;\n        };",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/session_manager/dsh.rs",
+      "name": "coding::session_manager::dsh::tests::real_sessions_root_smoke",
+      "attribute": "#[ignore]",
+      "context": "            tool_block_kinds.len()\n        );\n    }\n\n    /// Smoke test over a real sessions root: point `DSH_SMOKE_SESSIONS_ROOT` at\n    /// a dsh `<home>/sessions` directory and run\n    /// `cargo test --lib -- --ignored dsh_sessions`.\n    ///\n    /// The count assertion is the one that matters: a session directory whose\n    /// selected artifact fails to parse would silently vanish from the list,\n    /// and only comparing against the directory count catches that. Hiding is\n    /// applied on top, so the ground truth splits each directory into visible\n    /// and deliberately hidden (subagent or blank) before comparing.\n    #[test]\n    #[ignore]\n    fn real_sessions_root_smoke() {\n        let Ok(root) = std::env::var(\"DSH_SMOKE_SESSIONS_ROOT\") else {\n            return;\n        };",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    },
+    {
+      "path": "tauri/src/coding/session_manager/mod.rs",
+      "name": "coding::session_manager::tests::codex_state_db_smoke",
+      "attribute": "#[ignore]",
+      "context": "        let with_db = context.cache_key();\n\n        assert_ne!(without_db, with_db);\n    }\n\n    /// Smoke test over a real Codex home: point `CODEX_SMOKE_HOME` at a\n    /// `<home>` that holds `sessions/` and the state database, then run\n    /// `cargo test --lib -- --ignored codex_state_db_smoke`.\n    ///\n    /// The database decides the winner, so the failure worth catching is a\n    /// regression that makes rows vanish or duplicate once the authority is in\n    /// play: the list must still show exactly one row per thread id, and every\n    /// row's `source_path` must be a file the database actually selected.\n    #[test]\n    #[ignore]\n    fn codex_state_db_smoke() {\n        let Ok(home) = std::env::var(\"CODEX_SMOKE_HOME\") else {\n            return;\n        };",
+      "scope": "Existing developer/live-data opt-in; not executed on synthetic hosted Linux."
+    }
+  ],
+  "baseline": {
+    "run": 38926472798,
+    "sha": "4cf5ceda436b3c86ac506a71dd83cff307268a37",
+    "observed": "GitHub jobs frontend/rust and tsc/full-suite/build steps success; old SHA, not current-product evidence. Historical log retrieval returned no text; no counts inferred."
+  },
+  "frontend_scope": {
+    "scripts": 31,
+    "node_test_entrypoints": 3,
+    "source_structure_scripts": 4,
+    "chromium_fixture_scripts": 24,
+    "web_test_files": 158,
+    "note": "All existing Next scripts retained; upstream CSS/rhythm/DSH guards added. Whole Node run before the four canonical-pin tests passed 1186; those four plus seven imported controls passed separately, and final tsc passed. Hosted full chain must execute the final source inventory. Browser fixtures are not native desktop acceptance."
+  },
+  "focused": {
+    "usage-credentials": {
+      "prefix": "coding::codex::official_accounts::usage_credential_tests::",
+      "tests": [
+        "coding::codex::official_accounts::usage_credential_tests::usable_stored_credential_skips_exchange_and_persists_usage",
+        "coding::codex::official_accounts::usage_credential_tests::expired_stored_credential_is_rotated_before_usage",
+        "coding::codex::official_accounts::usage_credential_tests::applied_account_adopts_newer_same_account_runtime_credential",
+        "coding::codex::official_accounts::usage_credential_tests::runtime_credential_of_another_account_is_never_borrowed",
+        "coding::codex::official_accounts::usage_credential_tests::refreshing_unapplied_account_leaves_runtime_login_untouched",
+        "coding::codex::official_accounts::usage_credential_tests::unexpired_token_rejected_with_401_triggers_one_forced_recovery",
+        "coding::codex::official_accounts::usage_credential_tests::second_401_after_recovery_reports_reauth_without_looping",
+        "coding::codex::official_accounts::usage_credential_tests::rejected_refresh_token_reports_reauth_and_keeps_the_account",
+        "coding::codex::official_accounts::usage_credential_tests::missing_refresh_token_reports_reauth_without_any_request",
+        "coding::codex::official_accounts::usage_credential_tests::background_pass_persists_a_non_applied_account_rotation",
+        "coding::codex::official_accounts::usage_credential_tests::rotated_credential_is_persisted_before_a_failing_usage_call",
+        "coding::codex::official_accounts::usage_credential_tests::transient_usage_errors_do_not_trigger_a_token_exchange",
+        "coding::codex::official_accounts::usage_credential_tests::local_virtual_account_refreshes_its_expired_runtime_credential",
+        "coding::codex::official_accounts::usage_credential_tests::credential_is_reread_after_waiting_for_the_oauth_lock",
+        "coding::codex::official_accounts::usage_credential_tests::local_virtual_account_recovers_from_401_with_a_forced_exchange",
+        "coding::codex::official_accounts::usage_credential_tests::runtime_write_is_skipped_when_the_account_was_switched_away",
+        "coding::codex::official_accounts::usage_credential_tests::missing_or_broken_snapshot_sends_no_usage_request",
+        "coding::codex::official_accounts::usage_credential_tests::account_header_comes_from_the_recovered_credential",
+        "coding::codex::official_accounts::usage_credential_tests::failed_refresh_keeps_previous_usage_and_records_the_error",
+        "coding::codex::official_accounts::usage_credential_tests::followup_shared_workspace_different_user_is_not_adopted",
+        "coding::codex::official_accounts::usage_credential_tests::identity_matching_preserves_stable_user_and_legacy_fallbacks",
+        "coding::codex::official_accounts::usage_credential_tests::same_user_changed_email_runtime_rotation_is_adopted",
+        "coding::codex::official_accounts::usage_credential_tests::followup_local_success_after_runtime_switch_is_rejected",
+        "coding::codex::official_accounts::usage_credential_tests::local_success_allows_same_identity_token_rotation",
+        "coding::codex::official_accounts::usage_credential_tests::local_success_rejects_root_switch_even_for_the_same_identity",
+        "coding::codex::official_accounts::usage_credential_tests::local_success_rejects_missing_or_malformed_runtime_without_rewriting_it",
+        "coding::codex::official_accounts::usage_credential_tests::followup_concurrent_401_reuses_already_recovered_credential",
+        "coding::codex::official_accounts::usage_credential_tests::concurrent_401_reuses_equal_expiry_rotations_for_saved_and_local_accounts",
+        "coding::codex::official_accounts::usage_credential_tests::concurrent_401_forces_then_reuses_opaque_rotations_for_saved_and_local_accounts",
+        "coding::codex::official_accounts::usage_credential_tests::local_401_replacement_that_is_expired_still_refreshes"
+      ]
+    },
+    "neighboring-accounts": {
+      "prefix": "coding::codex::official_accounts::tests::",
+      "tests": [
+        "coding::codex::official_accounts::tests::codex_credits_parse_strings_numbers_and_preserve_subscription_windows",
+        "coding::codex::official_accounts::tests::codex_credits_preserve_zero_negative_and_conflicting_availability",
+        "coding::codex::official_accounts::tests::codex_credits_malformed_fields_do_not_fail_or_invent_a_balance",
+        "coding::codex::official_accounts::tests::codex_credits_round_trip_refresh_clear_and_failure_are_account_scoped",
+        "coding::codex::official_accounts::tests::codex_credits_old_records_and_virtual_logins_have_no_invented_balance",
+        "coding::codex::official_accounts::tests::codex_credits_preparation_failure_clears_persisted_balance",
+        "coding::codex::official_accounts::tests::codex_credits_oauth_refresh_does_not_restore_an_older_usage_snapshot",
+        "coding::codex::official_accounts::tests::auth_has_official_runtime_requires_auth_mode_and_both_tokens",
+        "coding::codex::official_accounts::tests::imported_auth_json_requires_a_valid_official_login_object",
+        "coding::codex::official_accounts::tests::refreshed_auth_preserves_rotated_fields_omitted_by_server",
+        "coding::codex::official_accounts::tests::browser_oauth_authorize_url_uses_actual_callback_port_and_official_scopes",
+        "coding::codex::official_accounts::tests::browser_oauth_falls_back_when_default_port_is_occupied",
+        "coding::codex::official_accounts::tests::browser_oauth_callback_rejects_invalid_state",
+        "coding::codex::official_accounts::tests::browser_oauth_callback_times_out_without_connection",
+        "coding::codex::official_accounts::tests::device_auth_cancel_signals_and_removes_session",
+        "coding::codex::official_accounts::tests::official_runtime_merge_preserves_unknown_runtime_fields",
+        "coding::codex::official_accounts::tests::atomic_auth_writer_replaces_content_and_sets_owner_only_permissions",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_free_treats_primary_week_window_as_weekly_limit",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_free_falls_back_to_primary_window_as_weekly_limit",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_pro_family_has_no_five_hour_limit",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_pro_does_not_relabel_timed_five_hour_window_as_weekly",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_non_free_uses_window_duration_before_order",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_detects_monthly_window",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_detects_monthly_window_from_additional_rate_limits",
+        "coding::codex::official_accounts::tests::extract_reset_timestamp_uses_relative_seconds_when_absolute_timestamp_is_missing",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_reads_reset_credit_count",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_keeps_zero_reset_credit_count_and_camel_case_alias",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_leaves_reset_credit_count_absent_when_missing",
+        "coding::codex::official_accounts::tests::parse_usage_snapshot_uses_limit_reached_hint_when_percent_is_missing",
+        "coding::codex::official_accounts::tests::should_hide_virtual_local_account_when_refresh_token_matches_saved_account",
+        "coding::codex::official_accounts::tests::should_show_virtual_local_account_when_local_auth_is_not_saved"
+      ]
+    }
+  },
+  "regressions": {
+    "path": "tauri/src/coding/codex/official_accounts.rs",
+    "prefix": "coding::codex::official_accounts::usage_credential_tests::followup_",
+    "tests": [
+      "coding::codex::official_accounts::usage_credential_tests::followup_shared_workspace_different_user_is_not_adopted",
+      "coding::codex::official_accounts::usage_credential_tests::followup_local_success_after_runtime_switch_is_rejected",
+      "coding::codex::official_accounts::usage_credential_tests::followup_concurrent_401_reuses_already_recovered_credential"
+    ],
+    "function_sha256": {
+      "coding::codex::official_accounts::usage_credential_tests::followup_shared_workspace_different_user_is_not_adopted": "9ef139691bcaf12727bd3f25eb9f5439e1b899a89964890a651bd827aedd9b74",
+      "coding::codex::official_accounts::usage_credential_tests::followup_local_success_after_runtime_switch_is_rejected": "52edaeac0cba68a917fda191ac1e2b874373c4bf8b229c33251c7caef75abac7",
+      "coding::codex::official_accounts::usage_credential_tests::followup_concurrent_401_reuses_already_recovered_credential": "1124f7e6a5a09ef0bafb103be553e97841466557afae81af35fae0e2af51da70"
+    },
+    "baseline_product_sha": "2f9f378a9a32d0d5386a3dd725fe8432c073cb81",
+    "red_probe_sha": "12e9811fb33e2bd8127cb3538649bfe6d9dec564",
+    "red_run_id": 40223996205,
+    "scope": "Permanent product regressions retain the exact functions that failed on the baseline probe. Run separately from the same product binary and again in the full default suite; no overlay compilation. Local stale-success rejection is a defensive current-request contract, not evidence of runtime overwrite or cross-account display."
+  },
+  "compile_only_doctests": [
+    {
+      "name": "src/http_client.rs - http_client (line 9)",
+      "path": "tauri/src/http_client.rs",
+      "line": 9,
+      "marker": "//! ```rust,no_run"
+    },
+    {
+      "name": "src/http_client.rs - http_client::client (line 61)",
+      "path": "tauri/src/http_client.rs",
+      "line": 61,
+      "marker": "/// ```rust,no_run"
+    },
+    {
+      "name": "src/http_client.rs - http_client::client_with_timeout (line 89)",
+      "path": "tauri/src/http_client.rs",
+      "line": 89,
+      "marker": "/// ```rust,no_run"
+    }
+  ]
+}
