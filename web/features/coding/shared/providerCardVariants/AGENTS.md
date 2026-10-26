@@ -118,6 +118,8 @@ Claude / Codex 式的菜单**固定为**：启用（含副标题）→ 编辑 �
 
 ## 最小验证
 
+- `test:migrated-provider-cards` 的完整挂载库存与主题表面矩阵是不同口径：新增 readonly/selection/builtin/订阅样例时，必须同步精确库存，但不能把非卡片 block 盲套进原主题循环。保留各场景计数及合计门；`migratedProviderCardsInventory.test.ts` 执行真实 FixtureHost 的 JSX 结构和检查 helper，以漏项、重项、额外项拦截库存漂移（仅 Node/mock，不代替浏览器）。
+
 - `pnpm run test:provider-card-layout` 通过（薄映射层守卫）。
 - `test:migrated-provider-cards` 夹具里，目录文本出现不代表展开动画/布局已经稳定；首次 `scrollIntoView` 后目标仍可能移出 viewport。只在 hover/点击前允许重新定位，并重置稳定采样；reveal 后不自动滚动，不重试点击。原 200 次上限、5 次静止采样、hit-test/opacity 和真实单次指针点击都必须保留。`migratedProviderCardsMenu.test.ts` 直接执行夹具 helper 的正反例仅属 Node/mock 回归，不能代替实际浏览器检查。
 

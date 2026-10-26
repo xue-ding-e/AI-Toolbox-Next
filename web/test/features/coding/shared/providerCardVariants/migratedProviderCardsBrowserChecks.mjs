@@ -29,6 +29,18 @@ const SCENARIO_COUNTS = {
 };
 const MATRIX = ['claude-desktop', 'gemini', 'grok-official', 'grok-custom', 'omo-default', 'omo-other']
   .flatMap(name => ['list', 'card'].map(view => name + '-' + view));
+// Full host inventory is broader than the original twelve theme surfaces:
+// readonly/selection/builtin cases and the subscription block are intentional
+// additional fixtures, not extra instances of the original two-view matrix.
+const FIXTURE_IDS = [
+  ...MATRIX,
+  'openclaw-list', 'openclaw-card', 'openclaw-default-list',
+  'hermes-list', 'hermes-card', 'hermes-readonly-list',
+  'hermes-selection-list', 'hermes-selection-disabled-list', 'hermes-readonly-selection-list',
+  'pi-list', 'pi-card', 'pi-builtin-list',
+  'omp-list', 'omp-card', 'omp-subscription-block',
+  'dsh-list', 'dsh-card', 'dsh-builtin-list',
+];
 
 export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, artifactRoot, exceptions }) {
   const checks = [];
@@ -126,7 +138,7 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
   };
   const checkSurfaces = async themeMode => {
     const mounted = await evaluate('[...document.querySelectorAll("[data-fixture]")].map(node => node.dataset.fixture).sort()');
-    assert.deepEqual(mounted, [...MATRIX].sort(), 'Complete four-mapping/two-view matrix');
+    assert.deepEqual(mounted, [...FIXTURE_IDS].sort(), 'Complete migrated-provider fixture inventory');
     for (const name of MATRIX) {
       const observed = await fixture('surfaceStyle(' + JSON.stringify(name) + ')');
       const rgba = observed.background.match(/^rgba?\(([^)]+)\)$/)?.[1].split(/[,\s]+/).filter(Boolean).map(Number);
@@ -882,7 +894,7 @@ export async function verifyMigratedProviderCards({ send, evaluate, baseUrl, art
   }, null, 2));
   console.log(`Passed ${completed.length} migrated-provider-card scenarios (${checks.length} assertions).`);
   const routingChecks = await verifyClaudeDesktopRouting({ send, evaluate, baseUrl, artifactRoot, exceptions });
-  assert.equal(checks.length + routingChecks.length, 114, 'Complete migration and Desktop routing coverage');
+  assert.equal(checks.length + routingChecks.length, 160, 'Complete migration and Desktop routing coverage');
   return [...checks, ...routingChecks];
 }
 
