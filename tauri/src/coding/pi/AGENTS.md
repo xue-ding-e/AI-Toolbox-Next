@@ -33,7 +33,7 @@
 - 前端 runtime view 的 `credential` 保持 `unknown`，收藏备份必须复用页面 `upsertPiFavoriteProvider` 的对象归一化，保留合法 API key/OAuth 对象及未知字段。批量入口不能把 `unknown` 直接传给仅接收 record 的配置构造函数，也不要用类型断言跳过运行时形态检查。
 - `models.json` 允许 unknown top-level 和 provider/model unknown fields。读写必须 preserve unknown fields。
 - Fetch Models 前端用 `findPresetModelById` 补全能力时必须保留上游返回的 model id 原文（含大小写）。preset 匹配是大小写不敏感的，只能拿 context/cost/reasoning/input 等元数据，不能把 `minimax-m3` 改写成 preset 的 `MiniMax-M3`；实现位于 `web/features/coding/pi/utils/piFetchedModels.ts`。
-- Pi 0.99+ 原生支持 MCP，内置实现读取 `<runtime-root>/mcp.json`（项目级为 `.pi/mcp.json`）；`pi-mcp-adapter` 6.0.0 读取同一个文件。两者只能生效一个：扩展注册 `/mcp` 时会替换内置实现，adapter 首次启动还会自动往 `settings.json` 写 `-builtin:mcp`。MCP 页面把 Pi 作为同步目标时不需要区分实现，因为文件与 `mcpServers` 格式相同。内置实现不支持 SSE（adapter 支持），同步层只在 `packages` 里的 `pi-mcp-adapter` **实际生效**（未被本页开关写成四类 `[]`）时写入 SSE 条目，否则把该错误记进同步结果。
+- Pi 0.99+ 原生支持 MCP，内置实现读取 `<runtime-root>/mcp.json`（项目级为 `.pi/mcp.json`）；`pi-mcp-adapter` 6.0.0 读取同一个文件。两者只能生效一个：扩展注册 `/mcp` 时会替换内置实现，adapter 首次启动还会自动往 `settings.json` 写 `-builtin:mcp`。MCP 页面把 Pi 作为同步目标时不需要区分实现，因为文件与 `mcpServers` 格式相同。内置实现不支持 SSE（adapter 支持），同步层只在 `packages` 里的 `pi-mcp-adapter` **实际生效**（extension 入口启用，非 `extensions: []` 或 `autoload: false`）时写入 SSE 条目，否则把该错误记进同步结果。
 - 不要硬编码 `~/.pi/agent/extensions`。Pi root 可能来自应用内 custom root、`PI_CODING_AGENT_DIR`、shell 配置、默认路径或 WSL Direct，扩展目录必须从当前 runtime location 派生。
 - Windows 文件夹选择器在 WSL UNC 下可能只能选到 `~/.pi`，但末段名为 `.pi` 的目录也可能是合法 custom root。Pi 设置保存和 runtime cache 刷新只有在当前目录没有 Pi runtime 数据、且其 `agent` 子目录已存在 Pi runtime 布局时，才归一化并回写为 `~/.pi/agent`；不能只凭目录名迁移。
 - WSL Direct 扩展命令需要把 mise/asdf/bun/Volta/fnm/用户 npm bin 前置到原 WSL `$PATH`。动态 root 和扩展 source 必须保持为独立进程参数，不能拼进 shell 命令字符串；否则含空格路径会拆参，Shell 元字符还会改变命令结构。
@@ -86,3 +86,5 @@
 - `settings.json` 中已有 `packages` 时，`read_pi_runtime_config().other_settings` 不返回该字段，`save_pi_other_settings` 也不会删除或覆盖它。
 - Pi 0.80.6 起共享 thinking ladder 是 `off/minimal/low/medium/high/xhigh/max`。AI Toolbox 的前端选项、preset `thinkingLevelMap` 转换和后端校验白名单必须同步维护这七档；缺省的标准档 `off/minimal/low/medium/high` 按 identity mapping 支持，扩展档 `xhigh/max` 必须由模型显式提供非 `null` 映射才算支持。`ultra` 属于 Codex 的主动多智能体档位，不是 Pi thinking level，不能加入 Pi settings 或模型映射。
 - Fetch Models 命中大小写不同的 preset 时（例如上游 `minimax-m3` / preset `MiniMax-M3`），写入 `models.json` 的 model id 必须仍是上游原文；可运行 `pnpm test:web -- web/test/features/coding/pi/utils/piFetchedModels.test.ts`。
+
+- Pi MCP adapter 的接管判定只认 `npm:pi-mcp-adapter`（可带版本），只检查第一个同身份包的 extension 是否加载；`extensions: []` 或 `autoload: false` 必须拒绝 SSE，同包的 skills/themes 存在不证明 MCP 生效。复杂过滤器无法证明 `index.ts` 加载时保守拒绝，不按包名子串猜测。

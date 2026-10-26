@@ -314,7 +314,7 @@ fn should_wrap_cmd_for_config_path(config_path: &Path) -> bool {
 ///
 /// Pi 0.99+ 的内置 MCP 与 adapter 共用 `<root>/mcp.json`，但只有 adapter 支持 SSE。
 /// adapter 只在以包形式安装且**未被禁用**时替换内置实现：本页的禁用开关把条目
-/// 写成四类 `[]`，条目仍留在 `packages` 里却不再加载，所以不能只看它出现过。
+/// 的 extensions 写成 `[]` 就不会加载入口；其它资源类加载不等于 MCP 接管。
 /// 读不到或解析失败一律按「内置实现生效」处理：宁可报一个可见错误，也不要写出
 /// 一条会被静默跳过的配置。
 fn pi_adapter_active(config_path: &Path) -> bool {
@@ -327,24 +327,42 @@ fn pi_adapter_active(config_path: &Path) -> bool {
     let Ok(settings) = serde_json::from_str::<Value>(&raw) else {
         return false;
     };
-    settings
-        .get("packages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            entry
-                .as_str()
-                .or_else(|| entry.get("source").and_then(Value::as_str))
+    pi_adapter_active_in_settings(&settings)
+}
+
+/// Recognize only the official npm package identity, not arbitrary substrings
+/// in git URLs, local paths or similarly named packages.
+fn is_pi_mcp_adapter_npm_source(source: &str) -> bool {
+    source == "npm:pi-mcp-adapter"
+        || source.strip_prefix("npm:pi-mcp-adapter@").is_some_and(|version| {
+            !version.is_empty()
+                && version.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-^~".contains(&b))
         })
-        .filter(|source| source.contains("pi-mcp-adapter"))
-        .any(|source| {
-            crate::coding::cli_extensions::package_source_is_active(
-                &crate::coding::pi::extensions::PI_EXTENSION_SPEC,
-                &settings,
-                source,
-            )
-        })
+}
+
+fn pi_adapter_active_in_settings(settings: &Value) -> bool {
+    let Some(packages) = settings.get("packages").and_then(Value::as_array) else {
+        return false;
+    };
+    // Pi deduplicates packages by identity; a later enabled duplicate cannot
+    // revive an earlier disabled adapter. Other resource types do not register MCP.
+    let Some(entry) = packages.iter().find(|entry| {
+        entry.as_str().or_else(|| entry.get("source").and_then(Value::as_str))
+            .is_some_and(is_pi_mcp_adapter_npm_source)
+    }) else { return false; };
+    if entry.as_str().is_some() { return true; }
+    if entry.get("autoload").is_some_and(|value| value != &Value::Bool(true)) {
+        return false;
+    }
+    match entry.get("extensions") {
+        None => true,
+        // The adapter manifest exposes only ./index.ts. Do not attempt to
+        // interpret arbitrary glob/negative filters as proof it is loaded.
+        Some(Value::Array(filters)) => !filters.is_empty() && filters.iter().all(|filter| {
+            matches!(filter.as_str(), Some("index.ts" | "./index.ts" | "+index.ts" | "+./index.ts"))
+        }),
+        Some(_) => false,
+    }
 }
 
 fn should_wrap_cmd_for_windows_config_path(config_path: &Path) -> bool {
@@ -2561,14 +2579,14 @@ X-Test = "yes"
 
         assert!(!pi_adapter_active(&config_path));
 
-        // 只在 extensions 一类上加了 `[]`：其它三类仍按默认加载，包是生效的。
+        // Adapter registers MCP through its extension; other resource classes cannot enable it.
         std::fs::write(
             &settings_path,
             json!({ "packages": [{ "source": "npm:pi-mcp-adapter", "extensions": [] }] })
                 .to_string(),
         )
         .unwrap();
-        assert!(pi_adapter_active(&config_path));
+        assert!(!pi_adapter_active(&config_path));
 
         // 四类全空 = 本页的「禁用」形态，内置实现接管。
         std::fs::write(
@@ -2581,6 +2599,30 @@ X-Test = "yes"
         )
         .unwrap();
         assert!(!pi_adapter_active(&config_path));
+    }
+
+    #[test]
+    fn pi_adapter_requires_exact_identity_and_loaded_extension() {
+        for packages in [
+            json!(["npm:not-pi-mcp-adapter"]),
+            json!(["npm:pi-mcp-adapter-fork"]),
+            json!(["/tmp/pi-mcp-adapter"]),
+            json!(["npm:pi-mcp-adapter@"]),
+            json!([{ "source": "npm:pi-mcp-adapter", "extensions": [] }]),
+            json!([{ "source": "npm:pi-mcp-adapter", "autoload": false, "skills": ["+skill.md"] }]),
+            json!([{ "source": "npm:pi-mcp-adapter", "extensions": ["!index.ts"] }]),
+            json!([{ "source": "npm:pi-mcp-adapter", "extensions": [] }, "npm:pi-mcp-adapter@6.0.0"]),
+        ] {
+            assert!(!pi_adapter_active_in_settings(&json!({ "packages": packages })), "{packages}");
+        }
+        for packages in [
+            json!(["npm:pi-mcp-adapter"]),
+            json!(["npm:pi-mcp-adapter@6.0.0"]),
+            json!([{ "source": "npm:pi-mcp-adapter", "skills": [] }]),
+            json!([{ "source": "npm:pi-mcp-adapter", "extensions": ["./index.ts"] }]),
+        ] {
+            assert!(pi_adapter_active_in_settings(&json!({ "packages": packages })), "{packages}");
+        }
     }
 
     #[test]
