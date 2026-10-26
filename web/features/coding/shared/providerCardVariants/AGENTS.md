@@ -87,15 +87,6 @@
 
 | 插槽 | 位置 | 用途 | 现有消费方 |
 |---|---|---|---|
-| `providerState.accent` | 卡片外框（`CardShell`） | `applied`（主色边框 + 选中底色）/ `gatewayPrimary`（成功色 + 渐变）；批量选中优先于两者 | claudecode、codex、claudedesktop |
-| `providerState.draggable` / `sortableId` | 卡片级拖拽把手（`CardShell`） | **卡片级**顺序；不带模型区的样式也要能拖，所以不放 `modelSection` | claudecode、codex、zcode、omo_native、geminicli、claudedesktop、grok |
-| `namePrefix` | 名称**之前** | 被改名的卡片补前缀图标（官方卡片的 🔗） | codex、kimi、geminicli、grok |
-| `nameTags` | 名称右侧 | 已应用 / 官方 / 代理 / 网关优先级徽章、官方账号计数 | claudecode、codex、zcode、geminicli、grok、claudedesktop |
-| `metaEntries` | 第二行 | 有序的 `text` / `code` / `tag` 项；**标签用 `entry.label`，不要拆成前一个 `text` 项** | claudecode（角色绑定）、codex（端点/模型/key/备注）、zcode、geminicli、grok、claudedesktop（角色路由 + tierAlias tag） |
-| `inlineActions` | 第二行末尾 | 行内动作（连通性测试、CLI 启动） | claudecode、codex、grok、claudedesktop（`InlineConnectivityButton`） |
-| `footer` | **头部两栏之下、模型区之上**（与模型区一样**跨满卡片整宽**） | 自由区块（官方账号折叠区、备注） | codex、geminicli、grok、claudedesktop |
-| `actions.gatewayActions` | 头部主操作**之前** | 网关接管/恢复直连/切换主渠道 | claudecode、codex、geminicli、grok、claudedesktop |
-| `actions.primaryAction` | 头部主操作 | 文字链「应用」 | claudecode、codex、geminicli、grok、claudedesktop |
 | `actions.extraActions` | 头部图标按钮，在「更多」**之前** | 工具专属头部动作 | zcode、omo_native（OpenCode 式）；Claude/Codex 式亦可 |
 | `providerState.accent` | 卡片外框（`CardShell`） | `applied`（主色边框 + 选中底色）/ `gatewayPrimary`（成功色 + 渐变）；批量选中优先于两者 | claudecode、codex、kimi、geminicli、grok、claudedesktop |
 | `providerState.draggable` / `sortableId` | 卡片级拖拽把手（`CardShell`） | **卡片级**顺序；不带模型区的样式也要能拖，所以不放 `modelSection` | 全部 14 个有供应商列表的 CLI（claudecode、claudedesktop、codex、dsh、geminicli、grok、hermes、kimi、oh_my_pi、omo_native、openclaw、opencode、pi、zcode）。**只有真的能写回顺序的才传 `true`**：Hermes 的只读 `providers:` 字典行、OMP 的 Codex 订阅卡片、dsh 的内置目录渠道都没有把手 |
