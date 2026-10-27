@@ -641,3 +641,85 @@ jobs:
       - name: Run migration and neighboring preferences tests serially
         run: |
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
+  codex-auth-json-export:
+    # Control-only branch; test the reviewed product commit, never a moving ref.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/codex-auth-json-export-20261027'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      NODE_OPTIONS: --max-old-space-size=4096
+      EXPECTED_SOURCE_SHA: e49aaefda437a702811cedeffdbc04bc3346ad68
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e49aaefda437a702811cedeffdbc04bc3346ad68
+          persist-credentials: false
+      - name: Verify exact product source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git show -s --format=fuller HEAD
+          git diff --exit-code
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check actual frontend types and synthetic export lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/auth-export-home"
+          export USERPROFILE="$HOME" XDG_CONFIG_HOME="$HOME/config" XDG_DATA_HOME="$HOME/data" XDG_CACHE_HOME="$HOME/cache"
+          export CODEX_HOME="$HOME/codex" AI_TOOLBOX_DATA_DIR="$HOME/toolbox"
+          mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$CODEX_HOME" "$AI_TOOLBOX_DATA_DIR"
+          node --version
+          pnpm --version
+          pnpm exec tsc --noEmit
+          node --import ./scripts/register-node-ts-extension-loader.mjs --test --test-concurrency=1 --test-reporter=tap \
+            web/test/components/common/PlainTextEditor/disposeModel.test.ts \
+            web/test/features/coding/codex/components/CodexAuthExport.test.ts \
+            web/test/features/coding/codex/pages/CodexPageRefresh.test.ts \
+            web/test/features/coding/codex/utils/codexAccountRefresh.test.ts \
+            web/test/scripts/operationInventory.test.mjs | tee "$RUNNER_TEMP/auth-export-node.tap"
+          grep -Fx '# tests 28' "$RUNNER_TEMP/auth-export-node.tap"
+          grep -Fx '# pass 28' "$RUNNER_TEMP/auth-export-node.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/auth-export-node.tap"
+          node scripts/i18n-keys.mjs check
+          node scripts/generate-operation-coverage.mjs --check
+          # An inventory is not CLI/MCP implementation; the incomplete gate stays red.
+          status=0
+          node scripts/generate-operation-coverage.mjs --require-complete || status=$?
+          test "$status" -eq 2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Verify and execute synthetic account export and neighboring Rust regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep toolchain locations while isolating every application home.
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+          export HOME="$RUNNER_TEMP/auth-export-home"
+          export USERPROFILE="$HOME" XDG_CONFIG_HOME="$HOME/config" XDG_DATA_HOME="$HOME/data" XDG_CACHE_HOME="$HOME/cache"
+          export CODEX_HOME="$HOME/codex" AI_TOOLBOX_DATA_DIR="$HOME/toolbox"
+          mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$CODEX_HOME" "$AI_TOOLBOX_DATA_DIR"
+          rustc --version
+          cargo --version
+          df -h
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::codex::official_accounts::tests:: -- --list > "$RUNNER_TEMP/auth-export-rust-list"
+          cat "$RUNNER_TEMP/auth-export-rust-list"
+          test "$(grep -c '^coding::codex::official_accounts::tests::.*: test$' "$RUNNER_TEMP/auth-export-rust-list")" -eq 34
+          for name in auth_export_reads_only_the_owned_snapshot_and_never_updates_it auth_export_preserves_complete_snapshot_and_unknown_fields auth_export_rejects_missing_or_malformed_credentials_without_echoing_secrets auth_has_official_runtime_requires_auth_mode_and_both_tokens imported_auth_json_requires_a_valid_official_login_object official_runtime_merge_preserves_unknown_runtime_fields; do
+            grep -Fx "coding::codex::official_accounts::tests::$name: test" "$RUNNER_TEMP/auth-export-rust-list"
+          done
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::codex::official_accounts::tests:: -- --test-threads=1
