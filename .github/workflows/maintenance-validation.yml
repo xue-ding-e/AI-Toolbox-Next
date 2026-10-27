@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   frontend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-password-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-success-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-confirm-options') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-routes') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-errors') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-request-export-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/provider-card-migration')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-password-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-success-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-confirm-options') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-routes') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-errors') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/gateway-request-export-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/provider-card-migration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/codex-fetched-model-picker-20261027')
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -39,7 +39,17 @@ jobs:
           VALIDATION_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          if [ "$VALIDATION_REF" = "refs/heads/test/restore-orchestration" ]; then
+          if [ "$VALIDATION_REF" = "refs/heads/fix/codex-fetched-model-picker-20261027" ]; then
+            # Isolated frontend acceptance: synthetic models only, no native bridge or release.
+            git rev-parse HEAD
+            node --import ./scripts/register-node-ts-extension-loader.mjs --test --test-reporter=tap web/test/features/coding/codex/components/CodexFetchedModels.test.ts web/test/features/coding/codex/hooks/useCodexConfigState.test.ts | tee /tmp/codex-fetched-model-tests.tap
+            grep -Fx "# tests 20" /tmp/codex-fetched-model-tests.tap
+            grep -Fx "# pass 20" /tmp/codex-fetched-model-tests.tap
+            grep -Fx "# fail 0" /tmp/codex-fetched-model-tests.tap
+            node scripts/i18n-keys.mjs check
+            node scripts/verify-codex-fetched-model-picker.mjs --output "$RUNNER_TEMP/codex-fetched-model-picker" | tee /tmp/codex-fetched-model-browser.log
+            grep -Fx "Passed 33 browser checks." /tmp/codex-fetched-model-browser.log
+          elif [ "$VALIDATION_REF" = "refs/heads/test/restore-orchestration" ]; then
             # This topic changes restore orchestration, not unrelated account browser fixtures.
             node --import ./scripts/register-node-ts-extension-loader.mjs --test --test-reporter=tap web/test/features/settings/utils/*.test.ts | tee /tmp/restore-utils-tests.tap
             grep -Fx "# tests 36" /tmp/restore-utils-tests.tap
@@ -103,6 +113,17 @@ jobs:
           else
             pnpm test
           fi
+      - name: Upload synthetic model picker acceptance evidence
+        if: ${{ always() && github.ref == 'refs/heads/fix/codex-fetched-model-picker-20261027' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-fetched-model-picker-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/codex-fetched-model-picker/**/results.json
+            ${{ runner.temp }}/codex-fetched-model-picker/**/*.png
+            ${{ runner.temp }}/codex-fetched-model-picker/**/failure.html
+          if-no-files-found: warn
+          retention-days: 7
       - name: Frontend production build
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm build
