@@ -13,6 +13,8 @@
 
 ## 核心设计决策（Why）
 
+- Full auth.json generation lives in the existing official-account details, behind explicit preview/copy actions and a credential warning. The export component is unmounted while the page is inactive or reloading and keyed by account/root-list identity; late responses after close must not restore secrets. No automatic credential read on mount, persistence, logging, or implicit refresh/apply.
+
 - Codex 与 Claude Code 一样使用共享根目录编辑逻辑，保证 `custom/env/shell/default` 语义一致。
 - provider 导入同样先做 `sourceProviderId` 冲突判断，避免重复导入同一来源时形成歧义。
 - 页面操作后需要显式 `refreshTrayMenu()`，因为托盘是另一套消费者，不能假设 React 页面重绘就等于托盘已刷新。

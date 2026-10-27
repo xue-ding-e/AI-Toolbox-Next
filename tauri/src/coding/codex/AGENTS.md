@@ -14,6 +14,8 @@
 
 ## 核心设计决策（Why）
 
+- Full auth.json export is read-only: preview and clipboard copy share the same guarded snapshot reader as token copy. Preserve the complete JSON Value (including unknown runtime fields); never refresh, apply, import, or reconstruct credentials from display metadata. Copy-only responses must not return secrets to the WebView. Tests use synthetic snapshots only.
+
 - `config.toml` 不能靠字符串拼接合并 common/provider 配置，必须结构化 merge，避免顶层键被吞进 provider 表作用域。
 - 纯 TOML parse/common-provider merge 的唯一实现位于 `crates/ai-toolbox-codex-config`；桌面命令直接导入，不保留另一份 merger。该纯库不是 live 投影服务，不包含 runtime-owned 清理、auth、catalog、DB、事件或 owner；CLI 不能用它直接覆盖运行文件。
 - common config 是供应商共享默认值，provider 显式配置必须在应用时覆盖 common。入库拆分只能删除与 common 值相同的重复项，不得仅因字段同名就删除不同值；尤其要保留 provider 自己的 `model`、`model_reasoning_effort` 和 provider table 字段。

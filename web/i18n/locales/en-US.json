@@ -3170,7 +3170,12 @@
       "officialAccountCreditsUnknown": "Unknown; refresh usage",
       "officialAccountCreditsBalance": "{{balance}} credits",
       "officialAccountCreditsBalanceUnavailable": "{{balance}} credits (none available)",
-      "officialAccountReauthRequired": "This account needs to be authorized again. Use OAuth sign-in above, then refresh the limits."
+      "officialAccountReauthRequired": "This account needs to be authorized again. Use OAuth sign-in above, then refresh the limits.",
+      "authExportWarning": "The complete auth.json contains sensitive credentials. Preview or copy only in a private environment; do not share publicly. Each action reads the current snapshot without refreshing tokens or writing runtime files. Background refresh may change the copied content.",
+      "authExportPreview": "Generate and preview auth.json",
+      "authExportCopy": "Generate and copy auth.json",
+      "authExportHide": "Hide preview",
+      "authExportFailed": "Could not generate or copy auth.json. Check that the selected account still exists and has a complete login snapshot."
     },
     "import": {
       "title": "Import from OpenCode",

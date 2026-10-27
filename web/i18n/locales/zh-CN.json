@@ -3167,7 +3167,12 @@
       "officialAccountCreditsUnknown": "未知，请刷新额度",
       "officialAccountCreditsBalance": "{{balance}} 积分",
       "officialAccountCreditsBalanceUnavailable": "{{balance}} 积分（无可用积分）",
-      "officialAccountReauthRequired": "该账号需要重新授权：请点击上方「OAuth 登录」完成登录后再刷新额度"
+      "officialAccountReauthRequired": "该账号需要重新授权：请点击上方「OAuth 登录」完成登录后再刷新额度",
+      "authExportWarning": "完整 auth.json 包含敏感登录凭据。预览或复制前请确认周围环境安全，勿公开分享。每次生成读取当前快照，不刷新令牌、不写入运行时文件；复制内容可能随后台刷新变化。",
+      "authExportPreview": "生成并预览 auth.json",
+      "authExportCopy": "生成并复制 auth.json",
+      "authExportHide": "隐藏预览",
+      "authExportFailed": "无法生成或复制 auth.json，请确认所选账号仍存在且登录快照完整。"
     },
     "import": {
       "title": "从 OpenCode 导入",

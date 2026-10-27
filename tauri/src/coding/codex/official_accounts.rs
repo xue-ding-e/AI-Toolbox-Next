@@ -2888,20 +2888,21 @@ async fn request_usage_from_prepared(
     .await
 }
 
-#[tauri::command]
-pub async fn copy_codex_official_account_token(
-    state: tauri::State<'_, SqliteDbState>,
-    input: CodexOfficialAccountTokenCopyInput,
-) -> Result<(), String> {
-    let db = state.db();
-    ensure_persisted_provider_id(&input.provider_id)?;
-    let provider = query_provider(&db, &input.provider_id).await?;
+/// Read-only credential selection shared by single-token and full auth.json exports.
+/// Never refresh, apply, import, or merge another account's runtime credentials here.
+async fn read_official_account_export_auth(
+    db: &SqliteDbState,
+    provider_id: &str,
+    account_id: &str,
+) -> Result<Value, String> {
+    ensure_persisted_provider_id(provider_id)?;
+    let provider = query_provider(db, provider_id).await?;
     if provider.category != "official" {
-        return Err("Only official Codex providers can copy official account tokens".to_string());
+        return Err("Only official Codex providers can export official account credentials".to_string());
     }
 
-    let auth = if input.account_id == LOCAL_OFFICIAL_ACCOUNT_ID {
-        let local_auth = read_auth_json_from_disk(Some(&db)).await?;
+    let auth = if account_id == LOCAL_OFFICIAL_ACCOUNT_ID {
+        let local_auth = read_auth_json_from_disk(Some(db)).await?;
         if !auth_has_official_runtime(&local_auth) {
             return Err(
                 "Current local auth.json does not contain an official Codex login".to_string(),
@@ -2909,8 +2910,8 @@ pub async fn copy_codex_official_account_token(
         }
         local_auth
     } else {
-        let account = load_official_account(&db, &input.account_id).await?;
-        if account.provider_id != input.provider_id {
+        let account = load_official_account(db, account_id).await?;
+        if account.provider_id != provider_id {
             return Err("Official account does not belong to the selected provider".to_string());
         }
         let snapshot = account
@@ -2920,6 +2921,45 @@ pub async fn copy_codex_official_account_token(
         auth_json_from_snapshot(snapshot)?
     };
 
+    Ok(auth)
+}
+
+fn serialize_official_auth_export(auth: &Value) -> Result<String, String> {
+    if !auth.is_object() || !auth_has_official_runtime(auth) {
+        return Err("Account snapshot does not contain an official Codex login".to_string());
+    }
+    // Serialize the whole snapshot, not a reconstructed token tuple: preserve
+    // auth_mode, account_id, id_token, last_refresh and future runtime fields.
+    serde_json::to_string_pretty(auth)
+        .map_err(|_| "Failed to generate Codex auth.json".to_string())
+}
+
+#[tauri::command]
+pub async fn export_codex_official_account_auth_json(
+    state: tauri::State<'_, SqliteDbState>,
+    provider_id: String,
+    account_id: String,
+    copy_to_clipboard: bool,
+) -> Result<Option<String>, String> {
+    let db = state.db();
+    let auth = read_official_account_export_auth(&db, &provider_id, &account_id).await?;
+    let content = serialize_official_auth_export(&auth)?;
+    if copy_to_clipboard {
+        copy_text_to_clipboard(&content)?;
+        // Copy-only actions do not expose the credentials to the WebView.
+        Ok(None)
+    } else {
+        Ok(Some(content))
+    }
+}
+
+#[tauri::command]
+pub async fn copy_codex_official_account_token(
+    state: tauri::State<'_, SqliteDbState>,
+    input: CodexOfficialAccountTokenCopyInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let auth = read_official_account_export_auth(&db, &input.provider_id, &input.account_id).await?;
     let token = extract_token_from_auth_snapshot(&auth, input.token_kind.trim())?;
     copy_text_to_clipboard(&token)?;
     Ok(())
@@ -2928,6 +2968,63 @@ pub async fn copy_codex_official_account_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn auth_export_reads_only_the_owned_snapshot_and_never_updates_it() {
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        let auth = serde_json::json!({
+            "auth_mode": "chatgpt", "last_refresh": "2000-01-01T00:00:00Z",
+            "tokens": {"access_token": "synthetic-expired-access", "refresh_token": "synthetic-refresh",
+                "id_token": "synthetic-id", "account_id": "workspace-a"},
+            "future_runtime": [null, false, "preserved"]
+        });
+        let row = serde_json::json!({"provider_id": "official-a", "auth_snapshot": auth.to_string()});
+        db.with_conn(|conn| {
+            for (id, category) in [("official-a", "official"), ("official-b", "official"), ("custom", "custom")] {
+                db_put(conn, DbTable::CodexProvider, id, &serde_json::json!({"category": category}))?;
+            }
+            db_put(conn, DbTable::CodexOfficialAccount, "account-a", &row)
+        }).unwrap();
+        let before = load_official_account(&db, "account-a").await.unwrap().auth_snapshot;
+        let selected = read_official_account_export_auth(&db, "official-a", "account-a").await.unwrap();
+        assert_eq!(selected, auth);
+        assert_eq!(load_official_account(&db, "account-a").await.unwrap().auth_snapshot, before);
+        for provider in ["official-b", "custom", CODEX_LOCAL_PROVIDER_ID, "missing"] {
+            assert!(read_official_account_export_auth(&db, provider, "account-a").await.is_err());
+        }
+        assert!(read_official_account_export_auth(&db, "official-a", "missing").await.is_err());
+        for snapshot in [Value::Null, Value::String("not JSON".to_string())] {
+            db.with_conn(|conn| db_put(conn, DbTable::CodexOfficialAccount, "broken",
+                &serde_json::json!({"provider_id": "official-a", "auth_snapshot": snapshot}))).unwrap();
+            assert!(read_official_account_export_auth(&db, "official-a", "broken").await.is_err());
+        }
+    }
+
+    #[test]
+    fn auth_export_preserves_complete_snapshot_and_unknown_fields() {
+        let auth = serde_json::json!({
+            "auth_mode": "chatgpt", "OPENAI_API_KEY": null,
+            "tokens": {"access_token": "synthetic-access", "refresh_token": "synthetic-refresh",
+                "id_token": "synthetic-id", "account_id": "workspace-a", "future": [1, false]},
+            "last_refresh": "2026-01-01T00:00:00Z", "future_runtime": {"value": null}
+        });
+        let before = auth.clone();
+        let output = serialize_official_auth_export(&auth).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), before);
+        assert_eq!(parse_imported_auth_json(&output).unwrap(), before);
+        assert_eq!(auth, before);
+        assert!(output.contains('\n'));
+    }
+
+    #[test]
+    fn auth_export_rejects_missing_or_malformed_credentials_without_echoing_secrets() {
+        for auth in [serde_json::json!(null), serde_json::json!([]),
+            serde_json::json!({"OPENAI_API_KEY": "synthetic-secret"}),
+            serde_json::json!({"auth_mode": "chatgpt", "tokens": {"access_token": "synthetic-secret"}})] {
+            let error = serialize_official_auth_export(&auth).unwrap_err();
+            assert!(!error.contains("synthetic-secret"));
+        }
+    }
 
     #[test]
     fn codex_credits_parse_strings_numbers_and_preserve_subscription_windows() {

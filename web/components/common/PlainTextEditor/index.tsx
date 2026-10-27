@@ -12,6 +12,8 @@ export interface PlainTextEditorProps {
   language?: string;
   /** Editor height. Accepts numbers or CSS strings like `calc(...)`. */
   height?: number | string;
+  /** Dispose this editor's private model on unmount (for sensitive previews). */
+  disposeModelOnUnmount?: boolean;
   /** Additional CSS class name. */
   className?: string;
 }
@@ -28,6 +30,7 @@ const PlainTextEditor: FC<PlainTextEditorProps> = ({
   language = 'plaintext',
   height = 300,
   className,
+  disposeModelOnUnmount = false,
 }) => {
   const { resolvedTheme } = useThemeStore();
 
@@ -70,6 +73,14 @@ const PlainTextEditor: FC<PlainTextEditorProps> = ({
           theme={resolvedTheme === 'dark' ? 'vs-dark' : 'vs'}
           value={value}
           options={options}
+          editorWillUnmount={(instance) => {
+            // PlainTextEditor supplies neither a shared URI nor options.model:
+            // react-monaco-editor creates this model, but only disposes the editor.
+            if (disposeModelOnUnmount) {
+              const model = instance.getModel();
+              if (model && !model.isDisposed()) model.dispose();
+            }
+          }}
         />
       </div>
     </div>

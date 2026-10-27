@@ -2476,6 +2476,7 @@ pub fn run() {
             coding::codex::delete_codex_official_account,
             coding::codex::refresh_codex_official_account_limits,
             coding::codex::copy_codex_official_account_token,
+            coding::codex::export_codex_official_account_auth_json,
             coding::codex::fetch_codex_official_models,
             coding::codex::create_codex_provider,
             coding::codex::update_codex_provider,

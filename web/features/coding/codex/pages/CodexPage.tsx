@@ -1,4 +1,5 @@
 import React from 'react';
+import CodexAuthExport from '../components/CodexAuthExport';
 import { Typography, Button, Space, message, Modal, Collapse, Descriptions, Checkbox, Drawer, Input } from 'antd';
 import { AppstoreOutlined, SyncOutlined, ClearOutlined, ExclamationCircleOutlined, LinkOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, CopyOutlined, MessageOutlined, BulbOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
@@ -3103,6 +3104,22 @@ const CodexPage: React.FC = () => {
                   ),
                 )}
               </Descriptions.Item>
+              {isActive && !loading && (
+                <Descriptions.Item label="auth.json">
+                  <CodexAuthExport
+                    key={JSON.stringify([
+                      officialAccountLoadGeneration.current,
+                      officialAccountDetails.provider.id,
+                      officialAccountDetails.account.id,
+                      officialAccountDetails.account.accountId,
+                      officialAccountDetails.account.email,
+                      officialAccountDetails.account.tokenExpiresAt,
+                    ])}
+                    providerId={officialAccountDetails.provider.id}
+                    accountId={officialAccountDetails.account.id}
+                  />
+                </Descriptions.Item>
+              )}
               {officialAccountDetails.account.lastError && (
                 <Descriptions.Item label={t('codex.provider.officialAccountLastErrorLabel')}>
                   <Text type="danger">

@@ -276,6 +276,19 @@ export const copyCodexOfficialAccountToken = async (
   });
 };
 
+/** Generate from the current selected snapshot, without refreshing or applying it. */
+export const exportCodexOfficialAccountAuthJson = async (
+  providerId: string,
+  accountId: string,
+  copyToClipboard: boolean,
+): Promise<string | null> => {
+  return await invoke<string | null>('export_codex_official_account_auth_json', {
+    providerId,
+    accountId,
+    copyToClipboard,
+  });
+};
+
 export const fetchCodexOfficialModels = async (
   planType?: string,
 ): Promise<CodexOfficialModelsResponse> => {
