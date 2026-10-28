@@ -1293,6 +1293,73 @@ model = "gpt-new"
     }
 
     #[test]
+    fn sync_preserves_opaque_tail_bytes_and_non_provider_metadata() {
+        // Synthetic opaque data only: this tests byte preservation, not ciphertext
+        // authentication or compatibility with any provider's Responses API.
+        let tail_lines = [
+            r#"{"type":"response_item", "payload":{"type":"reasoning","encrypted_content":"synthetic-opaque+/==\\u0000","summary":[{"type":"summary_text","text":"摘要 🦀"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"function_call","call_id":"call_synthetic_01","name":"fixture_tool","arguments":"{\"text\":\"雪\"}"}}"#,
+            r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_synthetic_01","output":"synthetic result"}}"#,
+            r#"{"type":"compacted","payload":{"message":"保留 summary \\u96ea","replacement_history":[]}}"#,
+            r#"{"type":"synthetic_extension","payload":{"fork_reference":{"session_id":"synthetic-parent","ordinal":7,"byte_offset":123},"unknown":[null,true,{"n":1}]}}"#,
+        ];
+
+        for (case, ending, trailing_newline) in [
+            ("lf-terminated", "\n", true),
+            ("lf-unterminated", "\n", false),
+            ("crlf-terminated", "\r\n", true),
+            ("crlf-unterminated", "\r\n", false),
+        ] {
+            let env = TestCodexHistory::new();
+            env.create_db(true);
+            let id = "11111111-1111-1111-1111-111111111111";
+            let session_path = env.write_session(id, "old-provider", "gpt-old");
+            let mut expected_header = serde_json::json!({
+                "type": "session_meta",
+                "timestamp": "2026-05-21T00:00:00Z",
+                "unknown_header": {"keep": [null, "雪", 7]},
+                "payload": {
+                    "id": id,
+                    "cwd": "/synthetic/项目 🦀",
+                    "model_provider": "old-provider",
+                    "model": "gpt-old",
+                    "forked_from_id": "synthetic-parent",
+                    "unknown_payload": {"keep": true}
+                }
+            });
+            let mut tail = tail_lines.join(ending);
+            if trailing_newline {
+                tail.push_str(ending);
+            }
+            fs::write(&session_path, format!("{expected_header}{ending}{tail}"))
+                .expect("write synthetic rollout");
+            expected_header["payload"]["model_provider"] = serde_json::json!("new-provider");
+
+            let result = sync(&env.root).expect("sync synthetic rollout");
+            assert_eq!(result.updated_session_files, 1, "{case}");
+            assert_eq!(result.failed_session_files, 0, "{case}");
+            assert!(!result.partial_success, "{case}");
+            let after = fs::read(&session_path).expect("read synced rollout");
+            // Locate the boundary independently of the production splitter.
+            let tail_start = after.iter().position(|byte| *byte == b'\n').unwrap() + 1;
+            assert!(after[..tail_start].ends_with(ending.as_bytes()), "{case}");
+            if ending == "\n" {
+                assert_ne!(after[tail_start - 2], b'\r', "{case}");
+            }
+            let actual_header: Value =
+                serde_json::from_slice(&after[..tail_start]).expect("parse synced metadata");
+            assert_eq!(actual_header, expected_header, "{case}");
+            assert_eq!(&after[tail_start..], tail.as_bytes(), "{case}");
+
+            let repeated = sync(&env.root).expect("repeat sync synthetic rollout");
+            assert_eq!(repeated.updated_session_files, 0, "{case}");
+            assert_eq!(repeated.failed_session_files, 0, "{case}");
+            assert!(!repeated.partial_success, "{case}");
+            assert_eq!(fs::read(&session_path).unwrap(), after, "{case}");
+        }
+    }
+
+    #[test]
     fn sync_legacy_schema_updates_provider_only() {
         let env = TestCodexHistory::new();
         env.create_db(false);
