@@ -38,6 +38,7 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- Managed Codex 模式下，`config_sync` 必须在运行时目标首个写入/删除之前用 `management_admission::admit_non_codex_targets` 校验完整物理目标集合；不能仅按 tool key 排除 Codex。Kimi 的邻接 `config.toml` 清理属于同一写集合，不能先清理后拒绝。异步同步/删除把 admission 移进真实 blocking worker 并在 effect 前复核；不相交且可证明安全的 Claude 等目标仍可用。上游 create/update/delete/toggle/management/restore/import/full-sync/custom-tool 编辑必须在第一笔中央 DB 写入前批量预检旧、新、previous assignments 与邻接写集合；未知目标或路径解析失败在 managed 整入口拒绝，不能先保存再报目标不支持。普通模式保留原 best-effort 行为；未知 custom 路径的 ordinary 跨 profile 互斥仍不是此门的保证。
 - 不要把工具配置文件当作 MCP 的 source of truth。真正要改的是中心存储，再同步下发。
 - 改同步逻辑时要同时考虑“启用工具集合变化”“opencode disabled sync 特例”“删除时清理工具配置”三类路径，不要只修新增路径。
 - WSL 自动同步依赖 `mcp-changed` 事件；如果只更新数据库、不发事件，WSL 侧不会跟进。

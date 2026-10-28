@@ -613,6 +613,12 @@ fn heal_dangling_codex_model_provider(
         return Ok(None);
     }
 
+    // A managed view is a read, not a hidden legacy writer. Return the raw
+    // config through the caller and leave repair to an explicit supported path.
+    if crate::management_admission::managed_read_only()? { return Ok(None); }
+    let root = config_path.parent().ok_or_else(|| "Invalid Codex config directory".to_owned())?;
+    let _runtime_admission = crate::management_admission::admit_legacy_runtime(root)?;
+    _runtime_admission.ensure_current()?;
     document.as_table_mut().remove("model_provider");
     let healed = document.to_string();
     fs::write(config_path, &healed)
@@ -1042,6 +1048,7 @@ pub async fn add_codex_plugin_workspace_root(
     state: tauri::State<'_, SqliteDbState>,
     input: CodexPluginWorkspaceRootInput,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     plugin_workspace::add_codex_plugin_workspace_root(&db, &input.path).await
 }
@@ -1051,6 +1058,7 @@ pub async fn remove_codex_plugin_workspace_root(
     state: tauri::State<'_, SqliteDbState>,
     input: CodexPluginWorkspaceRootInput,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     plugin_workspace::remove_codex_plugin_workspace_root(&db, &input.path).await
 }
@@ -1154,11 +1162,19 @@ pub async fn backup_codex_history(
     state: tauri::State<'_, SqliteDbState>,
     input: Option<CodexHistorySourceInput>,
 ) -> Result<history_sync::CodexHistoryBackupResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let target = resolve_codex_history_source_target(&state.db(), input.as_ref()).await?;
     let root_dir = target.root_dir;
-    tauri::async_runtime::spawn_blocking(move || history_sync::backup(&root_dir, "manual"))
-        .await
-        .map_err(|error| format!("Failed to backup Codex history: {error}"))?
+    let worker_profile_session = _profile_session.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        history_sync::backup(&root_dir, "manual")
+    })
+    .await
+    .map_err(|error| format!("Failed to backup Codex history: {error}"))?
 }
 
 #[tauri::command]
@@ -1166,11 +1182,19 @@ pub async fn sync_codex_history(
     state: tauri::State<'_, SqliteDbState>,
     input: Option<CodexHistorySourceInput>,
 ) -> Result<history_sync::CodexHistorySyncResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let target = resolve_codex_history_source_target(&state.db(), input.as_ref()).await?;
     let root_dir = target.root_dir.clone();
-    let mut result = tauri::async_runtime::spawn_blocking(move || history_sync::sync(&root_dir))
-        .await
-        .map_err(|error| format!("Failed to sync Codex history: {error}"))??;
+    let worker_profile_session = _profile_session.clone();
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        history_sync::sync(&root_dir)
+    })
+    .await
+    .map_err(|error| format!("Failed to sync Codex history: {error}"))??;
     decorate_codex_history_status(&mut result.status, &target);
     Ok(result)
 }
@@ -1180,12 +1204,19 @@ pub async fn restore_latest_codex_history_backup(
     state: tauri::State<'_, SqliteDbState>,
     input: Option<CodexHistorySourceInput>,
 ) -> Result<history_sync::CodexHistoryRestoreResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let target = resolve_codex_history_source_target(&state.db(), input.as_ref()).await?;
     let root_dir = target.root_dir.clone();
-    let mut result =
-        tauri::async_runtime::spawn_blocking(move || history_sync::restore_latest(&root_dir))
-            .await
-            .map_err(|error| format!("Failed to restore Codex history backup: {error}"))??;
+    let worker_profile_session = _profile_session.clone();
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        history_sync::restore_latest(&root_dir)
+    })
+    .await
+    .map_err(|error| format!("Failed to restore Codex history backup: {error}"))??;
     decorate_codex_history_status(&mut result.status, &target);
     Ok(result)
 }
@@ -1212,6 +1243,7 @@ pub async fn set_codex_unified_session_history(
     app: tauri::AppHandle,
     input: CodexUnifiedSessionHistoryInput,
 ) -> Result<CodexUnifiedSessionHistoryUpdateResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     if codex_gateway_takeover_active(&app) {
         return Err("当前 Codex 已由网关接管，请先恢复直连后再修改统一会话历史设置".to_string());
     }
@@ -1262,14 +1294,20 @@ pub async fn set_codex_unified_session_history(
 
     let migration = if input.enabled && input.migrate_existing {
         let root_dir = get_codex_root_dir_from_db_async(&db).await?;
+        let worker_profile_session = _profile_session.clone();
         Some(
             match tauri::async_runtime::spawn_blocking(move || {
-                unified_history::migrate_official_history_to_unified(&root_dir)
+                let _profile_session = worker_profile_session;
+                if let Some(session) = &_profile_session {
+                    session.ensure_current()?;
+                }
+                // Keep admission failures distinct from best-effort migration errors.
+                Ok::<_, String>(unified_history::migrate_official_history_to_unified(&root_dir))
             })
             .await
             {
-                Ok(Ok(result)) => result,
-                Ok(Err(error)) => {
+                Ok(Ok(Ok(result))) => result,
+                Ok(Ok(Err(error))) => {
                     log::warn!("Failed to migrate Codex official history after enabling unified session history: {error}");
                     unified_history::CodexUnifiedHistoryMigrationResult {
                         migrated_session_files: 0,
@@ -1281,6 +1319,7 @@ pub async fn set_codex_unified_session_history(
                         duration_ms: 0,
                     }
                 }
+                Ok(Err(error)) => return Err(error),
                 Err(error) => {
                     log::warn!("Failed to join Codex official history migration task after enabling unified session history: {error}");
                     unified_history::CodexUnifiedHistoryMigrationResult {
@@ -1329,6 +1368,7 @@ pub async fn set_codex_preserve_official_auth_on_switch(
     app: tauri::AppHandle,
     input: CodexPreserveOfficialAuthOnSwitchInput,
 ) -> Result<CodexPreserveOfficialAuthOnSwitchUpdateResult, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     let existing_settings = crate::settings::store::load_settings_from_sqlite_state(&db)?;
     if existing_settings.codex_preserve_official_auth_on_switch == input.enabled {
@@ -1385,11 +1425,17 @@ pub async fn has_codex_unified_history_backup(
 pub async fn restore_codex_unified_session_history(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<unified_history::CodexUnifiedHistoryRestoreResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let db = state.db();
     let settings = crate::settings::store::load_settings_from_sqlite_state(&db)?;
     let unified_history_enabled = settings.codex_unified_session_history_enabled;
     let root_dir = get_codex_root_dir_from_db_async(&db).await?;
+    let worker_profile_session = _profile_session.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
         unified_history::restore_official_history_from_unified_backups(
             &root_dir,
             unified_history_enabled,
@@ -1414,9 +1460,15 @@ pub async fn get_codex_config_file_path(
 pub async fn reveal_codex_config_folder(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let db = state.db();
     let config_dir = get_codex_config_dir_from_db_async(&db).await?;
+    if let Some(session) = &_profile_session {
+        session.ensure_current()?;
+    }
 
+    let _runtime_admission = crate::management_admission::admit_legacy_codex_root(config_dir.clone()).await?;
+    _runtime_admission.ensure_current()?;
     // Ensure directory exists
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)
@@ -1469,7 +1521,7 @@ pub async fn list_codex_providers_for_db(
     db: &crate::db::SqliteDbState,
 ) -> Result<Vec<CodexProvider>, String> {
     let mut providers = list_codex_providers_from_sqlite(db)?;
-    if providers.is_empty() {
+    if providers.is_empty() && !crate::management_admission::managed_read_only()? {
         import_codex_default_provider_from_local_files(db, true).await?;
         providers = list_codex_providers_from_sqlite(db)?;
     }
@@ -1576,6 +1628,7 @@ pub async fn import_codex_default_provider_from_local_files(
     db: &crate::db::SqliteDbState,
     require_local_official_runtime: bool,
 ) -> Result<Option<CodexProvider>, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(db).await?;
     if db.with_conn(|conn| db_count(conn, DbTable::CodexProvider))? > 0 {
         return Ok(None);
     }
@@ -4597,6 +4650,7 @@ async fn get_current_applied_managed_codex_config(
 pub async fn repair_codex_providers(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<String, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     db.with_conn(|conn| db_delete_all(conn, DbTable::CodexProvider).map(|_| ()))?;
 
@@ -4620,6 +4674,7 @@ pub async fn create_codex_provider_inner<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     provider: CodexProviderInput,
 ) -> Result<CodexProvider, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     let normalized_settings_config =
         normalize_provider_settings_for_storage(&db, &provider.settings_config, None).await?;
@@ -4674,6 +4729,7 @@ pub async fn update_codex_provider(
     app: tauri::AppHandle,
     provider: CodexProvider,
 ) -> Result<CodexProvider, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     let normalized_settings_config =
         normalize_provider_settings_for_storage(&db, &provider.settings_config, None).await?;
@@ -4772,6 +4828,7 @@ pub async fn delete_codex_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     if id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be deleted".to_string());
     }
@@ -4790,6 +4847,7 @@ pub async fn reorder_codex_providers(
     state: tauri::State<'_, SqliteDbState>,
     ids: Vec<String>,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     if ids.iter().any(|id| id == CODEX_LOCAL_PROVIDER_ID) {
         return Err("Local Codex provider must be saved before it can be reordered".to_string());
     }
@@ -4824,6 +4882,7 @@ pub async fn select_codex_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     if id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be selected".to_string());
     }
@@ -4959,12 +5018,15 @@ async fn write_codex_config_files(
     preserve_official_auth: bool,
     manages_provider_credential: bool,
 ) -> Result<(), String> {
+    let _session_admission = crate::management_admission::reject_managed_operation()?;
     let config_dir = if let Some(db) = db {
         get_codex_config_dir_from_db_async(db).await?
     } else {
         get_codex_config_dir()?
     };
 
+    let _runtime_admission = crate::management_admission::admit_legacy_codex_root(config_dir.clone()).await?;
+    _runtime_admission.ensure_current()?;
     // Ensure directory exists
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)
@@ -5053,6 +5115,7 @@ pub async fn toggle_codex_provider_disabled(
     provider_id: String,
     is_disabled: bool,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     if provider_id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be changed".to_string());
     }
@@ -5123,6 +5186,7 @@ async fn apply_config_internal_with_events<R: tauri::Runtime>(
     emit_config_changed: bool,
     emit_sync_request: bool,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(db).await?;
     if provider_id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be applied".to_string());
     }
@@ -5233,6 +5297,7 @@ pub async fn update_codex_prompt_config(
     app: tauri::AppHandle,
     input: CodexPromptConfigInput,
 ) -> Result<CodexPromptConfig, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let config_id = input
         .id
         .ok_or_else(|| "ID is required for update".to_string())?;
@@ -5320,6 +5385,7 @@ async fn apply_prompt_config_internal_with_events<R: tauri::Runtime>(
     from_tray: bool,
     emit_events: bool,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     if config_id == CODEX_LOCAL_PROVIDER_ID {
         let db = state.db();
         let local_prompt = get_local_prompt_config(Some(&db))
@@ -5395,6 +5461,7 @@ pub async fn disable_codex_prompt_config(
     app: tauri::AppHandle,
     config_id: String,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     let root = get_codex_config_dir_from_db_async(db).await?;
     disable_prompt_config_at_root(db, &config_id, &root)?;
@@ -5439,6 +5506,7 @@ pub async fn save_codex_local_prompt_config(
     app: tauri::AppHandle,
     input: CodexPromptConfigInput,
 ) -> Result<CodexPromptConfig, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let prompt_content = if input.content.trim().is_empty() {
         let db = state.db();
         get_local_prompt_config(Some(&db))
@@ -10231,6 +10299,7 @@ pub async fn save_codex_common_config(
     app: tauri::AppHandle,
     input: CodexCommonConfigInput,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "codex").await;
     let previous_managed_config_toml = get_current_applied_managed_codex_config(&db).await?;
@@ -10253,6 +10322,9 @@ pub async fn save_codex_common_config(
             .map(str::to_string)
             .or_else(|| existing_common.and_then(|config| config.root_dir))
     };
+    let proposed_root = runtime_location::resolve_codex_runtime_location_for_custom_root(root_dir.as_deref())?.host_path;
+    let _next_runtime = crate::management_admission::admit_legacy_codex_root(proposed_root).await?;
+    _next_runtime.ensure_current()?;
     let json_data = adapter::to_db_value_common(&input.config, root_dir.as_deref());
     put_codex_common_to_sqlite(db, &json_data)?;
     runtime_location::refresh_runtime_location_cache_for_module_async(&db, "codex").await?;
@@ -10295,6 +10367,7 @@ pub async fn save_codex_local_config(
     app: tauri::AppHandle,
     input: CodexLocalConfigInput,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "codex").await;
 
@@ -10370,7 +10443,6 @@ pub async fn save_codex_local_config(
     };
 
     let provider_id = db_new_id();
-    put_codex_provider_to_sqlite(db, &provider_id, &provider_content)?;
 
     let root_dir = if input.clear_root_dir {
         None
@@ -10389,6 +10461,10 @@ pub async fn save_codex_local_config(
                 .map(|path| path.to_string_lossy().to_string())
         }
     };
+    let proposed_root = runtime_location::resolve_codex_runtime_location_for_custom_root(root_dir.as_deref())?.host_path;
+    let _next_runtime = crate::management_admission::admit_legacy_codex_root(proposed_root).await?;
+    _next_runtime.ensure_current()?;
+    put_codex_provider_to_sqlite(db, &provider_id, &provider_content)?;
     let common_json = adapter::to_db_value_common(&common_config, root_dir.as_deref());
     put_codex_common_to_sqlite(db, &common_json)?;
     runtime_location::refresh_runtime_location_cache_for_module_async(&db, "codex").await?;

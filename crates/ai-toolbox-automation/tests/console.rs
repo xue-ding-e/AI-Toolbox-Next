@@ -206,7 +206,27 @@ fn discovery_does_not_claim_business_or_mcp_support() {
         r#"{"operation_id":"codex.status","command":"codex status","supported":false,"side_effects":false,"input":"none"},"#,
     );
     let expected = format!("{expected}{{\"operation_id\":\"daemon.status\",\"command\":\"daemon status\",\"supported\":{},\"side_effects\":false,\"input\":\"explicit_absolute_profile_and_private_endpoint_dir\",\"status_scope\":\"profile_lease_only\",\"daemon_lifecycle_complete\":false,\"platforms\":[\"linux\"]}}]}},\"warnings\":[],\"error\":null}}\n", cfg!(target_os = "linux"));
-    assert_eq!(text, expected);
+    // Preserve the pre-existing operation contracts exactly. Context additions
+    // explicitly distinguish the local client from unchecked owner readiness.
+    let mut expected: serde_json::Value = serde_json::from_str(&expected).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let operations = value["data"]["operations"].as_array().unwrap();
+    assert_eq!(operations.len(), 8);
+    for (operation_id, command, side_effects) in [
+        ("codex.context.inspect", "codex context inspect", false),
+        ("codex.context.set", "codex context set", false),
+        ("codex.context.request_status", "codex context request-status", false),
+    ] {
+        expected["data"]["operations"].as_array_mut().unwrap().push(serde_json::json!({
+            "operation_id": operation_id, "command": command,
+            "supported": false, "side_effects": side_effects,
+            "input": "explicit_owner_paths_and_closed_context_arguments",
+            "local_client_supported": cfg!(target_os = "linux") && operation_id != "codex.context.set",
+            "owner_readiness": "not_checked", "owner_write_enablement": "not_established",
+            "platforms": ["linux"]
+        }));
+    }
+    assert_eq!(value, expected);
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -238,4 +258,118 @@ fn non_unicode_arguments_are_rejected_without_panic_or_lossy_echo() {
     assert!(String::from_utf8(output.stdout)
         .unwrap()
         .contains("\"code\":\"INVALID_INPUT\""));
+}
+
+#[test]
+fn context_structural_errors_are_redacted_and_never_initialize_state() {
+    let sandbox = Sandbox::new();
+    let valid_set = vec!["codex", "context", "set", "--profile", "/missing-profile", "--endpoint-dir", "/missing-endpoint",
+        "--request-id", "request_1", "--expected-provider-id", "provider_1", "--expected-revision",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--target", "common", "--model-context-window", "1000000"];
+    for (option, value) in [
+        ("--target", "secret-target-never-echo"),
+        ("--model-context-window", "1.5"), ("--model-context-window", "-1"),
+        ("--model-context-window", "+1"), ("--model-context-window", "1e6"),
+        ("--model-context-window", "18446744073709551616"),
+        ("--profile", "relative"), ("--endpoint-dir", "relative"),
+    ] {
+        let mut command = valid_set.clone();
+        let index = command.iter().position(|argument| *argument == option).unwrap();
+        command[index + 1] = value;
+        let mut command = args(&command);
+        command.extend(args(&["--format", "json"]));
+        let output = sandbox.run(&command);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["error"]["code"], "INVALID_INPUT");
+        assert!(value["request_id"].is_null());
+        assert!(!String::from_utf8(output.stdout).unwrap().contains("secret-target"));
+    }
+    for option in ["--profile", "--endpoint-dir", "--request-id", "--expected-provider-id", "--expected-revision", "--target", "--model-context-window"] {
+        let mut command = args(&valid_set);
+        command.extend(args(&[option, "duplicate-secret-never-echo", "--format", "json"]));
+        let output = sandbox.run(&command);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(!String::from_utf8(output.stdout).unwrap().contains("duplicate-secret"));
+        let index = valid_set.iter().position(|argument| *argument == option).unwrap();
+        let mut missing = valid_set.clone();
+        missing.drain(index..index + 2);
+        let mut command = args(&missing);
+        command.extend(args(&["--format", "json"]));
+        assert_eq!(sandbox.run(&command).status.code(), Some(2));
+    }
+    for command in [
+        vec!["codex", "context", "inspect", "--request-id", "extra"],
+        vec!["codex", "context", "request-status", "--request-id", "request_1", "--target", "common"],
+        vec!["daemon", "status", "--request-id", "extra"],
+        vec!["--help", "--request-id", "extra"],
+        vec!["capabilities", "--target", "common"],
+    ] {
+        let mut command = args(&command);
+        command.extend(args(&["--profile", "/missing", "--endpoint-dir", "/missing", "--format", "json"]));
+        assert_eq!(sandbox.run(&command).status.code(), Some(2));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn context_semantics_use_shared_validation_before_path_inspection() {
+    let sandbox = Sandbox::new();
+    let base = args(&["--format", "json", "codex", "context", "set", "--profile", "/missing", "--endpoint-dir", "/missing",
+        "--request-id", "request_1", "--expected-provider-id", "provider_1", "--expected-revision",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--target", "common", "--model-context-window", "1000000", "--model-auto-compact-token-limit", "900000"]);
+    let reserved = sandbox.run(&base);
+    assert_eq!(reserved.status.code(), Some(3));
+    let reserved: serde_json::Value = serde_json::from_slice(&reserved.stdout).unwrap();
+    assert_eq!(reserved["error"]["code"], "NOT_SUPPORTED");
+    assert_eq!(reserved["error"]["stage"], "dispatch");
+    assert!(reserved["data"].is_null());
+    for (option, value) in [
+        ("--request-id", ""), ("--request-id", "secret/id"), ("--request-id", "中文"),
+        ("--expected-provider-id", ""), ("--expected-provider-id", "private/provider"),
+        ("--expected-revision", "short"),
+        ("--expected-revision", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        ("--expected-revision", "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"),
+        ("--model-context-window", "0"), ("--model-context-window", "9223372036854775808"),
+        ("--model-auto-compact-token-limit", "1000001"),
+    ] {
+        let mut command = base.clone();
+        let index = command.iter().position(|argument| argument == option).unwrap();
+        command[index + 1] = value.into();
+        let output = sandbox.run(&command);
+        assert_eq!(output.status.code(), Some(2), "{option}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["error"]["stage"], "parse");
+        assert!(value["operation"].is_null());
+        assert!(value["request_id"].is_null());
+    }
+    for invalid_id in ["".to_owned(), "secret/id".to_owned(), "x".repeat(129)] {
+        let mut command = args(&["--format", "json", "codex", "context", "request-status", "--profile", "/missing", "--endpoint-dir", "/missing", "--request-id"]);
+        command.push(invalid_id.into());
+        assert_eq!(sandbox.run(&command).status.code(), Some(2));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn context_commands_are_unsupported_without_path_inspection() {
+    let sandbox = Sandbox::new();
+    for (command, extra) in [
+        ("inspect", vec![]),
+        ("request-status", vec!["--request-id", "request_1"]),
+        ("set", vec!["--request-id", "request_1", "--expected-provider-id", "provider_1", "--expected-revision",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--target", "common", "--model-context-window", "1000000"]),
+    ] {
+        let mut command = args(&["--format", "json", "codex", "context", command, "--profile"]);
+        command.push(sandbox.root.join("missing-profile").into_os_string());
+        command.push("--endpoint-dir".into());
+        command.push(sandbox.root.join("missing-endpoint").into_os_string());
+        command.extend(args(&extra));
+        let output = sandbox.run(&command);
+        assert_eq!(output.status.code(), Some(3));
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["error"]["code"], "NOT_SUPPORTED");
+        assert_eq!(value["error"]["stage"], "dispatch");
+    }
 }

@@ -14,6 +14,8 @@
 
 ## 核心设计决策（Why）
 
+- The usage-refresh command and its event helper share a generic `tauri::Runtime`; the production Wry handler and isolated MockRuntime admission actor call the same command body. Do not bypass admission or replace the production credential path to make the actor test compile.
+
 - Full auth.json export is read-only: preview and clipboard copy share the same guarded snapshot reader as token copy. Preserve the complete JSON Value (including unknown runtime fields); never refresh, apply, import, or reconstruct credentials from display metadata. Copy-only responses must not return secrets to the WebView. Tests use synthetic snapshots only.
 
 - `config.toml` 不能靠字符串拼接合并 common/provider 配置，必须结构化 merge，避免顶层键被吞进 provider 表作用域。
@@ -48,6 +50,8 @@ sequenceDiagram
 ```
 
 ## 易错点与历史坑（Gotchas）
+
+- Managed Codex admission is a candidate-only guard, not proof that ContextSet is ready. Unsupported plugin/history/memory mutations reject through `management_admission` before resolution or effects; keep read-only list/status/read paths available. Memory/config folder reveal is also a writer (mkdir plus process launch). Timed blocking workers must retain their own session clone and revalidate it inside the worker: timeout does not cancel filesystem work. History command wrappers additionally need rejection before worker launch; the synchronous helpers protect their own entry paths.
 
 - History restore 的 sidecar 是不可信路径元数据：整批校验必须在 `pre-restore` 备份和数据库恢复之前，并在 sidecar 写入前复用；逐条循环内才拒绝会让前面的 DB/index 已被改写。保留名按共享 coordination matcher 逐组件检查两种分隔符；这不是所有 runtime writer 已接 owner 的证明。
 

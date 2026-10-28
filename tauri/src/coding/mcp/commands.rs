@@ -3,6 +3,7 @@
 //! Provides the public API for the MCP feature.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 
 use tauri::{AppHandle, Emitter, Runtime, State};
 
@@ -23,9 +24,123 @@ use super::types::{
 use crate::coding::tools::{
     custom_store, get_mcp_runtime_tools, is_tool_installed_with_db_async,
     resolve_mcp_config_path_with_db_async, runtime_tool_by_key, to_runtime_tool_dto_with_db_async,
-    CustomTool, RuntimeToolDto,
+    CustomTool, RuntimeTool, RuntimeToolDto,
 };
 use crate::SqliteDbState;
+use crate::management_admission::{
+    admit_non_codex_targets, current_profile_session, reject_managed_operation,
+    CrossTargetAdmission, GuiProfileSession,
+};
+
+struct McpOperationAdmission {
+    session: Option<std::sync::Arc<GuiProfileSession>>,
+    targets: Option<CrossTargetAdmission>,
+}
+
+impl McpOperationAdmission {
+    fn ensure_current(&self) -> Result<(), String> {
+        if let Some(session) = &self.session {
+            session.ensure_current()?;
+        }
+        if let Some(targets) = &self.targets {
+            targets.ensure_current()?;
+        }
+        Ok(())
+    }
+}
+
+fn server_admission_tools(server: &McpServer) -> Vec<String> {
+    let mut keys = server.enabled_tools.clone();
+    keys.extend(server.disabled_previous_tools.iter().cloned());
+    if let Some(details) = server.sync_details.as_ref().and_then(serde_json::Value::as_object) {
+        keys.extend(details.keys().cloned());
+    }
+    keys
+}
+
+/// Read the entire old/new write set before the first central DB mutation.
+/// Installation checks are deliberately not a gate: stale/uninstalled tool
+/// assignments may still be removed, restored, or aliased to a protected root.
+async fn admit_mcp_operation(
+    state: &SqliteDbState,
+    mut keys: Vec<String>,
+    include_disabled_opencode: bool,
+) -> Result<McpOperationAdmission, String> {
+    let session = current_profile_session()?;
+    if !session.as_ref().is_some_and(|session| session.is_managed()) {
+        // Ordinary mode retains its prior best-effort lookup/install behavior.
+        return Ok(McpOperationAdmission { session, targets: None });
+    }
+    if include_disabled_opencode
+        && mcp_store::get_mcp_preferences(state).await?.sync_disabled_to_opencode
+    {
+        keys.push("opencode".to_owned());
+    }
+    keys.sort();
+    keys.dedup();
+    if keys.iter().any(|key| key == "codex") {
+        let _ordinary = reject_managed_operation()?;
+    }
+    let custom_tools = custom_store::get_custom_tools(state).await?;
+    let db = state.db();
+    let mut paths = Vec::new();
+    for key in keys {
+        let Some(tool) = runtime_tool_by_key(&key, &custom_tools) else {
+            // Unknown targets may retain the ordinary best-effort behavior,
+            // but cannot prove a managed operation safe before DB changes.
+            let _ordinary = reject_managed_operation()?;
+            continue;
+        };
+        let Some(path) = resolve_mcp_config_path_with_db_async(&db, &tool).await else {
+            let _ordinary = reject_managed_operation()?;
+            continue;
+        };
+        paths.extend(super::config_sync::mcp_write_targets(&tool, &path));
+    }
+    let targets: Vec<_> = paths.iter().map(PathBuf::as_path).collect();
+    let targets = if targets.is_empty() {
+        None
+    } else {
+        Some(admit_non_codex_targets(None, &targets)?)
+    };
+    Ok(McpOperationAdmission { session, targets })
+}
+
+async fn admit_custom_mcp_edit(
+    state: &SqliteDbState,
+    key: &str,
+    next_path: Option<&str>,
+) -> Result<McpOperationAdmission, String> {
+    let session = current_profile_session()?;
+    if !session.as_ref().is_some_and(|session| session.is_managed()) {
+        return Ok(McpOperationAdmission { session, targets: None });
+    }
+    let previous = custom_store::get_custom_tool_by_key(state, key).await?;
+    let mut tools: Vec<RuntimeTool> = previous.as_ref()
+        .filter(|tool| tool.mcp_config_path.is_some())
+        .map(RuntimeTool::from).into_iter().collect();
+    if let Some(path) = next_path {
+        tools.push(RuntimeTool {
+            key: key.to_owned(), display_name: key.to_owned(), is_custom: true,
+            relative_skills_dir: None, relative_detect_dir: None, force_copy: false,
+            icon_url: None, mcp_config_path: Some(path.to_owned()),
+            mcp_config_format: Some("json".to_owned()), mcp_field: Some("mcpServers".to_owned()),
+        });
+    }
+    let mut paths = Vec::new();
+    for tool in tools {
+        let Some(path) = resolve_mcp_config_path_with_db_async(state, &tool).await else {
+            let _ordinary = reject_managed_operation()?;
+            continue;
+        };
+        paths.extend(super::config_sync::mcp_write_targets(&tool, &path));
+    }
+    let targets: Vec<_> = paths.iter().map(PathBuf::as_path).collect();
+    let targets = if targets.is_empty() { None } else {
+        Some(admit_non_codex_targets(None, &targets)?)
+    };
+    Ok(McpOperationAdmission { session, targets })
+}
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|text| {
@@ -87,6 +202,8 @@ pub async fn mcp_create_server<R: Runtime>(
     state: State<'_, SqliteDbState>,
     input: CreateMcpServerInput,
 ) -> Result<McpServerDto, String> {
+    let admission = admit_mcp_operation(&state, input.enabled_tools.clone(), true).await?;
+    admission.ensure_current()?;
     let now = now_ms();
     let server = McpServer {
         id: String::new(), // Will be assigned by upsert
@@ -115,10 +232,12 @@ pub async fn mcp_create_server<R: Runtime>(
         .unwrap_or_default();
     let db = state.db();
     for tool_key in &input.enabled_tools {
+        admission.ensure_current()?;
         if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
             if is_tool_installed_with_db_async(&db, &tool).await {
                 match sync_server_to_tool_async(&db, &server, &tool).await {
                     Ok(detail) => {
+                        admission.ensure_current()?;
                         let _ = mcp_store::update_sync_detail(&state, &id, &detail).await;
                     }
                     Err(e) => {
@@ -128,6 +247,7 @@ pub async fn mcp_create_server<R: Runtime>(
                             synced_at: Some(now_ms()),
                             error_message: Some(e),
                         };
+                        admission.ensure_current()?;
                         let _ = mcp_store::update_sync_detail(&state, &id, &detail).await;
                     }
                 }
@@ -187,6 +307,7 @@ pub async fn mcp_update_server<R: Runtime>(
     // written under the previous name).
     let previous_name = server.name.clone();
     let previous_enabled_tools = server.enabled_tools.clone();
+    let mut admission_tools = server_admission_tools(&server);
 
     // Apply updates
     if let Some(name) = input.name {
@@ -210,6 +331,9 @@ pub async fn mcp_update_server<R: Runtime>(
     server.timeout = input.timeout;
     server.updated_at = now_ms();
 
+    admission_tools.extend(server_admission_tools(&server));
+    let admission = admit_mcp_operation(&state, admission_tools, true).await?;
+    admission.ensure_current()?;
     mcp_store::upsert_mcp_server(&state, &server).await?;
 
     // Re-sync to all enabled tools. A disabled server must stay out of every
@@ -218,7 +342,7 @@ pub async fn mcp_update_server<R: Runtime>(
     // documented re-enable + restore flow (same guard family as toggle /
     // sync / restore below).
     if server.management_enabled {
-        run_update_sync(&state, &server, &previous_name, &previous_enabled_tools).await;
+        run_update_sync(&state, &server, &previous_name, &previous_enabled_tools, &admission).await?;
     }
 
     // Get the updated server with sync details
@@ -259,7 +383,9 @@ async fn run_update_sync(
     server: &McpServer,
     previous_name: &str,
     previous_enabled_tools: &[String],
-) {
+    admission: &McpOperationAdmission,
+) -> Result<(), String> {
+    admission.ensure_current()?;
     let custom_tools = custom_store::get_custom_tools(state)
         .await
         .unwrap_or_default();
@@ -275,6 +401,7 @@ async fn run_update_sync(
         .collect();
     let name_changed = previous_name != server.name.as_str();
     for tool_key in removed_tools {
+        admission.ensure_current()?;
         if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
             if let Err(e) = remove_server_from_tool_async(&db, previous_name, &tool).await {
                 log::warn!(
@@ -285,11 +412,13 @@ async fn run_update_sync(
                 );
             }
             // Drop the stale sync detail so the UI no longer shows it.
+            admission.ensure_current()?;
             let _ = mcp_store::delete_sync_detail(state, &server_id, tool_key).await;
         }
     }
     if name_changed {
         for tool_key in &server.enabled_tools {
+            admission.ensure_current()?;
             if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
                 if let Err(e) = remove_server_from_tool_async(&db, previous_name, &tool).await {
                     log::warn!(
@@ -304,10 +433,12 @@ async fn run_update_sync(
     }
 
     for tool_key in &server.enabled_tools {
+        admission.ensure_current()?;
         if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
             if is_tool_installed_with_db_async(&db, &tool).await {
                 match sync_server_to_tool_async(&db, server, &tool).await {
                     Ok(detail) => {
+                        admission.ensure_current()?;
                         let _ = mcp_store::update_sync_detail(state, &server_id, &detail).await;
                     }
                     Err(e) => {
@@ -317,6 +448,7 @@ async fn run_update_sync(
                             synced_at: Some(now_ms()),
                             error_message: Some(e),
                         };
+                        admission.ensure_current()?;
                         let _ = mcp_store::update_sync_detail(state, &server_id, &detail).await;
                     }
                 }
@@ -326,6 +458,7 @@ async fn run_update_sync(
 
     // Sync disabled to opencode if the switch is ON and opencode is not in enabled_tools
     maybe_sync_disabled_to_opencode(state, server, &custom_tools).await;
+    Ok(())
 }
 
 /// Delete an MCP server
@@ -337,13 +470,21 @@ pub async fn mcp_delete_server<R: Runtime>(
     serverId: String,
 ) -> Result<(), String> {
     // Get the server first to remove from tool configs
-    if let Some(server) = mcp_store::get_mcp_server_by_id(&state, &serverId).await? {
+    let server = mcp_store::get_mcp_server_by_id(&state, &serverId).await?;
+    let admission = admit_mcp_operation(
+        &state,
+        server.as_ref().map(server_admission_tools).unwrap_or_default(),
+        true,
+    ).await?;
+    admission.ensure_current()?;
+    if let Some(server) = server {
         // Remove from all enabled tools' configs
         let custom_tools = custom_store::get_custom_tools(&state)
             .await
             .unwrap_or_default();
         let db = state.db();
         for tool_key in &server.enabled_tools {
+            admission.ensure_current()?;
             if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
                 let _ = remove_server_from_tool_async(&db, &server.name, &tool).await;
             }
@@ -352,6 +493,7 @@ pub async fn mcp_delete_server<R: Runtime>(
         maybe_remove_disabled_from_opencode(&state, &server, &custom_tools).await;
     }
 
+    admission.ensure_current()?;
     mcp_store::delete_mcp_server(&state, &serverId).await?;
 
     // Emit mcp-changed for WSL sync
@@ -370,15 +512,20 @@ pub async fn mcp_toggle_tool<R: Runtime>(
     serverId: String,
     toolKey: String,
 ) -> Result<bool, String> {
+    let existing = mcp_store::get_mcp_server_by_id(&state, &serverId).await?;
+    let mut admission_tools = existing.as_ref().map(server_admission_tools).unwrap_or_default();
+    admission_tools.push(toolKey.clone());
+    let admission = admit_mcp_operation(&state, admission_tools, false).await?;
     // Management-disabled servers are an invariant: rejects any tool toggle so the only
     // way back is re-enable + explicit sync. DB end state wins regardless of what the UI
     // sent, so we must check BEFORE flipping (toggling first would corrupt the record).
-    if let Some(existing) = mcp_store::get_mcp_server_by_id(&state, &serverId).await? {
+    if let Some(existing) = existing {
         if !existing.management_enabled {
             return Err(format!("MCP_DISABLED|{}", serverId));
         }
     }
 
+    admission.ensure_current()?;
     let is_enabled = mcp_store::toggle_tool_enabled(&state, &serverId, &toolKey).await?;
 
     // Get the server
@@ -399,6 +546,7 @@ pub async fn mcp_toggle_tool<R: Runtime>(
         // Sync to tool config
         match sync_server_to_tool_async(&db, &server, &tool).await {
             Ok(detail) => {
+                admission.ensure_current()?;
                 mcp_store::update_sync_detail(&state, &serverId, &detail).await?;
             }
             Err(e) => {
@@ -408,6 +556,7 @@ pub async fn mcp_toggle_tool<R: Runtime>(
                     synced_at: Some(now_ms()),
                     error_message: Some(e.clone()),
                 };
+                admission.ensure_current()?;
                 mcp_store::update_sync_detail(&state, &serverId, &detail).await?;
                 return Err(e);
             }
@@ -427,6 +576,7 @@ pub async fn mcp_toggle_tool<R: Runtime>(
         } else {
             let _ = remove_server_from_tool_async(&db, &server.name, &tool).await;
         }
+        admission.ensure_current()?;
         mcp_store::delete_sync_detail(&state, &serverId, &toolKey).await?;
     }
 
@@ -458,6 +608,11 @@ pub async fn mcp_set_management_enabled<R: Runtime>(
     serverId: String,
     enabled: bool,
 ) -> Result<Vec<String>, String> {
+    let server = mcp_store::get_mcp_server_by_id(&state, &serverId)
+        .await?
+        .ok_or_else(|| format!("MCP server not found: {}", serverId))?;
+    let admission = admit_mcp_operation(&state, server_admission_tools(&server), !enabled).await?;
+    admission.ensure_current()?;
     if enabled {
         // Re-enable only flips the flag; the previous tools are returned so the frontend
         // can restore them through the normal sync flow.
@@ -467,14 +622,12 @@ pub async fn mcp_set_management_enabled<R: Runtime>(
     // Disable: first remove the server from every currently enabled tool config
     // (best-effort, mirrors mcp_delete_server cleanup), then record history and clear
     // bindings in the DB. DB desired state wins even if a target removal fails.
-    let server = mcp_store::get_mcp_server_by_id(&state, &serverId)
-        .await?
-        .ok_or_else(|| format!("MCP server not found: {}", serverId))?;
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
     let db = state.db();
     for tool_key in &server.enabled_tools {
+        admission.ensure_current()?;
         let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) else {
             continue;
         };
@@ -482,6 +635,7 @@ pub async fn mcp_set_management_enabled<R: Runtime>(
     }
     maybe_remove_disabled_from_opencode(&state, &server, &custom_tools).await;
 
+    admission.ensure_current()?;
     let previous_tools = mcp_store::set_server_management_enabled(&state, &serverId, false).await?;
     let _ = app.emit("config-changed", "window");
     let _ = app.emit("mcp-changed", "window");
@@ -513,6 +667,11 @@ pub async fn mcp_restore_tools<R: Runtime>(
         return Err(format!("MCP_DISABLED|{}", serverId));
     }
 
+    let mut admission_tools = server_admission_tools(&server);
+    admission_tools.extend(tools.iter().cloned());
+    let admission = admit_mcp_operation(&state, admission_tools, false).await?;
+    admission.ensure_current()?;
+
     // Persist the user-confirmed (deduplicated) subset as the new desired bindings before
     // syncing — the batch `mcp_sync_to_tool` entry filters on `enabled_tools`.
     mcp_store::set_server_enabled_tools(&state, &serverId, tools).await?;
@@ -526,6 +685,7 @@ pub async fn mcp_restore_tools<R: Runtime>(
     let db = state.db();
     let mut results = Vec::new();
     for tool_key in &server.enabled_tools {
+        admission.ensure_current()?;
         let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) else {
             let detail = McpSyncDetail {
                 tool: tool_key.clone(),
@@ -533,6 +693,7 @@ pub async fn mcp_restore_tools<R: Runtime>(
                 synced_at: Some(now_ms()),
                 error_message: Some(format!("Tool not found: {}", tool_key)),
             };
+            admission.ensure_current()?;
             let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
             results.push(McpSyncResultDto {
                 tool: tool_key.clone(),
@@ -543,6 +704,7 @@ pub async fn mcp_restore_tools<R: Runtime>(
         };
         match sync_server_to_tool_async(&db, &server, &tool).await {
             Ok(detail) => {
+                admission.ensure_current()?;
                 let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
                 results.push(McpSyncResultDto {
                     tool: tool_key.clone(),
@@ -557,6 +719,7 @@ pub async fn mcp_restore_tools<R: Runtime>(
                     synced_at: Some(now_ms()),
                     error_message: Some(e.clone()),
                 };
+                admission.ensure_current()?;
                 let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
                 results.push(McpSyncResultDto {
                     tool: tool_key.clone(),
@@ -934,6 +1097,8 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
     state: State<'_, SqliteDbState>,
     toolKey: String,
 ) -> Result<Vec<McpSyncResultDto>, String> {
+    let admission = admit_mcp_operation(&state, vec![toolKey.clone()], false).await?;
+    admission.ensure_current()?;
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
@@ -949,6 +1114,7 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
     let mut results = Vec::new();
 
     for server in servers {
+        admission.ensure_current()?;
         // Management-disabled servers must never be re-synced by the batch sync entry.
         if !server.management_enabled {
             continue;
@@ -959,6 +1125,7 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
 
         match sync_server_to_tool_async(&db, &server, &tool).await {
             Ok(detail) => {
+                admission.ensure_current()?;
                 mcp_store::update_sync_detail(&state, &server.id, &detail).await?;
                 results.push(McpSyncResultDto {
                     tool: toolKey.clone(),
@@ -973,6 +1140,7 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
                     synced_at: Some(now_ms()),
                     error_message: Some(e.clone()),
                 };
+                admission.ensure_current()?;
                 mcp_store::update_sync_detail(&state, &server.id, &detail).await?;
                 results.push(McpSyncResultDto {
                     tool: toolKey.clone(),
@@ -1018,9 +1186,13 @@ async fn mcp_sync_all_internal<R: Runtime>(
         .unwrap_or_default();
     let db = state.db();
     let servers = mcp_store::get_mcp_servers(state).await?;
+    let keys = servers.iter().flat_map(server_admission_tools).collect();
+    let admission = admit_mcp_operation(state, keys, true).await?;
+    admission.ensure_current()?;
     let mut results = Vec::new();
 
     for server in servers {
+        admission.ensure_current()?;
         // Management-disabled servers must never be re-synced by the full sync entry.
         if !server.management_enabled {
             continue;
@@ -1036,6 +1208,7 @@ async fn mcp_sync_all_internal<R: Runtime>(
 
             match sync_server_to_tool_async(&db, &server, &tool).await {
                 Ok(detail) => {
+                    admission.ensure_current()?;
                     mcp_store::update_sync_detail(state, &server.id, &detail).await?;
                     results.push(McpSyncResultDto {
                         tool: tool_key.clone(),
@@ -1050,6 +1223,7 @@ async fn mcp_sync_all_internal<R: Runtime>(
                         synced_at: Some(now_ms()),
                         error_message: Some(e.clone()),
                     };
+                    admission.ensure_current()?;
                     mcp_store::update_sync_detail(state, &server.id, &detail).await?;
                     results.push(McpSyncResultDto {
                         tool: tool_key.clone(),
@@ -1153,8 +1327,13 @@ pub async fn mcp_import_from_tool<R: Runtime>(
         )
     };
 
+    // Keep requested bindings before the ordinary installed-tool filter: a
+    // selected Codex/unknown target must not silently become a partial managed
+    // import merely because its runtime directory is currently absent.
+    let mut requested_target_tools = Vec::new();
     // Get target tools for sync: use enabledTools if provided, otherwise use preferred tools or all installed MCP tools
     let target_tools: Vec<String> = if let Some(enabled) = enabledTools {
+        requested_target_tools.extend(enabled.iter().cloned());
         // Use provided enabled tools, but only those that are installed
         {
             let mut installed_tool_keys = Vec::new();
@@ -1172,6 +1351,7 @@ pub async fn mcp_import_from_tool<R: Runtime>(
         // Fall back to preferred tools or all installed MCP tools
         let prefs = mcp_store::get_mcp_preferences(&state).await?;
         if !prefs.preferred_tools.is_empty() {
+            requested_target_tools.extend(prefs.preferred_tools.iter().cloned());
             // Use preferred tools, but only those that are installed
             {
                 let mut installed_tool_keys = Vec::new();
@@ -1204,7 +1384,19 @@ pub async fn mcp_import_from_tool<R: Runtime>(
     let mut servers_duplicated = Vec::new();
     let mut errors = Vec::new();
 
+    // Admit the whole import before the first upsert; a later Codex item may
+    // not leave earlier Claude rows/files partially imported.
+    let import_keys = if follow_cc_switch_marks {
+        imported_servers.iter().flat_map(server_admission_tools).collect()
+    } else {
+        requested_target_tools.extend(target_tools.iter().cloned());
+        requested_target_tools
+    };
+    let admission = admit_mcp_operation(&state, import_keys, false).await?;
+    admission.ensure_current()?;
+
     for mut server in imported_servers {
+        admission.ensure_current()?;
         // Check if server with same name already exists
         if let Some(existing) = mcp_store::get_mcp_server_by_name(&state, &server.name).await? {
             // Compare configurations
@@ -1240,6 +1432,7 @@ pub async fn mcp_import_from_tool<R: Runtime>(
             server.enabled_tools = target_tools.clone();
         }
 
+        admission.ensure_current()?;
         match mcp_store::upsert_mcp_server(&state, &server).await {
             Ok(server_id) => {
                 servers_imported += 1;
@@ -1249,6 +1442,7 @@ pub async fn mcp_import_from_tool<R: Runtime>(
                     if let Some(target_tool) = runtime_tool_by_key(tool_key, &custom_tools) {
                         match sync_server_to_tool_async(&state.db(), &server, &target_tool).await {
                             Ok(detail) => {
+                                admission.ensure_current()?;
                                 let _ = mcp_store::update_sync_detail(&state, &server_id, &detail)
                                     .await;
                             }
@@ -1259,6 +1453,7 @@ pub async fn mcp_import_from_tool<R: Runtime>(
                                     synced_at: Some(now_ms()),
                                     error_message: Some(e.clone()),
                                 };
+                                admission.ensure_current()?;
                                 let _ = mcp_store::update_sync_detail(&state, &server_id, &detail)
                                     .await;
                                 errors
@@ -1552,9 +1747,12 @@ pub async fn mcp_set_sync_disabled_to_opencode<R: Runtime>(
     state: State<'_, SqliteDbState>,
     enabled: bool,
 ) -> Result<(), String> {
+    let admission = admit_mcp_operation(&state, vec!["opencode".to_owned()], false).await?;
+    admission.ensure_current()?;
     let mut prefs = mcp_store::get_mcp_preferences(&state).await?;
     prefs.sync_disabled_to_opencode = enabled;
     prefs.updated_at = now_ms();
+    admission.ensure_current()?;
     mcp_store::save_mcp_preferences(&state, &prefs).await?;
 
     let servers = mcp_store::get_mcp_servers(&state).await?;
@@ -1712,6 +1910,8 @@ pub async fn mcp_add_custom_tool(
         return Err(format!("Key '{}' conflicts with a built-in tool", key));
     }
 
+    let admission = admit_custom_mcp_edit(&state, &key, Some(&mcp_path)).await?;
+    admission.ensure_current()?;
     custom_store::save_custom_tool_mcp_fields(
         &state,
         &key,
@@ -1732,6 +1932,8 @@ pub async fn mcp_remove_custom_tool(
     state: State<'_, SqliteDbState>,
     key: String,
 ) -> Result<(), String> {
+    let admission = admit_custom_mcp_edit(&state, &key, None).await?;
+    admission.ensure_current()?;
     // Get the existing tool
     let existing = custom_store::get_custom_tool_by_key(&state, &key).await?;
 
@@ -1925,4 +2127,175 @@ pub async fn mcp_init_default_favorites(state: State<'_, SqliteDbState>) -> Resu
     mcp_store::save_mcp_preferences(&state, &prefs).await?;
 
     Ok(inserted_count)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod admission_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tauri::Manager;
+
+    const UNSUPPORTED: &str =
+        "This operation is not supported while managed Codex writes are enabled";
+
+    fn fixture() -> (tempfile::TempDir, std::sync::Arc<GuiProfileSession>) {
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-mcp-command-admission-")
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        for child in ["profile", "codex", "claude", "source"] {
+            let path = directory.path().join(child);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let owner = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(
+            directory.path().join("profile"),
+        ).unwrap().into_managed().unwrap();
+        let runtime = ai_toolbox_management::owner::RuntimeResourceIdentity::existing(
+            directory.path().join("codex"),
+        ).unwrap();
+        let session = GuiProfileSession::managed_with_runtime(owner, runtime).unwrap();
+        (directory, session)
+    }
+
+    async fn custom(state: &SqliteDbState, key: &str, path: &std::path::Path) {
+        custom_store::save_custom_tool(state, &CustomTool {
+            key: key.to_owned(), display_name: key.to_owned(),
+            relative_skills_dir: None, relative_detect_dir: None, force_copy: true,
+            icon_url: None, mcp_config_path: Some(path.to_string_lossy().into_owned()),
+            mcp_config_format: Some("json".to_owned()), mcp_field: Some("mcpServers".to_owned()),
+            created_at: 1,
+        }).await.unwrap();
+    }
+
+    fn input(tools: &[&str]) -> CreateMcpServerInput {
+        CreateMcpServerInput {
+            name: "fixture-server".to_owned(), server_type: "stdio".to_owned(),
+            server_config: serde_json::json!({"command": "fixture-command"}),
+            enabled_tools: tools.iter().map(|key| (*key).to_owned()).collect(),
+            description: None, tags: Vec::new(), timeout: None,
+        }
+    }
+
+    async fn snapshot(state: &SqliteDbState) -> serde_json::Value {
+        serde_json::to_value(mcp_store::get_mcp_servers(state).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_create_and_custom_path_edit_reject_before_central_write() {
+        let (directory, session) = fixture();
+        let app = tauri::test::mock_app();
+        app.manage(SqliteDbState::in_memory_for_test().unwrap());
+        let state = app.state::<SqliteDbState>();
+        let alias = directory.path().join("custom-alias");
+        std::os::unix::fs::symlink(directory.path().join("codex"), &alias).unwrap();
+        custom(&state, "custom_codex", &alias.join("mcp.json")).await;
+        let before = snapshot(&state).await;
+        let _scope = crate::management_admission::test_session(&session);
+
+        for key in ["codex", "custom_codex", "unknown_tool"] {
+            assert_eq!(mcp_create_server(app.handle().clone(), state.clone(), input(&[key]))
+                .await.unwrap_err(), UNSUPPORTED);
+            assert_eq!(snapshot(&state).await, before);
+        }
+        assert_eq!(mcp_add_custom_tool(
+            state.clone(), "new_alias".to_owned(), "Alias".to_owned(), None,
+            alias.join("mcp.json").to_string_lossy().into_owned(),
+            "json".to_owned(), "mcpServers".to_owned(), None,
+        ).await.unwrap_err(), UNSUPPORTED);
+        assert!(custom_store::get_custom_tool_by_key(&state, "new_alias").await.unwrap().is_none());
+        assert!(!directory.path().join("codex/mcp.json").exists());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_crud_preflights_old_and_previous_targets_before_any_mutation() {
+        let (directory, session) = fixture();
+        let app = tauri::test::mock_app();
+        app.manage(SqliteDbState::in_memory_for_test().unwrap());
+        let state = app.state::<SqliteDbState>();
+        let safe = directory.path().join("claude/mcp.json");
+        custom(&state, "custom_claude", &safe).await;
+        // A prior assignment is part of the admission set even after the user
+        // selects a disjoint replacement; this is not just a new-key check.
+        let server = McpServer {
+            id: "fixture-old".to_owned(), name: "fixture-server".to_owned(),
+            server_type: "stdio".to_owned(), server_config: serde_json::json!({"command":"old"}),
+            enabled_tools: vec!["custom_claude".to_owned()],
+            sync_details: Some(serde_json::json!({"codex":{"status":"synced"}})),
+            description: None, user_group: None, user_note: None, tags: Vec::new(),
+            timeout: None, sort_index: 0, management_enabled: true,
+            disabled_previous_tools: vec!["codex".to_owned()], created_at: 1, updated_at: 1,
+        };
+        mcp_store::upsert_mcp_server(&state, &server).await.unwrap();
+        let before = snapshot(&state).await;
+        let _scope = crate::management_admission::test_session(&session);
+        let edit = UpdateMcpServerInput {
+            name: Some("changed".to_owned()), server_type: None, server_config: None,
+            enabled_tools: Some(vec!["custom_claude".to_owned()]), description: None,
+            tags: None, timeout: None,
+        };
+        assert_eq!(mcp_update_server(app.handle().clone(), state.clone(), server.id.clone(), edit)
+            .await.unwrap_err(), UNSUPPORTED);
+        assert_eq!(mcp_toggle_tool(app.handle().clone(), state.clone(), server.id.clone(), "custom_claude".to_owned())
+            .await.unwrap_err(), UNSUPPORTED);
+        assert_eq!(mcp_restore_tools(app.handle().clone(), state.clone(), server.id.clone(), vec!["custom_claude".to_owned()])
+            .await.unwrap_err(), UNSUPPORTED);
+        assert_eq!(mcp_set_management_enabled(app.handle().clone(), state.clone(), server.id.clone(), false)
+            .await.unwrap_err(), UNSUPPORTED);
+        assert_eq!(mcp_delete_server(app.handle().clone(), state.clone(), server.id.clone())
+            .await.unwrap_err(), UNSUPPORTED);
+        assert_eq!(mcp_sync_all(app.handle().clone(), state.clone()).await.unwrap_err(), UNSUPPORTED);
+        assert_eq!(snapshot(&state).await, before);
+        assert!(!safe.exists());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_import_admits_all_targets_before_first_upsert() {
+        let (directory, session) = fixture();
+        let app = tauri::test::mock_app();
+        app.manage(SqliteDbState::in_memory_for_test().unwrap());
+        let state = app.state::<SqliteDbState>();
+        let source = directory.path().join("source/mcp.json");
+        std::fs::write(&source, r#"{"mcpServers":{"one":{"command":"fixture-one"},"two":{"command":"fixture-two"}}}"#).unwrap();
+        custom(&state, "source_fixture", &source).await;
+        custom(&state, "custom_codex", &directory.path().join("codex/mcp.json")).await;
+        custom(&state, "custom_claude", &directory.path().join("claude/mcp.json")).await;
+        let before = snapshot(&state).await;
+        let _scope = crate::management_admission::test_session(&session);
+        assert_eq!(mcp_import_from_tool(
+            app.handle().clone(), state.clone(), "source_fixture".to_owned(),
+            Some(vec!["custom_claude".to_owned(), "custom_codex".to_owned()]), Some(false),
+        ).await.unwrap_err(), UNSUPPORTED);
+        assert_eq!(snapshot(&state).await, before);
+        assert!(!directory.path().join("claude/mcp.json").exists());
+        assert!(!directory.path().join("codex/mcp.json").exists());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_disjoint_claude_crud_and_ordinary_best_effort_remain_available() {
+        let (directory, session) = fixture();
+        let app = tauri::test::mock_app();
+        app.manage(SqliteDbState::in_memory_for_test().unwrap());
+        let state = app.state::<SqliteDbState>();
+        let safe = directory.path().join("claude/mcp.json");
+        custom(&state, "custom_claude", &safe).await;
+        let scope = crate::management_admission::test_session(&session);
+        let created = mcp_create_server(app.handle().clone(), state.clone(), input(&["custom_claude"]))
+            .await.unwrap();
+        let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&safe).unwrap()).unwrap();
+        assert_eq!(written["mcpServers"]["fixture-server"]["command"], "fixture-command");
+        mcp_delete_server(app.handle().clone(), state.clone(), created.id).await.unwrap();
+        assert!(mcp_store::get_mcp_servers(&state).await.unwrap().is_empty());
+        drop(scope);
+        drop(session);
+        let lease = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(directory.path().join("profile"))
+            .unwrap().into_ordinary();
+        let ordinary = GuiProfileSession::ordinary(lease);
+        let _scope = crate::management_admission::test_session(&ordinary);
+        // Ordinary mode retains its prior behavior for an unknown target:
+        // persist the desired state and skip the missing runtime adapter.
+        let created = mcp_create_server(app.handle().clone(), state.clone(), input(&["unknown_tool"]))
+            .await.unwrap();
+        assert_eq!(created.enabled_tools, vec!["unknown_tool"]);
+    }
 }

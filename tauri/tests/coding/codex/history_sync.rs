@@ -65,6 +65,7 @@ model = "gpt-new"
 
 #[test]
 fn codex_history_sync_round_trip_restores_latest_backup() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::codex_history_sync_round_trip_restores_latest_backup")) else { return; };
     let env = TestCodexHistory::new();
 
     let status = history_sync::get_status(&env.root).expect("status");

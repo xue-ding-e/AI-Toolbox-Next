@@ -18,6 +18,7 @@ use crate::coding::{
         RuntimeTool,
     },
 };
+use crate::management_admission::{admit_non_codex_targets, CrossTargetAdmission};
 
 const OMP_MCP_SCHEMA_URL: &str = "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json";
 
@@ -98,7 +99,16 @@ pub async fn sync_server_to_tool_with_enabled_async(
     let config_path = resolve_mcp_config_path_with_db_async(db, tool)
         .await
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
-    sync_server_to_path(tool, &config_path, server, enabled)
+    let admission = admit_mcp_target(tool, &config_path)?;
+    let tool = tool.clone();
+    let server = server.clone();
+    // A timeout/cancelled caller does not cancel a blocking filesystem write.
+    // The worker owns admission until the final effect and validates it there.
+    tokio::task::spawn_blocking(move || {
+        sync_server_to_path_admitted(&tool, &config_path, &server, enabled, &admission)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Remove an MCP server from a specific tool's config file
@@ -120,7 +130,34 @@ pub async fn remove_server_from_tool_async(
     let config_path = resolve_mcp_config_path_with_db_async(db, tool)
         .await
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
-    remove_server_from_path(tool, &config_path, server_name)
+    let admission = admit_mcp_target(tool, &config_path)?;
+    let tool = tool.clone();
+    let server_name = server_name.to_owned();
+    tokio::task::spawn_blocking(move || {
+        remove_server_from_path_admitted(&tool, &config_path, &server_name, &admission)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Qualify the complete write set before any cleanup or format-specific effect.
+/// A custom tool key is not evidence that its physical path is outside Codex.
+fn admit_mcp_target(tool: &RuntimeTool, config_path: &Path) -> Result<CrossTargetAdmission, String> {
+    let paths = mcp_write_targets(tool, config_path);
+    let targets: Vec<_> = paths.iter().map(PathBuf::as_path).collect();
+    admit_non_codex_targets(Some(&tool.key), &targets)
+}
+
+/// Shared by command preflight and the final writer. Keep adjacent cleanup in
+/// this complete write set so admission cannot drift between those boundaries.
+pub(super) fn mcp_write_targets(tool: &RuntimeTool, config_path: &Path) -> Vec<PathBuf> {
+    let mut targets = vec![config_path.to_path_buf()];
+    if tool.key == "kimi" {
+        if let Some(parent) = config_path.parent() {
+            targets.push(parent.join("config.toml"));
+        }
+    }
+    targets
 }
 
 /// Clone the server and apply `cmd /c` wrapping to its `server_config` when
@@ -228,6 +265,18 @@ fn sync_server_to_path(
     server: &McpServer,
     enabled: bool,
 ) -> Result<McpSyncDetail, String> {
+    let admission = admit_mcp_target(tool, config_path)?;
+    sync_server_to_path_admitted(tool, config_path, server, enabled, &admission)
+}
+
+fn sync_server_to_path_admitted(
+    tool: &RuntimeTool,
+    config_path: &PathBuf,
+    server: &McpServer,
+    enabled: bool,
+    admission: &CrossTargetAdmission,
+) -> Result<McpSyncDetail, String> {
+    admission.ensure_current()?;
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
     let format_config = get_format_config(&tool.key);
@@ -256,6 +305,7 @@ fn sync_server_to_path(
     let expanded = expand_stdio_paths(server);
     let server = &expanded;
 
+    admission.ensure_current()?;
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
         "json" | "jsonc" => sync_server_to_json(
@@ -377,6 +427,17 @@ fn remove_server_from_path(
     config_path: &PathBuf,
     server_name: &str,
 ) -> Result<(), String> {
+    let admission = admit_mcp_target(tool, config_path)?;
+    remove_server_from_path_admitted(tool, config_path, server_name, &admission)
+}
+
+fn remove_server_from_path_admitted(
+    tool: &RuntimeTool,
+    config_path: &PathBuf,
+    server_name: &str,
+    admission: &CrossTargetAdmission,
+) -> Result<(), String> {
+    admission.ensure_current()?;
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
 
@@ -384,6 +445,7 @@ fn remove_server_from_path(
         remove_legacy_kimi_toml_mcp_table(config_path);
     }
 
+    admission.ensure_current()?;
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
         "json" | "jsonc" => remove_server_from_json(config_path, server_name, field, &tool.key),
@@ -1996,6 +2058,141 @@ fn ensure_json_object_path<'a>(value: &'a mut Value, field: &str) -> Result<&'a 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    fn managed_mcp_fixture() -> (
+        tempfile::TempDir,
+        std::sync::Arc<crate::management_admission::GuiProfileSession>,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-managed-mcp-")
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        for child in ["profile", "codex", "claude"] {
+            let path = directory.path().join(child);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let owner = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(
+            directory.path().join("profile"),
+        ).unwrap().into_managed().unwrap();
+        let runtime = ai_toolbox_management::owner::RuntimeResourceIdentity::existing(
+            directory.path().join("codex"),
+        ).unwrap();
+        let session = crate::management_admission::GuiProfileSession::managed_with_runtime(
+            owner, runtime,
+        ).unwrap();
+        (directory, session)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_mcp_blocks_codex_and_custom_parent_alias_before_any_target_effect() {
+        let (directory, session) = managed_mcp_fixture();
+        let _scope = crate::management_admission::test_session(&session);
+        let config = directory.path().join("codex/config.toml");
+        let sentinel = "model = \"sentinel\"\n[mcp_servers.before]\ncommand = \"old\"\n";
+        std::fs::write(&config, sentinel).unwrap();
+        let alias = directory.path().join("custom-alias");
+        std::os::unix::fs::symlink(directory.path().join("codex"), &alias).unwrap();
+        let mut tool = RuntimeTool::from(crate::coding::tools::builtin_tool_by_key("codex").unwrap());
+        let server = build_npx_stdio_server();
+        let denied = "This operation is not supported while managed Codex writes are enabled";
+        for path in [config.clone(), alias.join("config.toml"), alias.join("missing/mcp.toml")] {
+            assert_eq!(sync_server_to_path(&tool, &path, &server, true).unwrap_err(), denied);
+            tool.key = "custom_alias".to_owned();
+            tool.is_custom = true;
+            assert_eq!(sync_server_to_path(&tool, &path, &server, true).unwrap_err(), denied);
+            assert_eq!(remove_server_from_path(&tool, &path, "before").unwrap_err(), denied);
+        }
+        assert_eq!(std::fs::read_to_string(config).unwrap(), sentinel);
+        assert!(!directory.path().join("codex/missing").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_mcp_checks_kimi_cleanup_target_before_either_file_is_changed() {
+        let (directory, session) = managed_mcp_fixture();
+        let _scope = crate::management_admission::test_session(&session);
+        let protected = directory.path().join("codex/config.toml");
+        let sentinel = "[mcp_servers.before]\ncommand = \"old\"\n";
+        std::fs::write(&protected, sentinel).unwrap();
+        let cleanup = directory.path().join("claude/config.toml");
+        std::os::unix::fs::symlink(&protected, &cleanup).unwrap();
+        let mcp = directory.path().join("claude/mcp.json");
+        let tool = RuntimeTool::from(crate::coding::tools::builtin_tool_by_key("kimi").unwrap());
+        assert!(sync_server_to_path(&tool, &mcp, &build_npx_stdio_server(), true).is_err());
+        assert!(remove_server_from_path(&tool, &mcp, "before").is_err());
+        assert!(!mcp.exists());
+        assert_eq!(std::fs::read_to_string(protected).unwrap(), sentinel);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_mcp_preserves_disjoint_claude_sync_and_remove_behavior() {
+        let (directory, session) = managed_mcp_fixture();
+        let _scope = crate::management_admission::test_session(&session);
+        let config = directory.path().join("claude/.claude.json");
+        std::fs::write(&config, "{\"unrelated\":true,\"mcpServers\":{}}\n").unwrap();
+        let tool = RuntimeTool::from(crate::coding::tools::builtin_tool_by_key("claude_code").unwrap());
+        let server = build_npx_stdio_server();
+        sync_server_to_path(&tool, &config, &server, true).unwrap();
+        let written: Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        assert_eq!(written["unrelated"], true);
+        assert!(written["mcpServers"].get(&server.name).is_some());
+        remove_server_from_path(&tool, &config, &server.name).unwrap();
+        let written: Value = serde_json::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+        assert_eq!(written["unrelated"], true);
+        assert!(written["mcpServers"].get(&server.name).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mcp_worker_rechecks_target_after_parent_becomes_a_codex_alias() {
+        let (directory, session) = managed_mcp_fixture();
+        let _scope = crate::management_admission::test_session(&session);
+        let path = directory.path().join("claude/.claude.json");
+        let tool = RuntimeTool::from(crate::coding::tools::builtin_tool_by_key("claude_code").unwrap());
+        let admission = admit_mcp_target(&tool, &path).unwrap();
+        std::fs::rename(directory.path().join("claude"), directory.path().join("claude-original"))
+            .unwrap();
+        std::os::unix::fs::symlink(directory.path().join("codex"), directory.path().join("claude"))
+            .unwrap();
+        assert!(sync_server_to_path_admitted(
+            &tool, &path, &build_npx_stdio_server(), true, &admission,
+        ).is_err());
+        assert!(remove_server_from_path_admitted(&tool, &path, "before", &admission).is_err());
+        assert!(!directory.path().join("codex/.claude.json").exists());
+        assert!(!directory.path().join("claude-original/.claude.json").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_blocking_worker_retains_admission_after_the_caller_is_dropped() {
+        let (directory, session) = managed_mcp_fixture();
+        let scope = crate::management_admission::test_session(&session);
+        let profile = directory.path().join("profile");
+        let path = directory.path().join("claude/.claude.json");
+        let tool = RuntimeTool::from(crate::coding::tools::builtin_tool_by_key("claude_code").unwrap());
+        let admission = admit_mcp_target(&tool, &path).unwrap();
+        let server = build_npx_stdio_server();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let worker = tokio::task::spawn_blocking(move || {
+            started_tx.send(()).unwrap();
+            resume_rx.recv().unwrap();
+            sync_server_to_path_admitted(&tool, &path, &server, true, &admission)
+        });
+        started_rx.await.unwrap();
+        drop(scope);
+        drop(session);
+        assert!(ai_toolbox_management::owner::ProfileLeaseStartup::acquire(&profile).is_err());
+        resume_tx.send(()).unwrap();
+        worker.await.unwrap().unwrap();
+        assert!(directory.path().join("claude/.claude.json").exists());
+        assert!(ai_toolbox_management::owner::ProfileLeaseStartup::acquire(&profile).is_ok());
+    }
     use crate::coding::mcp::format_configs::get_format_config;
     use serde_json::json;
 

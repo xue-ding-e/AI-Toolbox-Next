@@ -720,14 +720,27 @@ pub async fn write_codex_memory_file(
     content: String,
     create_new: Option<bool>,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let db = state.db();
     let parsed_mode = CodexMemoriesSourceMode::parse(source_mode.as_deref())?;
     let (source, available_sources) = resolve_codex_memories_context(db, parsed_mode).await?;
     let source = source.ok_or_else(|| unavailable_source_error(parsed_mode, &available_sources))?;
+    let runtime_admission = std::sync::Arc::new(
+        crate::management_admission::admit_legacy_codex_root(source.codex_root.clone()).await?,
+    );
     let memories_root = source.codex_root.join("memories");
     let display_root = memories_root.to_string_lossy().to_string();
 
+    let worker_profile_session = _profile_session.clone();
+    let worker_runtime_admission = runtime_admission.clone();
     run_memories_fs_operation("write Codex memory file", &display_root, move || {
+        // A timed-out caller does not cancel its blocking worker.
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        let _runtime_admission = worker_runtime_admission;
+        _runtime_admission.ensure_current()?;
         write_memory_file_blocking(
             &memories_root,
             &relative_path,
@@ -745,14 +758,27 @@ pub async fn rename_codex_memory_entry(
     relative_path: String,
     new_name: String,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let db = state.db();
     let parsed_mode = CodexMemoriesSourceMode::parse(source_mode.as_deref())?;
     let (source, available_sources) = resolve_codex_memories_context(db, parsed_mode).await?;
     let source = source.ok_or_else(|| unavailable_source_error(parsed_mode, &available_sources))?;
+    let runtime_admission = std::sync::Arc::new(
+        crate::management_admission::admit_legacy_codex_root(source.codex_root.clone()).await?,
+    );
     let memories_root = source.codex_root.join("memories");
     let display_root = memories_root.to_string_lossy().to_string();
 
+    let worker_profile_session = _profile_session.clone();
+    let worker_runtime_admission = runtime_admission.clone();
     run_memories_fs_operation("rename Codex memory entry", &display_root, move || {
+        // A timed-out caller does not cancel its blocking worker.
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        let _runtime_admission = worker_runtime_admission;
+        _runtime_admission.ensure_current()?;
         rename_memory_entry_blocking(&memories_root, &relative_path, &new_name)
     })
     .await
@@ -764,14 +790,27 @@ pub async fn delete_codex_memory_entries(
     source_mode: Option<String>,
     relative_paths: Vec<String>,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let db = state.db();
     let parsed_mode = CodexMemoriesSourceMode::parse(source_mode.as_deref())?;
     let (source, available_sources) = resolve_codex_memories_context(db, parsed_mode).await?;
     let source = source.ok_or_else(|| unavailable_source_error(parsed_mode, &available_sources))?;
+    let runtime_admission = std::sync::Arc::new(
+        crate::management_admission::admit_legacy_codex_root(source.codex_root.clone()).await?,
+    );
     let memories_root = source.codex_root.join("memories");
     let display_root = memories_root.to_string_lossy().to_string();
 
+    let worker_profile_session = _profile_session.clone();
+    let worker_runtime_admission = runtime_admission.clone();
     run_memories_fs_operation("delete Codex memory entries", &display_root, move || {
+        // A timed-out caller does not cancel its blocking worker.
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        let _runtime_admission = worker_runtime_admission;
+        _runtime_admission.ensure_current()?;
         delete_memory_entries_blocking(&memories_root, &relative_paths)
     })
     .await
@@ -782,14 +821,27 @@ pub async fn clear_codex_memories(
     state: tauri::State<'_, SqliteDbState>,
     source_mode: Option<String>,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let db = state.db();
     let parsed_mode = CodexMemoriesSourceMode::parse(source_mode.as_deref())?;
     let (source, available_sources) = resolve_codex_memories_context(db, parsed_mode).await?;
     let source = source.ok_or_else(|| unavailable_source_error(parsed_mode, &available_sources))?;
+    let runtime_admission = std::sync::Arc::new(
+        crate::management_admission::admit_legacy_codex_root(source.codex_root.clone()).await?,
+    );
     let codex_root = source.codex_root;
     let display_root = codex_root.to_string_lossy().to_string();
 
+    let worker_profile_session = _profile_session.clone();
+    let worker_runtime_admission = runtime_admission.clone();
     run_memories_fs_operation("clear Codex memories", &display_root, move || {
+        // A timed-out caller does not cancel its blocking worker.
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        let _runtime_admission = worker_runtime_admission;
+        _runtime_admission.ensure_current()?;
         clear_memories_blocking(&codex_root)
     })
     .await
@@ -800,20 +852,38 @@ pub async fn reveal_codex_memories_folder(
     state: tauri::State<'_, SqliteDbState>,
     source_mode: Option<String>,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let db = state.db();
     let parsed_mode = CodexMemoriesSourceMode::parse(source_mode.as_deref())?;
     let (source, available_sources) = resolve_codex_memories_context(db, parsed_mode).await?;
     let source = source.ok_or_else(|| unavailable_source_error(parsed_mode, &available_sources))?;
+    let runtime_admission = std::sync::Arc::new(
+        crate::management_admission::admit_legacy_codex_root(source.codex_root.clone()).await?,
+    );
     let memories_root = source.codex_root.join("memories");
 
     let display_root = memories_root.to_string_lossy().to_string();
     let ensure_root = memories_root.clone();
+    let worker_profile_session = _profile_session.clone();
+    let worker_runtime_admission = runtime_admission.clone();
     run_memories_fs_operation("open Codex memories folder", &display_root, move || {
+        // A timed-out caller does not cancel its blocking worker.
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        let _runtime_admission = worker_runtime_admission;
+        _runtime_admission.ensure_current()?;
         fs::create_dir_all(&ensure_root)
             .map_err(|error| format!("Failed to create memories directory: {error}"))?;
         Ok(())
     })
     .await?;
+
+    if let Some(session) = &_profile_session {
+        session.ensure_current()?;
+    }
+    runtime_admission.ensure_current()?;
 
     #[cfg(target_os = "windows")]
     {

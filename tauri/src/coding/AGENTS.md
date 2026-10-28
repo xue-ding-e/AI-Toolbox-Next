@@ -42,6 +42,7 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- 恢复补投影的 `reapply_codex` 是独立 Codex writer：managed 模式先拒绝，再取 DB state/查询 applied row/探测 runtime；普通 session guard 跨 await 留存，provider 与 prompt effect 前复核。不能以“目前没有 applied row”把未支持路径报告为 managed 成功；其它工具的恢复补投影不由这个 Codex 专用入口一律禁用。
 - 通用配置「从当前文件提取」以及 DB 为空时的磁盘 common 回退 / save-local base_common，都会直接读 WSL UNC / 网络根目录下的 runtime 文件。`Path::exists` / `fs::read_to_string` 在不可达路径上可能长时间阻塞；这些路径必须用 `coding::file_io` 做 `spawn_blocking` + 超时读，前端 extract 也要有兜底超时（`web/utils/withTimeout.ts`）。不要把 extract 复用成“读完整 settings（含 auth）”的 helper。`tokio::time::timeout` 只保证 await 返回，不会取消已卡住的 OS 读；超时后 blocking 线程仍可能短暂占用，应避免在不可达路径上连续重试打满线程池。
 - 不要把“页面上显示的 `source`”和“WSL/SSH 设置页里的 `moduleStatuses.is_wsl_direct`”混为一谈。前者是路径来源标签，后者是对当前生效运行时路径的统一诊断结果。
 - 不要把 OpenCode/OpenClaw 与 Claude/Codex 按同一种“自定义配置”处理。前两者改的是文件路径，后两者改的是根目录；一旦混写，后续所有派生路径都会偏掉。
@@ -94,5 +95,7 @@ sequenceDiagram
 
 - 改 `runtime_location` 后，至少验证一个本机路径场景和一个 WSL UNC 路径场景。
 - 改事件约定后，至少验证主窗口保存、托盘刷新、WSL 设置页状态三者是否仍一致。
+
+- 链接生产 desktop 库的正向 integration fixture 必须在首次 DB/cache/writer 之前调用真实一次性 `initialize_ordinary_profile`，保留 opaque owner 到该进程结束；不能靠 `cfg(test)` 的兼容分支、重置全局 registry 或缺 owner 放行。不同临时 profile 用有界独立进程验证，父例与子执行数量分开报告。该普通启动只持有已声明物理资源 lease，不证明任意外部 custom writer 已被关闭。
 
 - npm `allow-scripts` 自动修复只接受无重复键、无 section 的简单 root 赋值；引号、插值、数组或其它复杂 INI 语法必须保留原错误，不猜测生效策略。目标 `.npmrc` 同样先通过该检查，避免追加到 section 或覆盖已有策略。

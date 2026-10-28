@@ -640,3 +640,314 @@ fn stalled_owner_is_bounded_without_starting_a_replacement() {
     });
     fixture.finish();
 }
+
+// The context fixtures exercise the actual console and typed transport, not a
+// production service. Their replies cannot establish real DB/file application.
+const CONTEXT_ID: &str = "context_request_1";
+const PROVIDER_ID: &str = "provider_1";
+const REVISION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn context_args(fixture: &Fixture, command: &str, format: &str) -> Vec<OsString> {
+    let mut args = vec!["--format".into(), format.into(), "codex".into(), "context".into(), command.into(),
+        "--profile".into(), fixture.path("p").into_os_string(),
+        "--endpoint-dir".into(), fixture.path("r").into_os_string()];
+    if command != "inspect" { args.extend(["--request-id".into(), CONTEXT_ID.into()]); }
+    if command == "set" {
+        args.extend(["--expected-provider-id".into(), PROVIDER_ID.into(), "--expected-revision".into(), REVISION.into(),
+            "--target".into(), "common".into(), "--model-context-window".into(), "1000000".into(),
+            "--model-auto-compact-token-limit".into(), "900000".into()]);
+    }
+    args
+}
+
+fn context_result(output: &Output, operation: &str, exit: i32, error: Option<&str>) -> Value {
+    assert_eq!(output.status.code(), Some(exit));
+    assert!(output.stderr.is_empty());
+    assert_eq!(std::str::from_utf8(&output.stdout).unwrap().lines().count(), 1);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["operation"], operation);
+    assert_eq!(value["ok"], exit == 0);
+    if operation == "codex.context.inspect" { assert!(value["request_id"].is_null()); }
+    else { assert_eq!(value["request_id"], CONTEXT_ID); }
+    match error {
+        Some(code) => { assert_eq!(value["error"]["code"], code); assert_eq!(value["error"]["retryable"], false); }
+        None => assert!(value["error"].is_null()),
+    }
+    assert_eq!(value["warnings"].as_array().unwrap().len(), 1);
+    value
+}
+
+fn context_outcome(phase: ai_toolbox_management::transport::ContextPhase, replay: bool) -> ai_toolbox_management::transport::ContextOutcome {
+    use ai_toolbox_management::transport::{ContextFailure, ContextOutcome, ContextPhase};
+    ContextOutcome {
+        request_id: CONTEXT_ID.into(), provider_id: PROVIDER_ID.into(), phase, replay,
+        failure: if phase == ContextPhase::ProjectionUncertain { Some(ContextFailure::ProjectionOutcomeUnknown) } else { None },
+        model_context_window: Some(1000000), model_auto_compact_token_limit: Some(900000),
+    }
+}
+
+#[test]
+fn actual_console_context_inspection_is_whitelisted_and_does_not_open_database() {
+    use ai_toolbox_management::transport::{ContextInspection, ContextOverride, ContextResponse, ContextSource};
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let server = Arc::new(OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap());
+        for format in ["json", "text"] {
+            let serving = server.clone();
+            let task = tokio::spawn(async move {
+                let request = serving.accept().await.unwrap();
+                assert_eq!(request.request().operation, OwnerOperation::ContextInspect);
+                request.respond_context(ContextResponse::Inspect(ContextInspection {
+                    provider_id: PROVIDER_ID.into(), revision: REVISION.into(),
+                    model_context_window: ContextOverride { effective: Some(1000000), source: ContextSource::Common },
+                    model_auto_compact_token_limit: ContextOverride { effective: Some(900000), source: ContextSource::Provider },
+                })).await.unwrap();
+            });
+            let output = fixture.run(&context_args(&fixture, "inspect", format)).await;
+            tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+            if format == "json" {
+                let value = context_result(&output, "codex.context.inspect", 0, None);
+                assert_eq!(value["data"], json!({"scope":"merged_master_overrides", "provider_id":PROVIDER_ID, "revision":REVISION,
+                    "model_context_window":{"effective":1000000,"source":"common"},
+                    "model_auto_compact_token_limit":{"effective":900000,"source":"provider"}}));
+            } else {
+                assert_eq!(output.status.code(), Some(0));
+                assert!(output.stderr.is_empty());
+                let text = std::str::from_utf8(&output.stdout).unwrap();
+                assert!(text.contains("not model defaults, live verification, or active client state"));
+                assert!(text.contains("1000000") && text.contains("provider"));
+            }
+            watch.assert_untouched();
+        }
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_request_status_uses_closed_requests_and_verified_success() {
+    use ai_toolbox_management::transport::{ContextPhase, ContextResponse};
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let server = OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap();
+        let task = tokio::spawn(async move {
+            let request = server.accept().await.unwrap();
+            assert!(matches!(&request.request().operation,
+                OwnerOperation::ContextRequestStatus(input) if input.request_id == CONTEXT_ID));
+            request.respond_context(ContextResponse::Outcome(context_outcome(ContextPhase::Verified, true))).await.unwrap();
+        });
+        let output = fixture.run(&context_args(&fixture, "request-status", "json")).await;
+        tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+        let value = context_result(&output, "codex.context.request_status", 0, None);
+        assert_eq!(value["data"]["phase"], "verified");
+        assert_eq!(value["data"]["replay"], true);
+        assert_eq!(value["data"]["verification_scope"], "config_file_at_operation_time");
+        watch.assert_untouched();
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_partial_phases_are_nonzero_and_never_retried() {
+    use ai_toolbox_management::transport::{ContextPhase, ContextResponse};
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let server = Arc::new(OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap());
+        for command in ["request-status"] {
+            for (phase, name) in [(ContextPhase::SavedOnly,"saved_only"), (ContextPhase::ProjectionStarted,"projection_started"),
+                (ContextPhase::ProjectedUnverified,"projected_unverified"), (ContextPhase::ProjectionUncertain,"projection_uncertain")] {
+                let serving = server.clone();
+                let task = tokio::spawn(async move {
+                    let request = serving.accept().await.unwrap();
+                    request.respond_context(ContextResponse::Outcome(context_outcome(phase, false))).await.unwrap();
+                    assert!(tokio::time::timeout(Duration::from_millis(150), serving.accept()).await.is_err(), "console made an unrequested second connection");
+                });
+                let output = fixture.run(&context_args(&fixture, command, "json")).await;
+                tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+                let operation = "codex.context.request_status";
+                let value = context_result(&output, operation, 9, Some("CONTEXT_PARTIAL"));
+                assert_eq!(value["data"]["phase"], name);
+                assert_eq!(value["data"]["request_id"], CONTEXT_ID);
+                assert_eq!(value["data"]["model_context_window"], 1000000);
+                watch.assert_untouched();
+            }
+        }
+        let serving = server.clone();
+        let task = tokio::spawn(async move {
+            serving.accept().await.unwrap().respond_context(ContextResponse::Outcome(context_outcome(ContextPhase::SavedOnly, false))).await.unwrap();
+        });
+        let output = fixture.run(&context_args(&fixture, "request-status", "text")).await;
+        tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+        assert_eq!(output.status.code(), Some(9));
+        assert!(output.stdout.is_empty());
+        let text = std::str::from_utf8(&output.stderr).unwrap();
+        assert!(text.contains("CONTEXT_PARTIAL") && text.contains("saved_only") && text.contains(CONTEXT_ID));
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_service_rejections_retain_only_typed_error_and_partial_metadata() {
+    use ai_toolbox_management::transport::{ContextError, ContextErrorCode, ContextPhase, ContextResponse};
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let server = Arc::new(OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap());
+        for (code, name, partial) in [
+            (ContextErrorCode::Unsupported, "unsupported", false),
+            (ContextErrorCode::RevisionConflict, "revision_conflict", false),
+            (ContextErrorCode::ProviderChanged, "provider_changed", false),
+            (ContextErrorCode::JournalConflict, "journal_conflict", false),
+            (ContextErrorCode::RequestNotFound, "request_not_found", false),
+            (ContextErrorCode::PhasePersistence, "phase_persistence", true),
+            (ContextErrorCode::PersistenceUncertain, "persistence_uncertain", true),
+        ] {
+            let serving = server.clone();
+            let task = tokio::spawn(async move {
+                serving.accept().await.unwrap().respond_context(ContextResponse::Error(ContextError {
+                    code, partial: if partial { Some(context_outcome(ContextPhase::SavedOnly, false)) } else { None },
+                })).await.unwrap();
+                assert!(tokio::time::timeout(Duration::from_millis(150), serving.accept()).await.is_err());
+            });
+            let output = fixture.run(&context_args(&fixture, "request-status", "json")).await;
+            tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+            let unsupported = code == ContextErrorCode::Unsupported;
+            let value = context_result(&output, "codex.context.request_status", if unsupported { 3 } else { 8 }, Some(if unsupported { "NOT_SUPPORTED" } else { "CONTEXT_REJECTED" }));
+            assert_eq!(value["data"]["service_error"], name);
+            if partial { assert_eq!(value["data"]["partial"]["phase"], "saved_only"); }
+            else { assert!(value["data"]["partial"].is_null()); }
+            if unsupported { assert!(value["error"]["message"].as_str().unwrap().contains("not owner write readiness")); }
+            watch.assert_untouched();
+        }
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_read_disconnect_is_not_a_write_outcome() {
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let server = OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap();
+        let task = tokio::spawn(async move {
+            drop(server.accept().await.unwrap());
+            assert!(tokio::time::timeout(Duration::from_millis(150), server.accept()).await.is_err());
+        });
+        let output = fixture.run(&context_args(&fixture, "request-status", "json")).await;
+        tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+        let value = context_result(&output, "codex.context.request_status", 70, Some("OWNER_CLIENT_FAILED"));
+        assert!(value["data"].is_null());
+        watch.assert_untouched();
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_context_presend_failures_do_not_bootstrap_or_claim_unknown_effects() {
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let args = context_args(&fixture, "request-status", "json");
+        context_result(&fixture.run(&args).await, "codex.context.request_status", 5, Some("OWNER_UNAVAILABLE"));
+        assert!(!fixture.path(&format!("p/{PROFILE_LEASE_FILE}")).exists());
+        let _owner = fixture.owner();
+        let listener = UnixListener::bind(fixture.socket()).unwrap();
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let hello = read_frame(&mut stream).await;
+            let epoch = [0u8; 16];
+            write_frame(&mut stream, &json!({"protocol_major":PROTOCOL_MAJOR + 1, "request_id":hello["request_id"],
+                "profile":hello["profile"], "owner_epoch":epoch})).await;
+            let mut byte = [0u8; 1];
+            assert_eq!(tokio::time::timeout(CHILD_LIMIT, stream.read(&mut byte)).await.unwrap().unwrap(), 0, "set body was written after rejected handshake");
+        });
+        context_result(&fixture.run(&args).await, "codex.context.request_status", 6, Some("OWNER_PROTOCOL_REJECTED"));
+        tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+        fs::remove_file(fixture.socket()).unwrap();
+        watch.assert_untouched();
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_read_context_malformed_response_is_redacted() {
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let _owner = fixture.owner();
+        for command in ["request-status", "inspect"] {
+            let listener = UnixListener::bind(fixture.socket()).unwrap();
+            let task = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let hello = read_frame(&mut stream).await;
+                let epoch = [0u8; 16];
+                write_frame(&mut stream, &json!({"protocol_major":PROTOCOL_MAJOR, "request_id":hello["request_id"],
+                    "profile":hello["profile"], "owner_epoch":epoch})).await;
+                let request = read_frame(&mut stream).await;
+                write_frame(&mut stream, &json!({"protocol_major":PROTOCOL_MAJOR, "request_id":request["request_id"],
+                    "profile":request["profile"], "owner_epoch":epoch,
+                    "response":{"error":{"code":"storage","partial":null,"raw":"secret-never-echo-response"}}})).await;
+            });
+            let output = fixture.run(&context_args(&fixture, command, "json")).await;
+            tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
+            let operation = match command {
+                "request-status" => "codex.context.request_status", _ => "codex.context.inspect",
+            };
+            context_result(&output, operation, 6, Some("OWNER_PROTOCOL_REJECTED"));
+            let text = std::str::from_utf8(&output.stdout).unwrap();
+            assert!(!text.contains("secret-never-echo-response") && !text.contains("\"raw\""));
+            fs::remove_file(fixture.socket()).unwrap();
+            watch.assert_untouched();
+        }
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_context_invalid_arguments_never_contact_owner_or_open_database() {
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let server = OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap();
+        for (option, invalid) in [("--request-id", "private/id"), ("--expected-provider-id", "private/provider"),
+            ("--expected-revision", "invalid-secret-revision"), ("--model-context-window", "0"),
+            ("--model-auto-compact-token-limit", "1000001")] {
+            let mut args = context_args(&fixture, "set", "json");
+            let index = args.iter().position(|argument| argument == option).unwrap();
+            args[index + 1] = invalid.into();
+            let output = fixture.run(&args).await;
+            json_result(&output, 2, Some("INVALID_INPUT"));
+            assert!(tokio::time::timeout(Duration::from_millis(150), server.accept()).await.is_err(), "invalid input connected to the owner");
+            assert!(!std::str::from_utf8(&output.stdout).unwrap().contains(invalid));
+            watch.assert_untouched();
+        }
+    });
+    fixture.finish();
+}
+
+#[test]
+fn actual_console_reserved_set_never_contacts_even_a_live_owner() {
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        let server = OwnerServer::bind(fixture.owner(), RuntimeDirectory::existing(fixture.path("r")).unwrap()).unwrap();
+        for format in ["json", "text"] {
+            let output = fixture.run(&context_args(&fixture, "set", format)).await;
+            assert_eq!(output.status.code(), Some(3));
+            if format == "json" {
+                let value = context_result(&output, "codex.context.set", 3, Some("NOT_SUPPORTED"));
+                assert!(value["data"].is_null());
+                assert!(value["error"]["message"].as_str().unwrap().contains("no owner was contacted"));
+            } else {
+                assert!(output.stdout.is_empty());
+                assert!(std::str::from_utf8(&output.stderr).unwrap().contains("NOT_SUPPORTED"));
+            }
+            assert!(tokio::time::timeout(Duration::from_millis(150), server.accept()).await.is_err(), "reserved Set contacted the owner");
+            watch.assert_untouched();
+        }
+    });
+    fixture.finish();
+}

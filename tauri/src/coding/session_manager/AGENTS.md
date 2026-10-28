@@ -48,6 +48,8 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- Managed Codex admission must reject Codex delete/rename/import and scratch cleanup before mutation without disabling other tools or read-only preview/scan. Cleanup uses an auxiliary summary, so admission failure belongs in `failures` with a fixed non-path target, never a silent return or a converted successful session delete. `clean_residue` needs its own guard because empty date-directory removal occurs after the shared cleanup helper. The async command must also reject before spawning, retain the session in the actual worker, and revalidate there; leaf guards alone do not certify the whole call graph.
+
 - 不要假设所有工具的会话根目录都是同一种布局。Codex 是 `sessions/`，Claude Code 是 `projects/`，OpenClaw 是配置目录旁的 `agents/`，OpenCode 还涉及 data/state/sqlite。
 - 不要把"一个会话 = 一个文件"当成前提。`scan_sessions`/`scan_recent_sessions` 逐文件产出 `SessionMeta`，所以只要某个 runtime 一个 id 落多个文件，不收敛就会直接变成多行；判断重复时看 `session_id`，不要看文件路径或时间（时间本来就各不相同，那正是各产物的活跃时间）。
 - `HistoryPosition.thread_id` 这个字段名是误导的：它装的是**前缀文件的 rollout id**，不是 thread id（Codex 自己的注释就说 "Treat its value as a `rollout_id`"）。对普通 rollout，thread id 与 rollout id 相同；`thread/revert` 之后的文件名形如 `rollout-<ts>-<threadId>_<rolloutId>.jsonl`——用**下划线**连接两个 id，不是第二个连字符。解析 rollout 文件名必须按这个语法，别用「取最后一个 uuid」之类的近似规则。

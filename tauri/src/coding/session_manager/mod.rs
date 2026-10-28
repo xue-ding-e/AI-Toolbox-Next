@@ -24,7 +24,7 @@ mod zcode;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -66,6 +66,8 @@ const SNAPSHOT_FORMAT_OMP: &str = "omp-session-jsonl";
 const SNAPSHOT_FORMAT_GROK: &str = "grok-session-directory";
 const GROK_NATIVE_EXPORT_SCHEMA: &str = "ai-toolbox.grok-native-snapshot.v1";
 const SNAPSHOT_FORMAT_KIMI: &str = "kimi-session-directory";
+
+type ProfileSession = Option<Arc<crate::management_admission::GuiProfileSession>>;
 
 #[derive(Debug, Clone)]
 struct SessionCacheEntry {
@@ -818,10 +820,22 @@ pub async fn delete_tool_session(
     cleanup: Option<CodexCleanupOptions>,
 ) -> Result<DeleteToolSessionResult, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
+    let _profile_session = if matches!(session_tool, SessionTool::Codex) {
+        crate::management_admission::reject_managed_operation()?
+    } else {
+        None
+    };
     let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
+    let worker_profile_session = _profile_session.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        delete_session_blocking(contexts, source_path, cleanup.unwrap_or_default())
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        delete_session_blocking_with_session(
+            contexts, source_path, cleanup.unwrap_or_default(), _profile_session,
+        )
     })
     .await
     .map_err(|error| format!("Failed to delete session: {error}"))?
@@ -835,13 +849,28 @@ pub async fn delete_tool_sessions(
     cleanup: Option<CodexCleanupOptions>,
 ) -> Result<DeleteToolSessionsResult, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
+    let _profile_session = if matches!(session_tool, SessionTool::Codex) {
+        crate::management_admission::reject_managed_operation()?
+    } else {
+        None
+    };
     let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
+    let worker_profile_session = _profile_session.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        delete_sessions_blocking(contexts, source_paths, cleanup.unwrap_or_default())
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        Ok::<_, String>(delete_sessions_blocking_with_session(
+            contexts,
+            source_paths,
+            cleanup.unwrap_or_default(),
+            _profile_session,
+        ))
     })
     .await
-    .map_err(|error| format!("Failed to delete sessions: {error}"))
+    .map_err(|error| format!("Failed to delete sessions: {error}"))?
 }
 
 /// Bound on a Codex residue scan or cleanup.
@@ -916,20 +945,27 @@ pub async fn clean_codex_scratch_residue(
     trust_keys: Vec<String>,
     date_dirs: Vec<String>,
 ) -> Result<CodexCleanupSummary, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let parsed_mode = SessionSourceMode::parse(source_mode)?;
     let contexts = resolve_session_contexts(&state.db(), SessionTool::Codex).await?;
 
+    let worker_profile_session = _profile_session.clone();
     crate::coding::file_io::run_blocking_fs_operation(
         CODEX_RESIDUE_IO_TIMEOUT,
         "clean Codex scratch residue",
         "the selected Codex source",
         move || {
-            Ok(codex_scratch::clean_residue(
+            let _profile_session = worker_profile_session;
+            if let Some(session) = &_profile_session {
+                session.ensure_current()?;
+            }
+            Ok(codex_scratch::clean_residue_with_session(
                 &contexts,
                 parsed_mode,
                 &workspace_paths,
                 &trust_keys,
                 &date_dirs,
+                _profile_session,
             ))
         },
     )
@@ -993,11 +1029,21 @@ pub async fn import_tool_session(
     import_path: String,
 ) -> Result<(), String> {
     let session_tool = SessionTool::parse(tool.trim())?;
+    let _profile_session = if matches!(session_tool, SessionTool::Codex) {
+        crate::management_admission::reject_managed_operation()?
+    } else {
+        None
+    };
     let context = resolve_context(&state.db(), session_tool).await?;
     let normalized_tool = session_tool.as_str().to_string();
 
+    let worker_profile_session = _profile_session.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        import_session_blocking(context, normalized_tool, import_path)
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        import_session_blocking_with_session(context, normalized_tool, import_path, _profile_session)
     })
     .await
     .map_err(|error| format!("Failed to import session: {error}"))?
@@ -1011,10 +1057,20 @@ pub async fn rename_tool_session(
     title: String,
 ) -> Result<(), String> {
     let session_tool = SessionTool::parse(tool.trim())?;
+    let _profile_session = if matches!(session_tool, SessionTool::Codex) {
+        crate::management_admission::reject_managed_operation()?
+    } else {
+        None
+    };
     let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
+    let worker_profile_session = _profile_session.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        rename_session_blocking(contexts, tool, source_path, title)
+        let _profile_session = worker_profile_session;
+        if let Some(session) = &_profile_session {
+            session.ensure_current()?;
+        }
+        rename_session_blocking_with_session(contexts, tool, source_path, title, _profile_session)
     })
     .await
     .map_err(|error| format!("Failed to rename session: {error}"))?
@@ -1635,25 +1691,65 @@ fn list_session_paths_blocking(
     Ok(build_session_paths(&sessions, limit))
 }
 
+#[cfg(test)]
 fn delete_session_blocking(
     contexts: SessionContextSet,
     source_path: String,
     cleanup: CodexCleanupOptions,
 ) -> Result<DeleteToolSessionResult, String> {
+    delete_session_blocking_with_session(contexts, source_path, cleanup, None)
+}
+
+/// Only the context selected by the existing resolver may acquire a writer
+/// lease. In particular, an unrelated or absent WSL home is not a write target.
+fn admit_codex_session_context(
+    context: &ToolSessionContext,
+    profile_session: &ProfileSession,
+) -> Result<Option<crate::management_admission::LegacyRuntimeAdmission>, String> {
+    let ToolSessionContext::Codex { codex_home, .. } = context else {
+        return Ok(None);
+    };
+    let Some(codex_home) = codex_home else {
+        // Existing pure helpers predate explicit Codex homes; real admitted
+        // fixtures and every production caller must supply the trusted home.
+        #[cfg(test)]
+        if profile_session.is_none() {
+            return Ok(None);
+        }
+        return Err("The Codex runtime root is unavailable".to_string());
+    };
+    crate::management_admission::admit_legacy_runtime_with_session(
+        profile_session.clone(), codex_home,
+    ).map(Some)
+}
+
+fn delete_session_blocking_with_session(
+    contexts: SessionContextSet,
+    source_path: String,
+    cleanup: CodexCleanupOptions,
+    profile_session: ProfileSession,
+) -> Result<DeleteToolSessionResult, String> {
     match find_session_with_context(&contexts, &source_path, true) {
         Ok((entry, session)) => {
+            let _runtime_admission = admit_codex_session_context(&entry.context, &profile_session)?;
             let cleanup_requests = if cleanup.is_empty() {
                 Vec::new()
             } else {
-                codex_scratch::delete_requests(&contexts, std::slice::from_ref(&source_path))
+                codex_scratch::delete_requests(
+                    &session_context_set(vec![entry.clone()]),
+                    std::slice::from_ref(&source_path),
+                )
             };
 
+            if let Some(admission) = &_runtime_admission {
+                admission.ensure_current()?;
+            }
             delete_session_from_meta(&entry.context, &session)?;
             invalidate_cache(&entry.context);
 
             Ok(DeleteToolSessionResult {
                 source_path: session.source_path,
-                cleanup: run_codex_cleanup(cleanup_requests, cleanup),
+                cleanup: run_codex_cleanup(cleanup_requests, cleanup, profile_session),
             })
         }
         Err(error) => {
@@ -1682,13 +1778,14 @@ fn delete_session_blocking(
 fn run_codex_cleanup(
     requests: Vec<codex_scratch::CodexCleanupRequest>,
     options: CodexCleanupOptions,
+    profile_session: ProfileSession,
 ) -> Option<CodexCleanupSummary> {
-    if options.is_empty() {
+    if options.is_empty() || requests.is_empty() {
         return None;
     }
 
     let mut summary = CodexCleanupSummary::default();
-    codex_scratch::run_cleanup(&requests, options, &mut summary);
+    codex_scratch::run_cleanup_with_session(&requests, options, &mut summary, profile_session);
     (!summary.is_empty()).then_some(summary)
 }
 
@@ -1777,10 +1874,20 @@ fn delete_session_from_meta(
     Ok(())
 }
 
+#[cfg(test)]
 fn delete_sessions_blocking(
     contexts: SessionContextSet,
     source_paths: Vec<String>,
     cleanup: CodexCleanupOptions,
+) -> DeleteToolSessionsResult {
+    delete_sessions_blocking_with_session(contexts, source_paths, cleanup, None)
+}
+
+fn delete_sessions_blocking_with_session(
+    contexts: SessionContextSet,
+    source_paths: Vec<String>,
+    cleanup: CodexCleanupOptions,
+    profile_session: ProfileSession,
 ) -> DeleteToolSessionsResult {
     let mut deleted_count = 0usize;
     let mut failed_items = Vec::new();
@@ -1810,7 +1917,17 @@ fn delete_sessions_blocking(
             continue;
         }
 
-        resolved.push((trimmed_source_path.to_string(), entry, session));
+        let admission = match admit_codex_session_context(&entry.context, &profile_session) {
+            Ok(admission) => admission,
+            Err(error) => {
+                failed_items.push(DeleteSessionFailure {
+                    source_path: trimmed_source_path.to_string(),
+                    error,
+                });
+                continue;
+            }
+        };
+        resolved.push((trimmed_source_path.to_string(), entry, session, admission));
     }
 
     // A cleanup target is read from the very rollout that is about to be removed,
@@ -1822,13 +1939,22 @@ fn delete_sessions_blocking(
     } else {
         let source_paths: Vec<String> = resolved
             .iter()
-            .map(|(_, _, session)| session.source_path.clone())
+            .map(|(_, _, session, _)| session.source_path.clone())
             .collect();
-        codex_scratch::delete_requests(&contexts, &source_paths)
+        let mut seen_contexts = HashSet::new();
+        let selected_contexts = session_context_set(
+            resolved.iter().filter_map(|(_, entry, _, _)| {
+                let key = (entry.context.cache_key(), entry.source.as_str(), entry.distro.clone());
+                seen_contexts.insert(key).then(|| entry.clone())
+            }).collect(),
+        );
+        codex_scratch::delete_requests(&selected_contexts, &source_paths)
     };
 
-    for (source_path, entry, session) in &resolved {
-        match delete_session_from_meta(&entry.context, session) {
+    for (source_path, entry, session, admission) in &resolved {
+        let result = admission.as_ref().map_or(Ok(()), |admission| admission.ensure_current())
+            .and_then(|()| delete_session_from_meta(&entry.context, session));
+        match result {
             Ok(()) => {
                 deleted_count += 1;
                 invalidate_cache(&entry.context);
@@ -1845,7 +1971,7 @@ fn delete_sessions_blocking(
     DeleteToolSessionsResult {
         deleted_count,
         failed_items,
-        cleanup: run_codex_cleanup(cleanup_requests, cleanup),
+        cleanup: run_codex_cleanup(cleanup_requests, cleanup, profile_session),
     }
 }
 
@@ -2186,10 +2312,20 @@ fn sanitize_export_file_component(value: &str) -> String {
     sanitized.trim_matches('-').to_string()
 }
 
+#[cfg(test)]
 fn import_session_blocking(
     context: ToolSessionContext,
     tool: String,
     import_path: String,
+) -> Result<(), String> {
+    import_session_blocking_with_session(context, tool, import_path, None)
+}
+
+fn import_session_blocking_with_session(
+    context: ToolSessionContext,
+    tool: String,
+    import_path: String,
+    profile_session: ProfileSession,
 ) -> Result<(), String> {
     if tool == "grok" && try_import_grok_native_snapshot(&context, &import_path)? {
         invalidate_cache(&context);
@@ -2208,6 +2344,7 @@ fn import_session_blocking(
         ));
     }
 
+    let _runtime_admission = admit_codex_session_context(&context, &profile_session)?;
     match &context {
         ToolSessionContext::Codex { sessions_root, .. } => {
             ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_CODEX)?;
@@ -2351,14 +2488,16 @@ fn try_import_grok_native_snapshot(
     Ok(true)
 }
 
-fn rename_session_blocking(
+fn rename_session_blocking_with_session(
     contexts: SessionContextSet,
     _tool: String,
     source_path: String,
     title: String,
+    profile_session: ProfileSession,
 ) -> Result<(), String> {
     let (entry, session) = find_session_with_context(&contexts, &source_path, true)?;
     let context = entry.context;
+    let _runtime_admission = admit_codex_session_context(&context, &profile_session)?;
     match &context {
         ToolSessionContext::Codex { .. } => {
             codex::rename_session(&session.source_path, &title)?;
@@ -6549,6 +6688,149 @@ mod tests {
     fn read_json_file(path: &Path) -> Value {
         let data = fs::read_to_string(path).expect("failed to read json file");
         serde_json::from_str(&data).expect("failed to parse json file")
+    }
+
+    #[cfg(target_os = "linux")]
+    fn ordinary_session_fixture(path: &Path) -> Arc<crate::management_admission::GuiProfileSession> {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::create_dir(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::management_admission::GuiProfileSession::ordinary(
+            ai_toolbox_management::owner::ProfileLeaseStartup::acquire(path)
+                .unwrap()
+                .into_ordinary(),
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ordinary_session_worker_rejects_contended_delete_rename_batch_and_import() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-session-contention-")
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let home = directory.path().join("runtime");
+        fs::create_dir(&home).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        let source = home.join("sessions/2026/09/25/rollout-session.jsonl");
+        write_text_file(&source, &codex_rollout_record("existing-session", directory.path()));
+        let index = home.join("session_index.jsonl");
+        write_text_file(&index, "{\"id\":\"existing-session\",\"thread_name\":\"original\"}\n");
+        let context = ToolSessionContext::Codex {
+            sessions_root: home.join("sessions"),
+            codex_home: Some(home.clone()),
+        };
+        // Export a distinct synthetic session so import reaches admission,
+        // rather than returning early for an existing session id.
+        let export_home = directory.path().join("export-source");
+        let export_source = export_home.join("sessions/2026/09/25/rollout-import.jsonl");
+        write_text_file(&export_source, &codex_rollout_record("new-session", directory.path()));
+        let export_file = directory.path().join("session-export.json");
+        export_session_blocking(
+            single_context_set(ToolSessionContext::Codex {
+                sessions_root: export_home.join("sessions"),
+                codex_home: Some(export_home),
+            }),
+            "codex".to_string(),
+            export_source.to_string_lossy().to_string(),
+            export_file.to_string_lossy().to_string(),
+            "ai_toolbox".to_string(),
+        ).unwrap();
+        let original_rollout = fs::read(&source).unwrap();
+        let original_index = fs::read(&index).unwrap();
+        let holder = ordinary_session_fixture(&directory.path().join("holder-profile"));
+        let writer = ordinary_session_fixture(&directory.path().join("writer-profile"));
+        let _held = crate::management_admission::admit_legacy_runtime_with_session(
+            Some(holder.clone()), &home,
+        ).unwrap();
+        let worker_source = source.to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            // No test_session TLS is installed on this real worker thread.
+            let expected = "The Codex runtime cannot be coordinated; no business write was started";
+            let mut missing_home = context.clone();
+            if let ToolSessionContext::Codex { codex_home, .. } = &mut missing_home {
+                *codex_home = None;
+            }
+            assert_eq!(delete_session_blocking_with_session(
+                single_context_set(missing_home), worker_source.clone(),
+                CodexCleanupOptions::default(), Some(writer.clone()),
+            ).unwrap_err(), "The Codex runtime root is unavailable");
+            assert_eq!(rename_session_blocking_with_session(
+                single_context_set(context.clone()), "codex".to_string(),
+                worker_source.clone(), "changed".to_string(), Some(writer.clone()),
+            ).unwrap_err(), expected);
+            assert_eq!(delete_session_blocking_with_session(
+                single_context_set(context.clone()), worker_source.clone(),
+                CodexCleanupOptions::default(), Some(writer.clone()),
+            ).unwrap_err(), expected);
+            let batch = delete_sessions_blocking_with_session(
+                single_context_set(context.clone()), vec![worker_source],
+                CodexCleanupOptions::default(), Some(writer.clone()),
+            );
+            assert_eq!(batch.deleted_count, 0);
+            assert_eq!(batch.failed_items.len(), 1);
+            assert_eq!(batch.failed_items[0].error, expected);
+            assert_eq!(import_session_blocking_with_session(
+                context, "codex".to_string(), export_file.to_string_lossy().to_string(), Some(writer),
+            ).unwrap_err(), expected);
+        }).join().unwrap();
+        assert_eq!(fs::read(source).unwrap(), original_rollout);
+        assert_eq!(fs::read(index).unwrap(), original_index);
+        assert_eq!(codex::scan_sessions(&home.join("sessions")).len(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ordinary_session_worker_does_not_lease_unselected_or_missing_wsl_contexts() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-session-selection-")
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let selected = directory.path().join("selected");
+        let unrelated = directory.path().join("unrelated");
+        for home in [&selected, &unrelated] {
+            fs::create_dir(home).unwrap();
+            fs::set_permissions(home, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let missing = directory.path().join("missing-wsl-parent/home");
+        let source = selected.join("sessions/2026/09/25/rollout-selected.jsonl");
+        write_text_file(&source, &codex_rollout_record("selected-session", directory.path()));
+        let holder = ordinary_session_fixture(&directory.path().join("holder-profile"));
+        let writer = ordinary_session_fixture(&directory.path().join("writer-profile"));
+        let _held = crate::management_admission::admit_legacy_runtime_with_session(
+            Some(holder.clone()), &unrelated,
+        ).unwrap();
+        let entries = [&missing, &unrelated, &selected].into_iter().map(|home| {
+            SessionContextEntry {
+                context: ToolSessionContext::Codex {
+                    sessions_root: home.join("sessions"),
+                    codex_home: Some(home.to_path_buf()),
+                },
+                source: if home == &selected { SessionRuntimeSource::Local } else { SessionRuntimeSource::Wsl },
+                distro: (home != &selected).then(|| "synthetic-only".to_string()),
+            }
+        }).collect();
+        let contexts = session_context_set(entries);
+        let worker_source = source.to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            rename_session_blocking_with_session(
+                contexts.clone(), "codex".to_string(), worker_source.clone(),
+                "selected title".to_string(), Some(writer.clone()),
+            ).unwrap();
+            delete_session_blocking_with_session(
+                contexts, worker_source, CodexCleanupOptions::default(), Some(writer),
+            ).unwrap();
+        }).join().unwrap();
+        assert!(!source.exists());
+        assert!(!missing.parent().unwrap().exists());
+        assert!(!unrelated.join("sessions").exists());
     }
 
     #[test]

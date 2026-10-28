@@ -49,7 +49,196 @@ use super::types::{
 };
 use crate::coding::runtime_location;
 use crate::http_client;
+use crate::management_admission::{
+    admit_non_codex_targets, current_profile_session, reject_managed_operation,
+    CrossTargetAdmission, GuiProfileSession,
+};
 use crate::SqliteDbState;
+
+/// Keep both the profile and the complete accepted target set alive across
+/// desired-state writes. Low-level filesystem admission alone is too late:
+/// refreshing a hash, legacy group migration, or inventory replacement can
+/// already have mutated the central state before an unsupported target fails.
+pub(super) struct SkillsWriteAdmission {
+    session: Option<std::sync::Arc<GuiProfileSession>>,
+    targets: Vec<CrossTargetAdmission>,
+}
+
+impl SkillsWriteAdmission {
+    fn begin() -> Result<Self, String> {
+        Ok(Self { session: current_profile_session()?, targets: Vec::new() })
+    }
+
+    pub(super) fn unsupported() -> Result<Self, String> {
+        Ok(Self { session: reject_managed_operation()?, targets: Vec::new() })
+    }
+
+    fn is_managed(&self) -> bool {
+        self.session.as_ref().is_some_and(|session| session.is_managed())
+    }
+
+    pub(super) fn ensure_current(&self) -> Result<(), String> {
+        if let Some(session) = &self.session { session.ensure_current()?; }
+        for target in &self.targets { target.ensure_current()?; }
+        Ok(())
+    }
+
+    fn admit_paths(&mut self, paths: &[PathBuf]) -> Result<(), String> {
+        self.ensure_current()?;
+        if self.is_managed() && !paths.is_empty() {
+            let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+            self.targets.push(admit_non_codex_targets(None, &paths)?);
+        }
+        Ok(())
+    }
+
+    async fn admit_skill(
+        &mut self,
+        state: &SqliteDbState,
+        skill: &Skill,
+        additional_tools: &[String],
+        sync_tools: &[String],
+        custom_tools: &[CustomTool],
+    ) -> Result<(), String> {
+        self.ensure_current()?;
+        // Ordinary sessions retain their established error/skip behavior.
+        if !self.is_managed() { return Ok(()); }
+        let mut tools = skill.enabled_tools.clone();
+        tools.extend(skill.disabled_previous_tools.iter().cloned());
+        tools.extend(additional_tools.iter().cloned());
+        let mut paths = Vec::new();
+        if let Some(details) = &skill.sync_details {
+            let Some(details) = details.as_object() else {
+                reject_managed_operation()?;
+                return Err("Unable to determine the complete Skills target set".to_string());
+            };
+            for (tool, detail) in details {
+                tools.push(tool.clone());
+                let Some(path) = detail.get("target_path").and_then(|path| path.as_str()) else {
+                    reject_managed_operation()?;
+                    return Err("Unable to resolve a previous Skills target".to_string());
+                };
+                paths.push(PathBuf::from(path));
+            }
+        }
+        if tools.iter().any(|tool| tool.trim().is_empty() || tool != tool.trim()) {
+            // Do not normalize an invalid assignment into a different planned
+            // key while the eventual writer still consumes the original key.
+            reject_managed_operation()?;
+        }
+        if tools.iter().any(|tool| tool.trim() == "codex") {
+            // Do not resolve the Codex runtime or inspect installation state.
+            reject_managed_operation()?;
+        }
+        for tool in normalize_tool_ids(&tools) {
+            // Historical targets remain part of the write set even if the
+            // corresponding adapter was removed. Unknown assignments fail closed.
+            let adapter = runtime_adapter_by_key(&tool, custom_tools)
+                .ok_or_else(|| format!("Cannot resolve Skills target for tool: {}", tool))?;
+            // The current target proof does not support leaf symlinks. Reject
+            // hybrid writes before any hash/DB effect, rather than creating a
+            // link and discovering that the retained guard cannot revalidate it.
+            if sync_tools.iter().any(|planned| planned == &tool)
+                && !adapter.force_copy
+                && !crate::coding::tools::builtin_tool_forces_skill_copy(&tool)
+            {
+                reject_managed_operation()?;
+            }
+            let root = resolve_runtime_skills_path_with_state_async(state, &adapter)
+                .await.map_err(format_error)?;
+            paths.push(root.join(&skill.name));
+        }
+        self.admit_paths(&paths)
+    }
+}
+
+async fn preflight_skill_write(
+    state: &SqliteDbState,
+    skill: &Skill,
+    additional_tools: &[String],
+    sync_tools: &[String],
+) -> Result<SkillsWriteAdmission, String> {
+    let mut admission = SkillsWriteAdmission::begin()?;
+    if admission.is_managed() {
+        let custom_tools = skill_store::get_custom_tools(state).await?;
+        admission.admit_skill(state, skill, additional_tools, sync_tools, &custom_tools).await?;
+    }
+    admission.ensure_current()?;
+    Ok(admission)
+}
+
+/// Read without get_managed_skills: that convenience reader performs legacy
+/// group migration and dangling-group cleanup, both of which write skill rows.
+fn read_skills_before_migration(state: &SqliteDbState) -> Result<Vec<Skill>, String> {
+    state.with_conn(|conn| {
+        Ok(crate::db::helpers::db_list(conn, crate::db::schema::DbTable::Skill, None)?
+            .into_iter().map(super::adapter::from_db_skill).collect())
+    })
+}
+
+async fn preflight_skills_batch(
+    state: &SqliteDbState,
+    inventory: Option<&SkillInventoryJson>,
+) -> Result<SkillsWriteAdmission, String> {
+    let mut admission = SkillsWriteAdmission::begin()?;
+    if admission.is_managed() {
+        let skills = read_skills_before_migration(state)?;
+        let custom_tools = skill_store::get_custom_tools(state).await?;
+        for skill in &skills {
+            let mut additional = Vec::new();
+            let mut sync_tools = Vec::new();
+            if let Some(inventory) = inventory {
+                for item in &inventory.skills {
+                    if match_inventory_skill(item, &skills).is_some_and(|matched| matched.id == skill.id) {
+                        additional.extend(item.enabled_tools.iter().cloned());
+                        additional.extend(item.previous_enabled_tools.iter().cloned());
+                        if item.enabled {
+                            // Duplicate inventory entries may remove then add a
+                            // target within one batch; classify all desired tools.
+                            sync_tools.extend(item.enabled_tools.iter().cloned());
+                        }
+                    }
+                }
+            } else if skill.management_enabled {
+                sync_tools.extend(skill.enabled_tools.iter().cloned());
+            }
+            admission.admit_skill(state, skill, &additional, &sync_tools, &custom_tools).await?;
+        }
+    }
+    admission.ensure_current()?;
+    Ok(admission)
+}
+
+/// Tool configuration changes can redirect future writes, so include both
+/// configured roots and any persisted assignments before saving/removing a key.
+async fn preflight_custom_tool_change(
+    state: &SqliteDbState,
+    key: &str,
+    replacement: Option<&CustomTool>,
+) -> Result<SkillsWriteAdmission, String> {
+    let mut admission = SkillsWriteAdmission::begin()?;
+    if admission.is_managed() {
+        if key.trim() == "codex" { reject_managed_operation()?; }
+        let custom_tools = skill_store::get_custom_tools(state).await?;
+        let mut paths = Vec::new();
+        for tool in custom_tools.iter().filter(|tool| tool.key == key).chain(replacement) {
+            let adapter = super::tool_adapters::RuntimeToolAdapter::from(tool);
+            paths.push(resolve_runtime_skills_path_with_state_async(state, &adapter)
+                .await.map_err(format_error)?);
+        }
+        admission.admit_paths(&paths)?;
+        for skill in read_skills_before_migration(state)? {
+            if skill.enabled_tools.iter().chain(&skill.disabled_previous_tools)
+                .any(|tool| tool == key)
+                || skill.sync_details.as_ref().is_some_and(|details| details.get(key).is_some())
+            {
+                admission.admit_skill(state, &skill, &[], &[], &custom_tools).await?;
+            }
+        }
+    }
+    admission.ensure_current()?;
+    Ok(admission)
+}
 
 fn format_error(err: anyhow::Error) -> String {
     let first = err.to_string();
@@ -246,11 +435,16 @@ pub async fn skills_get_tool_status(
     // This doesn't block the command return
     let current_set: std::collections::HashSet<String> = installed.iter().cloned().collect();
     if current_set != prev_set {
+        let admission = SkillsWriteAdmission::begin()?;
         let installed_clone = installed.clone();
         let state_ref = state.db().clone();
         tokio::spawn(async move {
             // Small delay to let other operations complete first
             tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Err(error) = admission.ensure_current() {
+                log::warn!("Skipped stale Skills tool status save: {}", error);
+                return;
+            }
             let _ = skill_store::set_setting(
                 &state_ref,
                 "installed_tools_v1",
@@ -710,12 +904,14 @@ async fn refresh_central_skill_hash_if_needed(
     state: &SqliteDbState,
     skill: &mut Skill,
     source_path: &Path,
+    admission: &SkillsWriteAdmission,
 ) -> Result<(), String> {
     if skill.source_type != "central" {
         return Ok(());
     }
     let hash = hash_dir(source_path).map_err(|e| format_error(e))?;
     if skill.content_hash.as_deref() != Some(hash.as_str()) {
+        admission.ensure_current()?;
         skill_store::update_skill_content_hash(state, &skill.id, Some(hash.clone())).await?;
         skill.content_hash = Some(hash);
     }
@@ -824,6 +1020,9 @@ pub async fn skills_get_central_repo_path(
     let path = resolve_central_repo_path(&app, &state)
         .await
         .map_err(|e| format_error(e))?;
+    let mut admission = SkillsWriteAdmission::begin()?;
+    admission.admit_paths(&[path.clone()])?;
+    admission.ensure_current()?;
     ensure_central_repo(&path).map_err(|e| format_error(e))?;
     Ok(path.to_string_lossy().to_string())
 }
@@ -833,13 +1032,17 @@ pub async fn skills_set_central_repo_path(
     state: State<'_, SqliteDbState>,
     path: String,
 ) -> Result<String, String> {
+    let admission = SkillsWriteAdmission::unsupported()?;
+    admission.ensure_current()?;
     let new_base = expand_home_path(&path).map_err(|e| format_error(e))?;
     if !new_base.is_absolute() {
         return Err("storage path must be absolute".to_string());
     }
+    admission.ensure_current()?;
     ensure_central_repo(&new_base).map_err(|e| format_error(e))?;
 
     // Save new path to the same authoritative store used by resolve_central_repo_path.
+    admission.ensure_current()?;
     save_central_repo_path(&state, &new_base)
         .await
         .map_err(|e| format_error(e))?;
@@ -902,11 +1105,14 @@ pub async fn skills_adopt_central_repo_skills<R: Runtime>(
     state: State<'_, SqliteDbState>,
     relativePaths: Vec<String>,
 ) -> Result<AdoptCentralSkillsResultDto, String> {
+    let admission = SkillsWriteAdmission::unsupported()?;
+    admission.ensure_current()?;
     let central_dir = resolve_central_repo_path(&app, &state)
         .await
         .map_err(|e| format_error(e))?;
     let mut adopted_count = 0;
     for relative_path in relativePaths {
+        admission.ensure_current()?;
         if adopt_detected_central_skill(&state, &central_dir, &relative_path).await? {
             adopted_count += 1;
         }
@@ -926,6 +1132,8 @@ pub async fn skills_repair_central_repo_skill<R: Runtime>(
     skillId: String,
     relativePath: String,
 ) -> Result<AdoptCentralSkillsResultDto, String> {
+    let admission = SkillsWriteAdmission::unsupported()?;
+    admission.ensure_current()?;
     let central_dir = resolve_central_repo_path(&app, &state)
         .await
         .map_err(|e| format_error(e))?;
@@ -935,6 +1143,7 @@ pub async fn skills_repair_central_repo_skill<R: Runtime>(
         return Err(format!("No Skill found at {}", source_path.display()));
     }
     let content_hash = hash_dir(&source_path).ok();
+    admission.ensure_current()?;
     skill_store::update_skill_central_path_and_hash(&state, &skillId, relative_path, content_hash)
         .await?;
     let _ = app.emit("skills-changed", "window");
@@ -952,6 +1161,8 @@ pub async fn skills_apply_central_repo_path_change<R: Runtime>(
     path: String,
     options: ApplyCentralRepoPathOptionsDto,
 ) -> Result<ApplyCentralRepoPathResultDto, String> {
+    let admission = SkillsWriteAdmission::unsupported()?;
+    admission.ensure_current()?;
     let requested_path = if options.use_default_path {
         resolve_default_central_repo_path(&app)
             .map_err(|e| format_error(e))?
@@ -989,6 +1200,7 @@ pub async fn skills_apply_central_repo_path_change<R: Runtime>(
     }
 
     let target_dir = PathBuf::from(&preview.resolved_path);
+    admission.ensure_current()?;
     ensure_central_repo(&target_dir).map_err(|e| format_error(e))?;
 
     let current_dir = PathBuf::from(&preview.current_path);
@@ -1022,6 +1234,7 @@ pub async fn skills_apply_central_repo_path_change<R: Runtime>(
         };
         let source_path = resolve_skill_central_path(&skill.central_path, &current_dir);
         let target_path = target_dir.join(&relative_path);
+        admission.ensure_current()?;
         match copy_skill_source_for_migration(&source_path, &target_path) {
             Ok(warning) => {
                 migrated_count += 1;
@@ -1046,16 +1259,19 @@ pub async fn skills_apply_central_repo_path_change<R: Runtime>(
     }
 
     if paths_equivalent(&target_dir, &default_dir) {
+        admission.ensure_current()?;
         clear_central_repo_path(&state)
             .await
             .map_err(|e| format_error(e))?;
     } else {
+        admission.ensure_current()?;
         save_central_repo_path(&state, &target_dir)
             .await
             .map_err(|e| format_error(e))?;
     }
 
     for (skill_id, (relative_path, content_hash)) in central_path_updates {
+        admission.ensure_current()?;
         skill_store::update_skill_central_path_and_hash(
             &state,
             &skill_id,
@@ -1084,6 +1300,7 @@ pub async fn skills_apply_central_repo_path_change<R: Runtime>(
             continue;
         }
         let content_hash = hash_dir(&source_path).ok();
+        admission.ensure_current()?;
         skill_store::update_skill_central_path_and_hash(
             &state,
             &skill_id,
@@ -1096,6 +1313,7 @@ pub async fn skills_apply_central_repo_path_change<R: Runtime>(
 
     let mut adopted_count = 0;
     for relative_path in options.adopt_detected_skill_paths {
+        admission.ensure_current()?;
         match adopt_detected_central_skill(&state, &target_dir, &relative_path).await {
             Ok(true) => adopted_count += 1,
             Ok(false) => warnings.push(format!(
@@ -1429,6 +1647,245 @@ mod skill_source_tests {
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod managed_skill_crud_tests {
+    use super::*;
+    use crate::db::helpers::{db_get, db_list, db_put};
+    use crate::db::schema::DbTable;
+    use std::os::unix::fs::PermissionsExt;
+    use tauri::Manager;
+
+    fn fixture(managed: bool) -> (
+        tempfile::TempDir,
+        SqliteDbState,
+        std::sync::Arc<GuiProfileSession>,
+    ) {
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-skills-crud-").tempdir_in(std::env::temp_dir()).unwrap();
+        for child in ["profile", "codex", "central", "safe"] {
+            let path = directory.path().join(child);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        std::fs::create_dir(directory.path().join("central/demo")).unwrap();
+        std::fs::write(directory.path().join("central/demo/SKILL.md"), "source sentinel\n").unwrap();
+        let startup = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(
+            directory.path().join("profile"),
+        ).unwrap();
+        let session = if managed {
+            let runtime = ai_toolbox_management::owner::RuntimeResourceIdentity::existing(
+                directory.path().join("codex"),
+            ).unwrap();
+            GuiProfileSession::managed_with_runtime(startup.into_managed().unwrap(), runtime).unwrap()
+        } else {
+            GuiProfileSession::ordinary(startup.into_ordinary())
+        };
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        db.with_conn(|conn| db_put(conn, DbTable::SkillSettings, "skills", &serde_json::json!({
+            "central_repo_path": directory.path().join("central").to_string_lossy(),
+        }))).unwrap();
+        (directory, db, session)
+    }
+
+    fn seed_skill(db: &SqliteDbState, id: &str, extra: serde_json::Value) {
+        let mut row = serde_json::json!({
+            "name": "demo", "source_type": "central", "central_path": "demo",
+            "content_hash": "old hash sentinel", "management_enabled": true,
+            "enabled_tools": [], "disabled_previous_tools": [], "sync_details": {},
+            "user_group": "legacy group", "sort_index": 0,
+        });
+        row.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        db.with_conn(|conn| db_put(conn, DbTable::Skill, id, &row)).unwrap();
+    }
+
+    fn raw_rows(db: &SqliteDbState) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+        db.with_conn(|conn| Ok((
+            db_list(conn, DbTable::Skill, None)?,
+            db_list(conn, DbTable::SkillGroup, None)?,
+        ))).unwrap()
+    }
+
+    async fn custom_tool(db: &SqliteDbState, root: &Path, force_copy: bool) {
+        skill_store::save_custom_tool(db, &CustomTool {
+            key: "fixture_tool".to_string(), display_name: "Synthetic tool".to_string(),
+            relative_skills_dir: root.to_string_lossy().to_string(),
+            relative_detect_dir: root.to_string_lossy().to_string(), created_at: 0,
+            force_copy, icon_url: None,
+        }).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_sync_rejects_custom_alias_before_hash_or_target_effect() {
+        let (directory, db, session) = fixture(true);
+        let _scope = crate::management_admission::test_session(&session);
+        let alias = directory.path().join("alias");
+        std::os::unix::fs::symlink(directory.path().join("codex"), &alias).unwrap();
+        custom_tool(&db, &alias, true).await;
+        seed_skill(&db, "demo", serde_json::json!({}));
+        let before = raw_rows(&db);
+        let app = tauri::test::mock_app();
+        app.manage(db);
+        let result = skills_sync_to_tool(
+            app.handle().clone(), app.state(), "ignored".to_string(), "demo".to_string(),
+            "fixture_tool".to_string(), "ignored".to_string(), Some(true),
+        ).await;
+        assert!(result.is_err());
+        assert_eq!(raw_rows(&app.state::<SqliteDbState>()), before);
+        assert!(!directory.path().join("codex/demo").exists());
+        assert_eq!(std::fs::read_to_string(directory.path().join("central/demo/SKILL.md")).unwrap(), "source sentinel\n");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_unsync_and_enable_reject_old_and_disabled_codex_assignments() {
+        let (directory, db, session) = fixture(true);
+        let _scope = crate::management_admission::test_session(&session);
+        custom_tool(&db, &directory.path().join("safe"), true).await;
+        let target = directory.path().join("codex/demo");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("SKILL.md"), "target sentinel").unwrap();
+        seed_skill(&db, "demo", serde_json::json!({
+            "enabled_tools": ["fixture_tool"],
+            "sync_details": { "fixture_tool": {"target_path": target, "mode": "copy"} },
+            "disabled_previous_tools": [],
+        }));
+        let before = raw_rows(&db);
+        let app = tauri::test::mock_app();
+        app.manage(db);
+        assert!(skills_unsync_from_tool(app.handle().clone(), app.state(),
+            "demo".to_string(), "fixture_tool".to_string()).await.is_err());
+        assert_eq!(raw_rows(&app.state::<SqliteDbState>()), before);
+        seed_skill(&app.state::<SqliteDbState>(), "demo", serde_json::json!({
+            "management_enabled": false, "disabled_previous_tools": ["codex"],
+        }));
+        let before = raw_rows(&app.state::<SqliteDbState>());
+        for enabled in [false, true] {
+            assert!(skills_set_management_enabled(app.handle().clone(), app.state(),
+                "demo".to_string(), enabled).await.is_err());
+        }
+        assert_eq!(raw_rows(&app.state::<SqliteDbState>()), before);
+        assert_eq!(std::fs::read_to_string(target.join("SKILL.md")).unwrap(), "target sentinel");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_inventory_and_resync_deny_whole_batch_before_legacy_migration() {
+        let (directory, db, session) = fixture(true);
+        let _scope = crate::management_admission::test_session(&session);
+        custom_tool(&db, &directory.path().join("safe"), true).await;
+        seed_skill(&db, "a-safe", serde_json::json!({"enabled_tools": ["fixture_tool"]}));
+        seed_skill(&db, "z-codex", serde_json::json!({"disabled_previous_tools": ["codex"]}));
+        let before = raw_rows(&db);
+        let app = tauri::test::mock_app();
+        app.manage(db);
+        let inventory = serde_json::json!({
+            "schema_version": 1, "exported_at": 0,
+            "groups": [{"name": "replacement", "order": 0}], "skills": [],
+        }).to_string();
+        assert!(skills_apply_inventory_import(app.handle().clone(), app.state(), inventory).await.is_err());
+        assert!(resync_all_skills_internal(app.handle().clone(), app.state::<SqliteDbState>().inner()).await.is_err());
+        assert_eq!(raw_rows(&app.state::<SqliteDbState>()), before);
+        assert!(!directory.path().join("safe/demo").exists());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_inventory_checks_incoming_disabled_previous_tools() {
+        let (_directory, db, session) = fixture(true);
+        let _scope = crate::management_admission::test_session(&session);
+        seed_skill(&db, "demo", serde_json::json!({}));
+        let inventory = serde_json::from_value::<SkillInventoryJson>(serde_json::json!({
+            "schema_version": 1, "exported_at": 0, "groups": [], "skills": [{
+                "id": "demo", "name": "demo", "order": 0, "enabled": false,
+                "enabled_tools": [], "previous_enabled_tools": ["codex"],
+                "source_type": "central", "central_path": "demo",
+            }],
+        })).unwrap();
+        let before = raw_rows(&db);
+        assert!(preflight_skills_batch(&db, Some(&inventory)).await.is_err());
+        assert_eq!(raw_rows(&db), before);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_copy_sync_succeeds_but_hybrid_fails_before_central_hash_refresh() {
+        let (directory, db, session) = fixture(true);
+        let _scope = crate::management_admission::test_session(&session);
+        custom_tool(&db, &directory.path().join("safe"), false).await;
+        seed_skill(&db, "demo", serde_json::json!({}));
+        let before = raw_rows(&db);
+        let app = tauri::test::mock_app();
+        app.manage(db);
+        assert!(skills_sync_to_tool(
+            app.handle().clone(), app.state(), "ignored".to_string(), "demo".to_string(),
+            "fixture_tool".to_string(), "ignored".to_string(), Some(true),
+        ).await.is_err());
+        assert_eq!(raw_rows(&app.state::<SqliteDbState>()), before);
+        assert!(!directory.path().join("safe/demo").exists());
+        custom_tool(&app.state::<SqliteDbState>(), &directory.path().join("safe"), true).await;
+        let result = skills_sync_to_tool(
+            app.handle().clone(), app.state(), "ignored".to_string(), "demo".to_string(),
+            "fixture_tool".to_string(), "ignored".to_string(), Some(true),
+        ).await.unwrap();
+        assert_eq!(result.mode_used, "copy");
+        assert_eq!(std::fs::read_to_string(directory.path().join("safe/demo/SKILL.md")).unwrap(), "source sentinel\n");
+        let row = app.state::<SqliteDbState>().with_conn(|conn| db_get(conn, DbTable::Skill, "demo")).unwrap().unwrap();
+        assert_ne!(row["content_hash"], "old hash sentinel");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ordinary_hybrid_sync_retains_existing_behavior() {
+        let (directory, db, session) = fixture(false);
+        let _scope = crate::management_admission::test_session(&session);
+        custom_tool(&db, &directory.path().join("safe"), false).await;
+        seed_skill(&db, "demo", serde_json::json!({}));
+        let app = tauri::test::mock_app();
+        app.manage(db);
+        let result = skills_sync_to_tool(
+            app.handle().clone(), app.state(), "ignored".to_string(), "demo".to_string(),
+            "fixture_tool".to_string(), "ignored".to_string(), Some(true),
+        ).await.unwrap();
+        assert_eq!(result.mode_used, "symlink");
+        assert!(std::fs::symlink_metadata(directory.path().join("safe/demo")).unwrap().file_type().is_symlink());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_custom_tool_changes_check_new_and_old_alias_roots() {
+        let (directory, db, session) = fixture(true);
+        let _scope = crate::management_admission::test_session(&session);
+        custom_tool(&db, &directory.path().join("safe"), true).await;
+        let app = tauri::test::mock_app();
+        app.manage(db);
+        let alias = directory.path().join("alias");
+        std::os::unix::fs::symlink(directory.path().join("codex"), &alias).unwrap();
+        let before = app.state::<SqliteDbState>().with_conn(|conn|
+            db_list(conn, DbTable::CustomTool, None)).unwrap();
+        assert!(skills_add_custom_tool(app.state(), "fixture_tool".to_string(),
+            "Synthetic tool".to_string(), alias.to_string_lossy().to_string(),
+            alias.to_string_lossy().to_string(), Some(true), None).await.is_err());
+        let after = app.state::<SqliteDbState>().with_conn(|conn|
+            db_list(conn, DbTable::CustomTool, None)).unwrap();
+        assert_eq!(after, before);
+        custom_tool(&app.state::<SqliteDbState>(), &alias, true).await;
+        let before = app.state::<SqliteDbState>().with_conn(|conn|
+            db_list(conn, DbTable::CustomTool, None)).unwrap();
+        assert!(skills_remove_custom_tool(app.state(), "fixture_tool".to_string()).await.is_err());
+        let after = app.state::<SqliteDbState>().with_conn(|conn|
+            db_list(conn, DbTable::CustomTool, None)).unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn accepted_guard_retains_session_and_unknown_installation_stays_unsupported() {
+        let (directory, db, session) = fixture(true);
+        let _scope = crate::management_admission::test_session(&session);
+        custom_tool(&db, &directory.path().join("safe"), true).await;
+        seed_skill(&db, "demo", serde_json::json!({"enabled_tools": ["fixture_tool"]}));
+        let skill = skill_store::get_skill_by_id(&db, "demo").await.unwrap().unwrap();
+        let admission = preflight_skill_write(&db, &skill, &[], &skill.enabled_tools).await.unwrap();
+        assert!(SkillsWriteAdmission::unsupported().is_err());
+        drop(session);
+        admission.ensure_current().unwrap();
+        assert!(!directory.path().join("safe/demo").exists());
+    }
+}
+
 // --- Install Skills ---
 
 /// Resolve local skill source paths so `~/...` / `%APPDATA%/...` aliases work
@@ -1530,6 +1987,7 @@ pub async fn skills_list_git_skills(
     repoUrl: String,
     branch: Option<String>,
 ) -> Result<Vec<GitSkillCandidate>, String> {
+    let admission = SkillsWriteAdmission::unsupported()?;
     // Initialize proxy from app settings
     let proxy_result = http_client::get_proxy_from_settings(&state).await.ok();
     let proxy_mode = match proxy_result {
@@ -1537,12 +1995,14 @@ pub async fn skills_list_git_skills(
         Some((http_client::ProxyMode::Custom, url)) if !url.is_empty() => GitProxyMode::Custom(url),
         _ => GitProxyMode::System,
     };
+    admission.ensure_current()?;
     set_proxy(proxy_mode);
 
     let ttl = get_git_cache_ttl_secs(&state).await;
     let branch_clone = branch.clone();
 
     tokio::task::spawn_blocking(move || {
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         list_git_skills(&app, ttl, &repoUrl, branch_clone.as_deref())
     })
     .await
@@ -1617,6 +2077,7 @@ async fn sync_skill_to_tool_record(
     overwrite: bool,
     custom_tools: &[CustomTool],
 ) -> Result<SyncResultDto, String> {
+    let admission = preflight_skill_write(state, skill, &[tool.to_string()], &[tool.to_string()]).await?;
     let runtime_adapter =
         runtime_adapter_by_key(tool, custom_tools).ok_or_else(|| "unknown tool".to_string())?;
 
@@ -1656,6 +2117,7 @@ async fn sync_skill_to_tool_record(
             error_message: None,
             synced_at: Some(now_ms()),
         };
+        admission.ensure_current()?;
         skill_store::upsert_skill_target(state, &skill.id, &record).await?;
         return Ok(SyncResultDto {
             mode_used: "skip".to_string(),
@@ -1663,6 +2125,7 @@ async fn sync_skill_to_tool_record(
         });
     }
 
+    admission.ensure_current()?;
     let result = sync_skill_to_target(
         tool,
         source_path,
@@ -1679,6 +2142,7 @@ async fn sync_skill_to_tool_record(
         }
     })?;
 
+    admission.ensure_current()?;
     if let Some(existing_target) = previous_target.as_ref() {
         if target_path_changed(&existing_target.target_path, &target) {
             remove_skill_target_best_effort(skill, source_path, existing_target);
@@ -1693,6 +2157,7 @@ async fn sync_skill_to_tool_record(
         error_message: None,
         synced_at: Some(now_ms()),
     };
+    admission.ensure_current()?;
     skill_store::upsert_skill_target(state, &skill.id, &record).await?;
 
     Ok(SyncResultDto {
@@ -1773,6 +2238,7 @@ pub async fn skills_sync_to_tool<R: Runtime>(
     name: String,
     overwrite: Option<bool>,
 ) -> Result<SyncResultDto, String> {
+    if tool.trim() == "codex" { reject_managed_operation()?; }
     let mut skill = skill_store::get_skill_by_id(&state, &skillId)
         .await?
         .ok_or_else(|| format!("Skill not found: {}", skillId))?;
@@ -1783,8 +2249,10 @@ pub async fn skills_sync_to_tool<R: Runtime>(
     // must come from the DB record + central repo resolver, never from frontend
     // payloads that may be stale or point at a tool runtime directory.
     let _ = (&sourcePath, &name);
+    let admission = preflight_skill_write(&state, &skill, &[tool.clone()], &[tool.clone()]).await?;
     let source_path = resolve_skill_source_path(&app, &state, &skill).await?;
-    refresh_central_skill_hash_if_needed(&state, &mut skill, &source_path).await?;
+    admission.ensure_current()?;
+    refresh_central_skill_hash_if_needed(&state, &mut skill, &source_path, &admission).await?;
 
     // Get custom tools for runtime adapter lookup
     let custom_tools = skill_store::get_custom_tools(&state)
@@ -1815,14 +2283,18 @@ pub async fn skills_unsync_from_tool<R: Runtime>(
     skillId: String,
     tool: String,
 ) -> Result<(), String> {
+    if tool.trim() == "codex" { reject_managed_operation()?; }
     if let Some(target) = skill_store::get_skill_target(&state, &skillId, &tool).await? {
         let skill = skill_store::get_skill_by_id(&state, &skillId)
             .await?
             .ok_or_else(|| format!("Skill not found: {}", skillId))?;
+        let admission = preflight_skill_write(&state, &skill, &[tool.clone()], &[]).await?;
         let source_path = resolve_skill_source_path_for_cleanup(&app, &state, &skill).await;
+        admission.ensure_current()?;
         if let Some(source_path) = source_path.as_deref() {
             remove_skill_target_best_effort(&skill, source_path, &target);
         }
+        admission.ensure_current()?;
         skill_store::delete_skill_target(&state, &skillId, &tool).await?;
     }
 
@@ -1844,6 +2316,7 @@ async fn update_managed_skill_internal(
 ) -> Result<UpdateResultDto, String> {
     if let Some(mut skill) = skill_store::get_skill_by_id(state, skill_id).await? {
         if skill.source_type == "central" {
+            let admission = preflight_skill_write(state, &skill, &[], &skill.enabled_tools).await?;
             let source_path = resolve_skill_source_path(app, state, &skill).await?;
             if !source_path.is_dir() {
                 return Err(format!(
@@ -1851,7 +2324,8 @@ async fn update_managed_skill_internal(
                     source_path.display()
                 ));
             }
-            refresh_central_skill_hash_if_needed(state, &mut skill, &source_path).await?;
+            admission.ensure_current()?;
+            refresh_central_skill_hash_if_needed(state, &mut skill, &source_path, &admission).await?;
 
             let custom_tools = skill_store::get_custom_tools(state)
                 .await
@@ -1859,6 +2333,7 @@ async fn update_managed_skill_internal(
             let mut updated_targets = Vec::new();
             let mut sync_errors = Vec::new();
             for tool in skill.enabled_tools.clone() {
+                admission.ensure_current()?;
                 match sync_skill_to_tool_record(
                     state,
                     &skill,
@@ -1925,6 +2400,8 @@ pub(crate) async fn update_all_skills_internal(
     state: &State<'_, SqliteDbState>,
     emit_progress: bool,
 ) -> Result<UpdateAllResultDto, String> {
+    let admission = SkillsWriteAdmission::unsupported()?;
+    admission.ensure_current()?;
     let skills = skill_store::get_managed_skills(state).await?;
     let total = skills.len();
     let mut updated = Vec::new();
@@ -1957,6 +2434,7 @@ pub(crate) async fn update_all_skills_internal(
                 },
             );
         }
+        admission.ensure_current()?;
         match update_managed_skill_internal(app, state, &skill.id).await {
             Ok(result) => updated.push(result),
             Err(error) => errors.push(UpdateAllErrorDto {
@@ -1997,6 +2475,7 @@ pub async fn skills_delete_managed(
     let record = skill_store::get_skill_by_id(&state, &skillId).await?;
     let mut remove_failures: Vec<String> = Vec::new();
     if let Some(skill) = record {
+        let mut admission = preflight_skill_write(&state, &skill, &[], &[]).await?;
         // Resolve central_path (handles cross-platform legacy paths)
         let central_dir = resolve_central_repo_path(&app, &state)
             .await
@@ -2004,17 +2483,21 @@ pub async fn skills_delete_managed(
         let default_dir = resolve_default_central_repo_path(&app).map_err(|e| format_error(e))?;
         let uses_default_central_dir = paths_equivalent(&central_dir, &default_dir);
         let path = resolve_skill_central_path(&skill.central_path, &central_dir);
+        let default_delete_source = skill.source_type != "central" && uses_default_central_dir;
+        let delete_source_files = options
+            .map(|options| options.delete_source_files)
+            .unwrap_or(default_delete_source);
+        if delete_source_files { admission.admit_paths(&[path.clone()])?; }
+        admission.ensure_current()?;
         let targets = skill_store::get_skill_targets(&state, &skillId).await?;
         for target in targets {
+            admission.ensure_current()?;
             if let Err(err) = remove_skill_target_checked(&path, &target.target_path) {
                 remove_failures.push(format!("{}: {}", target.target_path, err));
             }
         }
 
-        let default_delete_source = skill.source_type != "central" && uses_default_central_dir;
-        let delete_source_files = options
-            .map(|options| options.delete_source_files)
-            .unwrap_or(default_delete_source);
+        admission.ensure_current()?;
         if delete_source_files {
             if source_path_missing_for_delete(&path) {
                 // The DB record can still be removed if the user already deleted the source dir.
@@ -2029,6 +2512,7 @@ pub async fn skills_delete_managed(
                 ));
             }
         }
+        admission.ensure_current()?;
         skill_store::delete_skill(&state, &skillId).await?;
     }
 
@@ -2367,6 +2851,8 @@ pub async fn skills_add_custom_tool(
         force_copy: forceCopy.unwrap_or(false),
         icon_url,
     };
+    let admission = preflight_custom_tool_change(&state, &tool.key, Some(&tool)).await?;
+    admission.ensure_current()?;
     skill_store::save_custom_tool(&state, &tool).await
 }
 
@@ -2375,6 +2861,8 @@ pub async fn skills_remove_custom_tool(
     state: State<'_, SqliteDbState>,
     key: String,
 ) -> Result<(), String> {
+    let admission = preflight_custom_tool_change(&state, &key, None).await?;
+    admission.ensure_current()?;
     skill_store::delete_custom_tool(&state, &key).await
 }
 
@@ -2405,6 +2893,8 @@ pub async fn skills_create_custom_tool_path(relativeSkillsDir: String) -> Result
     // Resolve to absolute path
     let path =
         resolve_storage_path(&storage_path).ok_or_else(|| "failed to resolve path".to_string())?;
+    let admission = admit_non_codex_targets(None, &[path.as_path()])?;
+    admission.ensure_current()?;
     std::fs::create_dir_all(&path).map_err(|e| format!("Failed to create directory: {}", e))?;
     Ok(())
 }
@@ -2511,18 +3001,22 @@ pub async fn skills_set_management_enabled<R: Runtime>(
     skillId: String,
     enabled: bool,
 ) -> Result<Vec<String>, String> {
+    let skill = skill_store::get_skill_by_id(&state, &skillId)
+        .await?
+        .ok_or_else(|| format!("Skill not found: {}", skillId))?;
+    let admission = preflight_skill_write(&state, &skill, &[], &[]).await?;
     if !enabled {
-        let skill = skill_store::get_skill_by_id(&state, &skillId)
-            .await?
-            .ok_or_else(|| format!("Skill not found: {}", skillId))?;
         let previous_tools = disabled_previous_tools_for_skill(&skill);
         let source_path = resolve_skill_source_path_for_cleanup(&app, &state, &skill).await;
+        admission.ensure_current()?;
         remove_skill_targets_best_effort(&state, &skill, source_path.as_deref()).await?;
+        admission.ensure_current()?;
         skill_store::disable_skill_with_previous_tools(&state, &skillId, previous_tools.clone())
             .await?;
         let _ = app.emit("skills-changed", "window");
         return Ok(previous_tools);
     }
+    admission.ensure_current()?;
     let previous = skill_store::set_skill_management_enabled(&state, &skillId, enabled).await?;
     let _ = app.emit("skills-changed", "window");
     Ok(previous)
@@ -2646,6 +3140,9 @@ async fn reconcile_inventory_skill_tools<R: Runtime>(
     let skill = skill_store::get_skill_by_id(state, skill_id)
         .await?
         .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
+    let tools_to_sync: Vec<String> = desired_tools.iter()
+        .filter(|tool| !current_tool_set.contains(*tool)).cloned().collect();
+    let admission = preflight_skill_write(state, &skill, &desired_tools, &tools_to_sync).await?;
     let needs_new_sync = desired_tools
         .iter()
         .any(|tool| !current_tool_set.contains(tool));
@@ -2656,12 +3153,14 @@ async fn reconcile_inventory_skill_tools<R: Runtime>(
     };
 
     for target in current_targets {
+        admission.ensure_current()?;
         if desired_tool_set.contains(&target.tool) {
             continue;
         }
         if let Some(source_path) = source_path.as_deref() {
             remove_skill_target_best_effort(&skill, source_path, &target);
         }
+        admission.ensure_current()?;
         skill_store::delete_skill_target(state, skill_id, &target.tool).await?;
     }
 
@@ -2685,6 +3184,7 @@ async fn reconcile_inventory_skill_tools<R: Runtime>(
     };
 
     for tool in desired_tools {
+        admission.ensure_current()?;
         if current_tool_set.contains(&tool) {
             continue;
         }
@@ -2777,6 +3277,9 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
     state: State<'_, SqliteDbState>,
     inventoryJson: String,
 ) -> Result<SkillInventoryPreviewDto, String> {
+    let parsed_inventory = parse_inventory(&inventoryJson).ok();
+    let admission = preflight_skills_batch(&state, parsed_inventory.as_ref()).await?;
+    admission.ensure_current()?;
     let preview = preview_inventory_import(&state, &inventoryJson).await?;
     if !preview.valid {
         return Ok(preview);
@@ -2786,6 +3289,7 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
     let custom_tools = skill_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
+    admission.ensure_current()?;
     let local_skills = skill_store::get_managed_skills(&state).await?;
     preflight_inventory_apply(&app, &state, &inventory, &local_skills, &custom_tools).await?;
 
@@ -2805,6 +3309,7 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
             updated_at: now,
         })
         .collect();
+    admission.ensure_current()?;
     let saved_groups = skill_store::replace_skill_groups(&state, &groups).await?;
     let group_id_by_name: HashMap<String, String> = saved_groups
         .into_iter()
@@ -2821,6 +3326,7 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
             .group
             .as_ref()
             .and_then(|name| group_id_by_name.get(&name.trim().to_lowercase()).cloned());
+        admission.ensure_current()?;
         skill_store::update_skill_metadata(
             &state,
             &skill.id,
@@ -2829,8 +3335,10 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
             Some(item.tags.clone()),
         )
         .await?;
+        admission.ensure_current()?;
         skill_store::update_skill_sort_index(&state, &skill.id, item.order).await?;
         if item.enabled {
+            admission.ensure_current()?;
             skill_store::set_skill_management_enabled(&state, &skill.id, true).await?;
             reconcile_inventory_skill_tools(
                 &app,
@@ -2842,12 +3350,14 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
             .await?;
         } else {
             let source_path = resolve_skill_source_path_for_cleanup(&app, &state, skill).await;
+            admission.ensure_current()?;
             remove_skill_targets_best_effort(&state, skill, source_path.as_deref()).await?;
             let previous_tools = if item.previous_enabled_tools.is_empty() {
                 normalize_tool_ids(&item.enabled_tools)
             } else {
                 normalize_tool_ids(&item.previous_enabled_tools)
             };
+            admission.ensure_current()?;
             skill_store::disable_skill_with_previous_tools(&state, &skill.id, previous_tools)
                 .await?;
         }
@@ -2859,8 +3369,11 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
     {
         let previous_tools = disabled_previous_tools_for_skill(skill);
         let source_path = resolve_skill_source_path_for_cleanup(&app, &state, skill).await;
+        admission.ensure_current()?;
         remove_skill_targets_best_effort(&state, skill, source_path.as_deref()).await?;
+        admission.ensure_current()?;
         skill_store::disable_skill_with_previous_tools(&state, &skill.id, previous_tools).await?;
+        admission.ensure_current()?;
         skill_store::update_skill_metadata(&state, &skill.id, None, skill.user_note.clone(), None)
             .await?;
     }
@@ -3072,9 +3585,11 @@ pub async fn resync_all_skills_internal<R: Runtime>(
     app: AppHandle<R>,
     state: &SqliteDbState,
 ) -> Result<Vec<String>, String> {
+    let admission = preflight_skills_batch(state, None).await?;
     let custom_tools = skill_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
+    admission.ensure_current()?;
     let skills = skill_store::get_managed_skills(&state).await?;
     let central_dir = resolve_central_repo_path(&app, state)
         .await
@@ -3092,10 +3607,12 @@ pub async fn resync_all_skills_internal<R: Runtime>(
         if !central_path.exists() {
             continue;
         }
-        refresh_central_skill_hash_if_needed(state, &mut skill, &central_path).await?;
+        admission.ensure_current()?;
+        refresh_central_skill_hash_if_needed(state, &mut skill, &central_path, &admission).await?;
 
         // Re-sync to each enabled tool
         for tool_key in &skill.enabled_tools {
+            admission.ensure_current()?;
             let runtime_adapter = match runtime_adapter_by_key(tool_key, &custom_tools) {
                 Some(a) => a,
                 None => continue,
@@ -3134,12 +3651,14 @@ pub async fn resync_all_skills_internal<R: Runtime>(
                     error_message: None,
                     synced_at: Some(now_ms()),
                 };
+                admission.ensure_current()?;
                 let _ = skill_store::upsert_skill_target(&state, &skill.id, &record).await;
                 synced.push(format!("{}:{}", skill.name, tool_key));
                 continue;
             }
 
             // Sync with overwrite
+            admission.ensure_current()?;
             if let Ok(result) = sync_skill_to_target(
                 tool_key,
                 &central_path,
@@ -3163,6 +3682,7 @@ pub async fn resync_all_skills_internal<R: Runtime>(
                     error_message: None,
                     synced_at: Some(now_ms()),
                 };
+                admission.ensure_current()?;
                 let _ = skill_store::upsert_skill_target(&state, &skill.id, &record).await;
                 synced.push(format!("{}:{}", skill.name, tool_key));
             }

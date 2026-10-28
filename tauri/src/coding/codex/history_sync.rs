@@ -229,9 +229,12 @@ pub fn get_status(codex_home: &Path) -> Result<CodexHistorySyncStatus, String> {
 }
 
 pub fn backup(codex_home: &Path, label: &str) -> Result<CodexHistoryBackupResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_runtime(codex_home)?;
     let start = Instant::now();
     let paths = resolve_paths(codex_home);
     ensure_environment(&paths)?;
+    _runtime_admission.ensure_current()?;
     let outcome = make_backup(&paths, label)?;
     Ok(CodexHistoryBackupResult {
         backup_path: outcome.path.to_string_lossy().to_string(),
@@ -241,10 +244,13 @@ pub fn backup(codex_home: &Path, label: &str) -> Result<CodexHistoryBackupResult
 }
 
 pub fn sync(codex_home: &Path) -> Result<CodexHistorySyncResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_runtime(codex_home)?;
     let start = Instant::now();
     let paths = resolve_paths(codex_home);
     let target = read_current_target(&paths)?;
     ensure_environment(&paths)?;
+    _runtime_admission.ensure_current()?;
     let backup = make_backup(&paths, "pre-sync")?;
 
     let db_sync = retry_sqlite_operation(|| sync_database(&paths.db_path, &target))?;
@@ -270,6 +276,8 @@ pub fn sync(codex_home: &Path) -> Result<CodexHistorySyncResult, String> {
 }
 
 pub fn restore_latest(codex_home: &Path) -> Result<CodexHistoryRestoreResult, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_runtime(codex_home)?;
     let start = Instant::now();
     let paths = resolve_paths(codex_home);
     ensure_environment(&paths)?;
@@ -279,6 +287,7 @@ pub fn restore_latest(codex_home: &Path) -> Result<CodexHistoryRestoreResult, St
         .ok_or_else(|| "No Codex history backup found".to_string())?;
     // Reject a forged sidecar before creating the safety backup or restoring DB.
     load_validated_metadata_sidecar(&paths, &latest_backup)?;
+    _runtime_admission.ensure_current()?;
     let safety_backup = make_backup(&paths, "pre-restore")?;
     let restore_db =
         retry_sqlite_operation(|| restore_database_from_backup(&paths.db_path, &latest_backup))?;
@@ -937,6 +946,8 @@ pub(crate) fn rebuild_session_index_for_db(
     codex_home: &Path,
     db_path: &Path,
 ) -> Result<usize, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_runtime(codex_home)?;
     if !db_path.exists() {
         return Ok(0);
     }
@@ -1475,5 +1486,112 @@ model = "gpt-new"
             .to_string();
         assert!(first_line.contains("old-provider"));
         assert!(restored.safety_backup_path.contains("pre-restore"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_history_writers_reject_before_backup_or_index_effects() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-managed-history-")
+            .tempdir_in(std::env::temp_dir())
+            .expect("create isolated managed fixture");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let root = directory.path().join("runtime");
+        fs::create_dir_all(&root).unwrap();
+        let history = TestCodexHistory {
+            _temp_dir: directory,
+            root,
+        };
+        let owner =
+            ai_toolbox_management::owner::ProfileLeaseStartup::acquire(history._temp_dir.path())
+                .unwrap()
+                .into_managed()
+                .unwrap();
+        let session = crate::management_admission::GuiProfileSession::managed(owner);
+        history.create_db(true);
+        let paths = resolve_paths(&history.root);
+        fs::write(&paths.config_path, "model_provider = \"new-provider\"\n").unwrap();
+        fs::write(&paths.session_index_path, "index sentinel\n").unwrap();
+        let originals: Vec<_> = [&paths.config_path, &paths.db_path, &paths.session_index_path]
+            .into_iter()
+            .map(|path| (path.to_path_buf(), fs::read(path).unwrap()))
+            .collect();
+        let _scope = crate::management_admission::test_session(&session);
+        let expected = "This operation is not supported while managed Codex writes are enabled";
+
+        assert_eq!(backup(&history.root, "manual").unwrap_err(), expected);
+        assert_eq!(sync(&history.root).unwrap_err(), expected);
+        assert_eq!(restore_latest(&history.root).unwrap_err(), expected);
+        assert_eq!(
+            rebuild_session_index_for_db(&history.root, &paths.db_path).unwrap_err(),
+            expected
+        );
+        // Read-only inspection remains available on the same managed fixture.
+        assert_eq!(get_status(&history.root).unwrap().total_threads, 4);
+        assert!(!paths.backup_dir.exists());
+        for (path, bytes) in originals {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ordinary_history_runtime_lease_is_reused_and_competing_profile_cannot_write() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-ordinary-history-")
+            .tempdir_in(std::env::temp_dir())
+            .expect("create isolated ordinary fixture");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let first_profile = directory.path().join("profile-a");
+        let second_profile = directory.path().join("profile-b");
+        let root = directory.path().join("runtime");
+        for path in [&first_profile, &second_profile, &root] {
+            fs::create_dir(path).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let history = TestCodexHistory {
+            _temp_dir: directory,
+            root,
+        };
+        history.create_db(true);
+        let paths = resolve_paths(&history.root);
+        fs::write(&paths.config_path, "model_provider = \"new-provider\"\n").unwrap();
+        fs::write(&paths.session_index_path, "index sentinel\n").unwrap();
+        let first = crate::management_admission::GuiProfileSession::ordinary(
+            ai_toolbox_management::owner::ProfileLeaseStartup::acquire(&first_profile)
+                .unwrap()
+                .into_ordinary(),
+        );
+        let second = crate::management_admission::GuiProfileSession::ordinary(
+            ai_toolbox_management::owner::ProfileLeaseStartup::acquire(&second_profile)
+                .unwrap()
+                .into_ordinary(),
+        );
+        let _first_scope = crate::management_admission::test_session(&first);
+        backup(&history.root, "first").unwrap();
+        let db_before = fs::read(&paths.db_path).unwrap();
+        let index_before = fs::read(&paths.session_index_path).unwrap();
+        let backups_before = list_backup_files(&paths.backup_dir).unwrap();
+        {
+            let _second_scope = crate::management_admission::test_session(&second);
+            assert_eq!(
+                sync(&history.root).unwrap_err(),
+                "The Codex runtime cannot be coordinated; no business write was started"
+            );
+        }
+        assert_eq!(fs::read(&paths.db_path).unwrap(), db_before);
+        assert_eq!(fs::read(&paths.session_index_path).unwrap(), index_before);
+        assert_eq!(list_backup_files(&paths.backup_dir).unwrap(), backups_before);
+        // A second accepted operation borrows the retained physical root; it
+        // must not conflict with its own earlier lease allocation.
+        backup(&history.root, "second").unwrap();
+        assert_eq!(
+            list_backup_files(&paths.backup_dir).unwrap().len(),
+            backups_before.len() + 1
+        );
     }
 }

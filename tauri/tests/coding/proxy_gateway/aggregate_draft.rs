@@ -106,6 +106,7 @@ fn draft(
 
 #[tokio::test]
 async fn draft_round_trips_and_rejects_an_empty_selection() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::draft_round_trips_and_rejects_an_empty_selection")) else { return; };
     let directory = tempfile::tempdir().unwrap();
     let paths = ProxyGatewayPaths::new(directory.path());
     let db = draft_test_db(&[("site-a", "Site A"), ("site-b", "Site B")]);
@@ -153,6 +154,7 @@ async fn draft_round_trips_and_rejects_an_empty_selection() {
 
 #[tokio::test]
 async fn draft_rejects_exposed_model_not_declared_by_selected_sites() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::draft_rejects_exposed_model_not_declared_by_selected_sites")) else { return; };
     let directory = tempfile::tempdir().unwrap();
     let paths = ProxyGatewayPaths::new(directory.path());
     let db = draft_test_db(&[("site-a", "Site A")]);
@@ -169,6 +171,7 @@ async fn draft_rejects_exposed_model_not_declared_by_selected_sites() {
 
 #[tokio::test]
 async fn draft_rejects_more_than_five_declared_exposed_models() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::draft_rejects_more_than_five_declared_exposed_models")) else { return; };
     let directory = tempfile::tempdir().unwrap();
     let paths = ProxyGatewayPaths::new(directory.path());
     let models = [
@@ -188,6 +191,7 @@ async fn draft_rejects_more_than_five_declared_exposed_models() {
 
 #[tokio::test]
 async fn draft_rejects_mixed_valid_and_stale_models_even_when_valid_models_fit_the_limit() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::draft_rejects_mixed_valid_and_stale_models_even_when_valid_models_fit_the_limit")) else { return; };
     let directory = tempfile::tempdir().unwrap();
     let paths = ProxyGatewayPaths::new(directory.path());
     let declared = ["model-1", "model-2", "model-3", "model-4", "model-5"];
@@ -219,6 +223,7 @@ async fn draft_rejects_mixed_valid_and_stale_models_even_when_valid_models_fit_t
 
 #[tokio::test]
 async fn draft_rejects_multiple_stale_models_mixed_with_valid_models() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::draft_rejects_multiple_stale_models_mixed_with_valid_models")) else { return; };
     let directory = tempfile::tempdir().unwrap();
     let paths = ProxyGatewayPaths::new(directory.path());
     let declared = ["model-1", "model-2", "model-3", "model-4"];
@@ -253,6 +258,7 @@ async fn draft_rejects_multiple_stale_models_mixed_with_valid_models() {
 
 #[tokio::test]
 async fn draft_rejects_unavailable_sites_and_ambiguous_prefixes() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::draft_rejects_unavailable_sites_and_ambiguous_prefixes")) else { return; };
     let directory = tempfile::tempdir().unwrap();
     let paths = ProxyGatewayPaths::new(directory.path());
     let db = draft_test_db(&[("site-a", "Site A"), ("site-b", "Site B")]);

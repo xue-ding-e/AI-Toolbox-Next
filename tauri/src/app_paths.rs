@@ -192,6 +192,32 @@ fn resolve_paths(
     ResolvedAppPaths::from_bootstrap(bootstrap_file, platform_default_data, default_cache)
 }
 
+/// GUI bootstrap only: freeze the physical profile path for every consumer,
+/// not merely SQLite. Client/status paths must never call this initializer.
+/// Default external cache placement is preserved; a profile-owned cache follows
+/// the canonical profile rather than a mutable input symlink alias.
+#[cfg(target_os = "linux")]
+pub(crate) fn init_gui_resolved_data_dir() -> std::io::Result<()> {
+    if RESOLVED_PATHS.get().is_some() {
+        return Err(std::io::Error::other("Application paths were initialized before GUI ownership bootstrap"));
+    }
+    let paths = resolve_paths(env_data_dir(), &bootstrap_file_path(),
+        &platform_default_data_dir(), &default_cache_dir());
+    let paths = canonical_gui_paths(paths)?;
+    RESOLVED_PATHS.set(paths).map_err(|_| std::io::Error::other("Application paths already initialized"))
+}
+
+#[cfg(target_os = "linux")]
+fn canonical_gui_paths(paths: ResolvedAppPaths) -> std::io::Result<ResolvedAppPaths> {
+    fs::create_dir_all(&paths.data)?;
+    let data = fs::canonicalize(&paths.data)?;
+    let cache = match paths.cache.strip_prefix(&paths.data) {
+        Ok(relative) => data.join(relative),
+        Err(_) => paths.cache,
+    };
+    Ok(ResolvedAppPaths { data, cache })
+}
+
 /// Cache the resolved data dir. Called once at the top of `run()`.
 pub fn init_resolved_data_dir() {
     let _ = resolved_paths();
@@ -404,6 +430,7 @@ pub fn get_app_data_dir_info() -> AppDataDirInfo {
 /// Set or clear the custom data directory. Requires a restart to take effect.
 #[tauri::command]
 pub async fn set_app_data_dir_override(path: Option<String>) -> Result<AppDataDirInfo, String> {
+    let _profile_admission = crate::management_admission::reject_managed_operation()?;
     let _transition = DATA_DIR_CHANGE_LOCK.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
         set_override(path.as_deref())?;
@@ -800,5 +827,45 @@ mod tests {
         let root = serde_json::json!({ OVERRIDE_KEY: "~/ai-toolbox-data" });
         std::fs::write(&file, serde_json::to_string_pretty(&root).unwrap()).unwrap();
         file
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod owner_path_bootstrap_tests {
+    use super::{canonical_gui_paths, ResolvedAppPaths};
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn gui_profile_alias_is_frozen_with_profile_owned_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let alias = root.path().join("alias");
+        symlink(&first, &alias).unwrap();
+        let paths = canonical_gui_paths(ResolvedAppPaths {
+            data: alias.clone(), cache: alias.join("cache"),
+        }).unwrap();
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&second, &alias).unwrap();
+        assert_eq!(paths.data, first.canonicalize().unwrap());
+        assert_eq!(paths.cache, first.canonicalize().unwrap().join("cache"));
+        assert!(!first.join("cache").exists());
+        assert!(!second.join("cache").exists());
+    }
+
+    #[test]
+    fn gui_profile_creation_preserves_separate_default_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("data/com.ai-toolbox");
+        let cache = root.path().join("separate-cache/com.ai-toolbox");
+        let paths = canonical_gui_paths(ResolvedAppPaths {
+            data: profile.clone(), cache: cache.clone(),
+        }).unwrap();
+        assert_eq!(paths.data, profile.canonicalize().unwrap());
+        assert_eq!(paths.cache, cache);
+        assert!(!paths.cache.exists());
+        assert_eq!(std::fs::read_dir(&paths.data).unwrap().count(), 0);
     }
 }

@@ -35,6 +35,14 @@ pub struct EffectiveOverride {
     pub source: Source,
 }
 
+/// Only the two explicit merged overrides. No raw source/candidate text or
+/// model-cache default is included, and inspection cannot produce a patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextOverrides {
+    pub context: EffectiveOverride,
+    pub auto_compact: EffectiveOverride,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextPlan {
     /// Candidate master-data text only, never a live config projection.
@@ -102,6 +110,56 @@ fn set(document: &mut DocumentMut, key: &'static str, number: i64) {
     }
 }
 
+/// Inspect existing master data with the exact layer validation and sole merger
+/// used by patch planning. Empty input means unspecified, not an empty patch.
+pub fn inspect_context_overrides(
+    common: &str,
+    provider: &str,
+) -> Result<ContextOverrides, PlanError> {
+    let common_doc = parse(common)?;
+    let provider_doc = parse(provider)?;
+    effective_overrides(&common_doc, &provider_doc)
+}
+
+fn effective_overrides(
+    common_doc: &DocumentMut,
+    provider_doc: &DocumentMut,
+) -> Result<ContextOverrides, PlanError> {
+    // Validate each master-data layer too: a provider must not mask invalid
+    // common values that would reappear when that provider is changed.
+    for layer in [common_doc, provider_doc] {
+        if let (Some(context), Some(limit)) = (read(layer, CONTEXT)?, read(layer, COMPACT)?) {
+            if limit > context {
+                return Err(PlanError::AutoCompactExceedsContext);
+            }
+        }
+    }
+    // This is the sole shared merger, not an independent CLI projection path.
+    let effective = parse(
+        &append_toml_configs(&provider_doc.to_string(), &common_doc.to_string())
+            .map_err(|_| PlanError::InvalidToml)?,
+    )?;
+    let explain = |key| -> Result<EffectiveOverride, PlanError> {
+        let value = read(&effective, key)?;
+        let source = if provider_doc.contains_key(key) {
+            Source::Provider
+        } else if common_doc.contains_key(key) {
+            Source::Common
+        } else {
+            Source::Unspecified
+        };
+        Ok(EffectiveOverride { value, source })
+    };
+    let context = explain(CONTEXT)?;
+    let auto_compact = explain(COMPACT)?;
+    if let (Some(context), Some(limit)) = (context.value, auto_compact.value) {
+        if limit > context {
+            return Err(PlanError::AutoCompactExceedsContext);
+        }
+    }
+    Ok(ContextOverrides { context, auto_compact })
+}
+
 /// Plan master-data overrides using the desktop's existing provider-over-common
 /// merger. No implicit cache default is represented as a user override.
 pub fn plan_context_patch(
@@ -139,38 +197,8 @@ pub fn plan_context_patch(
     }
     let candidate = document.to_string();
     let changed = candidate != original;
-    // Validate each master-data layer too: a provider must not mask invalid
-    // common values that would reappear when that provider is changed.
-    for layer in [&common_doc, &provider_doc] {
-        if let (Some(context), Some(limit)) = (read(layer, CONTEXT)?, read(layer, COMPACT)?) {
-            if limit > context {
-                return Err(PlanError::AutoCompactExceedsContext);
-            }
-        }
-    }
-    // This is the sole shared merger, not an independent CLI projection path.
-    let effective = parse(
-        &append_toml_configs(&provider_doc.to_string(), &common_doc.to_string())
-            .map_err(|_| PlanError::InvalidToml)?,
-    )?;
-    let explain = |key| -> Result<EffectiveOverride, PlanError> {
-        let value = read(&effective, key)?;
-        let source = if provider_doc.contains_key(key) {
-            Source::Provider
-        } else if common_doc.contains_key(key) {
-            Source::Common
-        } else {
-            Source::Unspecified
-        };
-        Ok(EffectiveOverride { value, source })
-    };
-    let context = explain(CONTEXT)?;
-    let auto_compact = explain(COMPACT)?;
-    if let (Some(context), Some(limit)) = (context.value, auto_compact.value) {
-        if limit > context {
-            return Err(PlanError::AutoCompactExceedsContext);
-        }
-    }
+    let ContextOverrides { context, auto_compact } =
+        effective_overrides(&common_doc, &provider_doc)?;
     let shadowed_keys = [
         (CONTEXT, patch.model_context_window),
         (COMPACT, patch.model_auto_compact_token_limit),
@@ -248,6 +276,71 @@ pub fn plan_context_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspection_reports_only_explicit_values_and_their_actual_layer() {
+        assert_eq!(
+            inspect_context_overrides("", "").unwrap(),
+            ContextOverrides {
+                context: EffectiveOverride { value: None, source: Source::Unspecified },
+                auto_compact: EffectiveOverride { value: None, source: Source::Unspecified },
+            }
+        );
+        let common = "# kept\nmodel_context_window=1000000\nmodel_auto_compact_token_limit=800000\n[auth]\nmode='synthetic-private'\n";
+        let provider = "model_auto_compact_token_limit=900000\n";
+        let original = (common.to_owned(), provider.to_owned());
+        let values = inspect_context_overrides(common, provider).unwrap();
+        assert_eq!(values.context, EffectiveOverride { value: Some(1_000_000), source: Source::Common });
+        assert_eq!(values.auto_compact, EffectiveOverride { value: Some(900_000), source: Source::Provider });
+        assert!(!format!("{values:?}").contains("synthetic-private"));
+        assert_eq!((common.to_owned(), provider.to_owned()), original);
+        // Inspection is not a newly permitted empty mutation request.
+        assert_eq!(
+            plan_context_patch(common, provider, Target::Common, ContextPatch::default()),
+            Err(PlanError::EmptyPatch)
+        );
+    }
+
+    #[test]
+    fn inspection_keeps_layer_validation_and_error_precedence() {
+        for (common, provider, expected) in [
+            ("[broken", "model_context_window=1\n", PlanError::InvalidToml),
+            ("", "[broken", PlanError::InvalidToml),
+            ("model_context_window='bad'\n", "model_context_window=10\n", PlanError::InvalidNumber(CONTEXT)),
+            ("model_context_window=0\n", "", PlanError::InvalidNumber(CONTEXT)),
+            ("model_context_window=10\nmodel_auto_compact_token_limit=11\n", "model_context_window=20\n", PlanError::AutoCompactExceedsContext),
+            ("model_context_window=10\n", "model_auto_compact_token_limit=11\n", PlanError::AutoCompactExceedsContext),
+            ("model_auto_compact_token_limit=0\n", "model_auto_compact_token_limit=1\n", PlanError::InvalidNumber(COMPACT)),
+        ] {
+            assert_eq!(inspect_context_overrides(common, provider), Err(expected));
+        }
+        for number in [1, i64::MAX] {
+            let common = format!("model_context_window={number}\nmodel_auto_compact_token_limit={number}\n");
+            let values = inspect_context_overrides(&common, "").unwrap();
+            assert_eq!(values.context.value, Some(number));
+            assert_eq!(values.auto_compact.value, Some(number));
+        }
+    }
+
+    #[test]
+    fn inspection_and_existing_planner_share_effective_semantics() {
+        for target in [Target::Common, Target::Provider] {
+            let common = "model_context_window=1000000\n";
+            let provider = "model_auto_compact_token_limit=900000\n";
+            let plan = plan_context_patch(
+                common,
+                provider,
+                target,
+                ContextPatch { model_context_window: Some(2_000_000), model_auto_compact_token_limit: None },
+            ).unwrap();
+            let values = match target {
+                Target::Common => inspect_context_overrides(&plan.candidate, provider),
+                Target::Provider => inspect_context_overrides(common, &plan.candidate),
+            }.unwrap();
+            assert_eq!(values.context, plan.context);
+            assert_eq!(values.auto_compact, plan.auto_compact);
+        }
+    }
     fn patch(context: Option<u64>, compact: Option<u64>) -> ContextPatch {
         ContextPatch {
             model_context_window: context,

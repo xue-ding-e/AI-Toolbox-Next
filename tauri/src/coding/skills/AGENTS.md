@@ -2,6 +2,12 @@
 
 ## 零、迁移期高优先级补充规则
 
+- Managed Codex 的整条 Skills CRUD 必须先预检完整旧/新写集合，再修改 hash、desired-state DB、分组 registry 或中央仓库。`commands::SkillsWriteAdmission` 从只读记录聚合 `enabled_tools`、`disabled_previous_tools`、全部旧 `sync_details.target_path` 和请求的新/previous assignments；Codex key 直接拒绝，未知 adapter/无效目标 fail closed。自定义工具保存/删除同样先检查旧/新配置根及绑定 skill 的历史目标，不能先保存 alias 再等后续同步失败。Inventory 和 resync 必须在 `get_managed_skills` / preview 引发 legacy group migration 之前用 raw SQLite snapshot 完成整批预检，不能逐个执行后才发现后项不支持。
+- 当前 managed 的 target 证明不支持 leaf symlink，因此凡本次计划会创建/更新 hybrid/symlink 的同步，必须在 hash/DB 首次副作用前明确 unsupported；只有 `force_copy` 或内置强制 copy 策略且物理目标与 profile/Codex 不相交才可继续。内置 Claude 默认 hybrid 不在本片支持范围，明确 force-copy 的自定义 Claude 目录仍可用；cleanup/enable 不按工具名全禁，但已有 leaf symlink、未知历史路径或 Codex previous assignment 同样先拒绝。不要为 effect 后 DB 写入弱化 `ensure_current`。
+- installer 的本地安装/覆盖/selection、Git 安装/selection/list-cache、来源更新，以及中央目录 set/adopt/repair/migrate 和 update-all，尚无完整稳定写计划，managed 在入口整体 unsupported，先于 proxy 初始化、clone/download、mkdir、staging 和 DB。普通模式保留原语义；guard 跨 await 留存，Git listing 和 tool-status 延迟保存必须把 guard 移入真正 worker 并在 effect 前复核。此片不证明 ordinary 未知 custom alias 已获得 Codex runtime 锁，也不启用生产 ContextSet writer endpoint。
+- 最小回归源码包括 `managed_skill_crud_tests` 的 alias/hash 零副作用、旧 target/disabled previous 拒绝、Inventory/resync 整批早于 legacy migration、显式 copy 成功、hybrid 早拒绝、自定义工具旧/新 alias 保存删除零副作用、ordinary hybrid 正控及 capability 保活；installer 另有入口先于首个副作用的顺序断言。未经执行不得把这些源码 fixtures 描述为测试已通过。
+
+- Managed Codex 模式下，`path_executor` 同步、复制、取消同步及 Inventory 预检都须先按物理 target 经过 `management_admission::admit_non_codex_targets`；自定义 key、`copy` key 和历史 target 缺少 key 都不能豁免。Guard 必须留在真正执行文件操作的同步 worker 中并在 effect 前复核，先拒绝再 mkdir/覆盖/删除；不相交的安全目标保持可用。此门不表示已阻断 installer 对中央仓库或 commands 对 desired-state DB 的先行修改。
 - Skills 的唯一源目录始终是中央仓库 `central_repo_path`。Claude/Codex/OpenCode/OpenClaw 或任何自定义工具当前运行时的 skills 目录都只是目标目录，不是同步源。
 - 中央仓库路径只有一个权威配置入口：`skill_settings:skills.central_repo_path`；缺失或为空时 fallback 到 `app_data_dir/skills`。`skill_preferences` 只保存 UI/工具偏好，绝不能读取、默认生成或写入 `central_repo_path`，避免 `~/.skills` 等脏偏好重新成为第二事实源。
 - `central_repo_path` 持久化必须优先使用可迁移路径：用户目录下保存为 `~/...`，配置目录/AppData 下保存为 `%APPDATA%/...`；读取时再解析到当前系统目录。不要把 `C:\Users\...`、`/Users/...`、`/home/...` 这类用户目录绝对路径作为新写入值，否则跨端备份恢复会指向旧机器用户路径。

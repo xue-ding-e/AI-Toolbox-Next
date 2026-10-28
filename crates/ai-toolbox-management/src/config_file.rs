@@ -82,6 +82,72 @@ impl std::error::Error for ConfigFileError {}
 
 type Result<T> = std::result::Result<T, ConfigFileError>;
 
+/// Optimistic, fixed-leaf inspection without a resource lease or write method.
+/// The borrowed in-memory gate prevents competing work by this owner, not by
+/// another profile or an uncooperative process. Keep the original FD and recheck
+/// the snapshot; a later mutation still needs its own real resource lease/CAS.
+/// Raw configuration must never acquire a Debug or Serialize implementation.
+#[cfg(target_os = "linux")]
+pub(crate) struct ConfigSnapshot<'writer> {
+    writer: &'writer WriterPermit,
+    runtime: RuntimeResourceIdentity,
+    bytes: Vec<u8>,
+    original: linux::OpenedConfig,
+}
+
+#[cfg(target_os = "linux")]
+impl<'writer> ConfigSnapshot<'writer> {
+    pub(crate) fn read(
+        writer: &'writer WriterPermit,
+        runtime: &RuntimeResourceIdentity,
+    ) -> Result<Self> {
+        writer.ensure_current().map_err(|_| {
+            ConfigFileError::before_publish(ConfigFileErrorReason::AdmissionRejected)
+        })?;
+        let directory = runtime.inspection_directory().map_err(|_| {
+            ConfigFileError::before_publish(ConfigFileErrorReason::AdmissionRejected)
+        })?;
+        // Reuse the effect's bounded O_RDONLY/O_NOFOLLOW fixed-leaf reader.
+        // Neither this path nor inspection_directory acquires/creates a lease.
+        let (original, bytes) = linux::read_config(directory)?;
+        let snapshot = Self {
+            writer,
+            runtime: runtime.clone(),
+            bytes,
+            original,
+        };
+        snapshot.readback()?;
+        Ok(snapshot)
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn readback(&self) -> Result<()> {
+        let directory = self.directory()?;
+        self.original.ensure_current()?;
+        let (current, bytes) = linux::read_config(directory)?;
+        if current.stamp != self.original.stamp || bytes != self.bytes {
+            return Err(ConfigFileError::before_publish(
+                ConfigFileErrorReason::ConfigChanged,
+            ));
+        }
+        self.directory()?;
+        self.original.ensure_current()?;
+        Ok(())
+    }
+
+    fn directory(&self) -> Result<&std::fs::File> {
+        self.writer.ensure_current().map_err(|_| {
+            ConfigFileError::before_publish(ConfigFileErrorReason::AdmissionRejected)
+        })?;
+        self.runtime.inspection_directory().map_err(|_| {
+            ConfigFileError::before_publish(ConfigFileErrorReason::AdmissionRejected)
+        })
+    }
+}
+
 /// The original descriptor prevents inode reuse while the plan is outstanding.
 /// No Debug/Serialize implementation may accidentally expose its raw config.
 pub(crate) struct ConfigFile<'permit, 'writer> {
@@ -650,6 +716,81 @@ mod tests {
         fn assert_auth_unchanged(&self, inode: u64) {
             assert_eq!(fs::read(self.path("auth.json")).unwrap(), AUTH_SENTINEL);
             assert_eq!(fs::metadata(self.path("auth.json")).unwrap().ino(), inode);
+        }
+    }
+
+    #[test]
+    fn inspection_snapshot_reads_read_only_files_without_creating_resource_lease() {
+        let fixture = Fixture::new(Some(ORIGINAL));
+        let auth_inode = fs::metadata(fixture.path("auth.json")).unwrap().ino();
+        fs::set_permissions(fixture.path("config.toml"), fs::Permissions::from_mode(0o400)).unwrap();
+        fs::set_permissions(fixture.runtime.canonical_path(), fs::Permissions::from_mode(0o500)).unwrap();
+        let writer = fixture.owner.try_writer().unwrap();
+        let snapshot = ConfigSnapshot::read(&writer, &fixture.runtime).unwrap();
+        assert_eq!(snapshot.bytes(), ORIGINAL);
+        snapshot.readback().unwrap();
+        assert!(!fixture.path(crate::owner::RESOURCE_LEASE_FILE).exists());
+        assert_eq!(fs::read_dir(fixture.runtime.canonical_path()).unwrap().count(), 2);
+        assert_eq!(fs::metadata(fixture.path("config.toml")).unwrap().mode() & 0o7777, 0o400);
+        fixture.assert_auth_unchanged(auth_inode);
+        drop(snapshot);
+        drop(writer);
+        // Restore only this synthetic directory for TempDir's owned cleanup.
+        fs::set_permissions(fixture.runtime.canonical_path(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn inspection_snapshot_reuses_missing_special_file_and_size_rejections() {
+        for case in ["missing", "symlink", "hardlink", "fifo", "oversized"] {
+            let fixture = Fixture::new(None);
+            let path = fixture.path("config.toml");
+            let expected = match case {
+                "missing" => ConfigFileErrorReason::MissingConfig,
+                "symlink" => {
+                    symlink(fixture.path("auth.json"), &path).unwrap();
+                    ConfigFileErrorReason::UnsafeConfig
+                }
+                "hardlink" => {
+                    fs::hard_link(fixture.path("auth.json"), &path).unwrap();
+                    ConfigFileErrorReason::UnsafeConfig
+                }
+                "fifo" => {
+                    use std::os::unix::ffi::OsStrExt;
+                    let leaf = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+                    // SAFETY: The owned fixture path is NUL terminated; this
+                    // creates only one synthetic FIFO, never a production leaf.
+                    assert_eq!(unsafe { libc::mkfifo(leaf.as_ptr(), 0o600) }, 0);
+                    ConfigFileErrorReason::UnsafeConfig
+                }
+                _ => {
+                    write_private(&path, &vec![b'x'; MAX_CONFIG_BYTES + 1]);
+                    ConfigFileErrorReason::ConfigTooLarge
+                }
+            };
+            let writer = fixture.owner.try_writer().unwrap();
+            let error = ConfigSnapshot::read(&writer, &fixture.runtime).err().unwrap();
+            assert_eq!(error.reason(), expected);
+            assert!(!fixture.path(crate::owner::RESOURCE_LEASE_FILE).exists());
+            if case == "missing" {
+                assert!(!path.exists());
+            }
+        }
+    }
+
+    #[test]
+    fn inspection_snapshot_detects_content_and_same_bytes_inode_replacement() {
+        for replace_inode in [false, true] {
+            let fixture = Fixture::new(Some(ORIGINAL));
+            let writer = fixture.owner.try_writer().unwrap();
+            let snapshot = ConfigSnapshot::read(&writer, &fixture.runtime).unwrap();
+            if replace_inode {
+                fs::rename(fixture.path("config.toml"), fixture.path("original.toml")).unwrap();
+                write_private(&fixture.path("config.toml"), ORIGINAL);
+            } else {
+                fs::write(fixture.path("config.toml"), CANDIDATE).unwrap();
+            }
+            assert_eq!(snapshot.readback().unwrap_err().reason(), ConfigFileErrorReason::ConfigChanged);
+            assert!(!fixture.path(crate::owner::RESOURCE_LEASE_FILE).exists());
         }
     }
 

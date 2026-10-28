@@ -24,6 +24,257 @@ pub struct ProfileKey {
 /// Random lifetime identifier. It is correlation data, not authentication.
 pub type OwnerEpoch = [u8; 16];
 
+/// One startup decision, not a live-mode switch. Consuming this token selects
+/// ordinary coordination or strict management; clones cannot create new gates.
+///
+/// ```compile_fail
+/// use ai_toolbox_management::owner::ProfileLeaseStartup;
+/// fn duplicate(startup: ProfileLeaseStartup) { let _ = startup.clone(); }
+/// ```
+///
+/// ```compile_fail
+/// use ai_toolbox_management::owner::ProfileLeaseStartup;
+/// fn switch_later(startup: ProfileLeaseStartup) {
+///     let _ordinary = startup.into_ordinary();
+///     let _managed = startup.into_managed();
+/// }
+/// ```
+pub struct ProfileLeaseStartup {
+    lease: ProfileLease,
+}
+
+impl ProfileLeaseStartup {
+    /// GUI bootstrap only. The directory must exist; this creates at most the
+    /// fixed lease file. Unlike managed admission, ordinary coordination does
+    /// not require a filesystem allowlist or safe ancestor permissions.
+    pub fn acquire(path: impl AsRef<Path>) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            let directory = Arc::new(linux::ProfileLeaseDirectory::existing(path.as_ref())?);
+            let lease = linux::Lease::acquire_profile(&directory)?;
+            Ok(Self { lease: ProfileLease {
+                path: directory.path.clone(),
+                key: directory.key,
+                inner: Arc::new(ProfileLeaseCore { lease }),
+            } })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = path;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    pub fn into_ordinary(self) -> ProfileLease {
+        self.lease
+    }
+
+    /// Qualify the already-held lease. No second lease open/flock occurs.
+    /// A failed qualification never becomes an unlocked ordinary session.
+    pub fn into_managed(self) -> Result<OwnerPermit> {
+        self.lease.ensure_current()?;
+        let profile = ProfileIdentity::existing(self.lease.canonical_path())?;
+        if profile.key() != self.lease.key() {
+            return Err(Error::IdentityChanged);
+        }
+        #[cfg(target_os = "linux")]
+        profile.directory.ensure_lease_writable()?;
+        self.lease.ensure_current()?;
+        ProfileOwner::from_lease(profile, self.lease)
+    }
+}
+
+/// Ordinary GUI lifetime coordination, not management or file-write authority.
+/// Every relevant writer must still check identity at its operation boundary.
+/// Holding a directory FD does not prevent another actor replacing its pathname.
+#[derive(Clone)]
+pub struct ProfileLease {
+    path: PathBuf,
+    key: ProfileKey,
+    #[cfg(target_os = "linux")]
+    inner: Arc<ProfileLeaseCore>,
+}
+
+#[cfg(target_os = "linux")]
+struct ProfileLeaseCore {
+    lease: linux::Lease,
+}
+
+impl ProfileLease {
+    pub fn canonical_path(&self) -> &Path { &self.path }
+    pub fn key(&self) -> ProfileKey { self.key }
+
+    pub fn ensure_current(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        { self.inner.lease.ensure_current() }
+        #[cfg(not(target_os = "linux"))]
+        { Err(Error::UnsupportedPlatform) }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn lifetime_owner(&self) -> Arc<dyn Send + Sync> { self.inner.clone() }
+
+    /// Retain this exact allocation through the last DB clone. This is not an
+    /// open operation and cannot retroactively prove acquisition before open.
+    /// The retained lease never points back to the database. Strict service
+    /// attachment performs its additional main-file and sidecar validation.
+    pub fn retain_database(&self, db: &ai_toolbox_storage::SqliteDbState) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            use ai_toolbox_storage::sqlite_state::LifetimeOwnerError;
+            db.retain_lifetime_owner_checked(self.lifetime_owner(), |connection| {
+                self.ensure_current()?;
+                let expected = std::fs::canonicalize(
+                    self.path.join(ai_toolbox_storage::SQLITE_DATABASE_FILE),
+                )?;
+                for path in [db.db_path(), Path::new(connection.path().ok_or(Error::InvalidProfile)?)] {
+                    if !path.is_absolute() || std::fs::canonicalize(path)? != expected {
+                        return Err(Error::IdentityChanged);
+                    }
+                }
+                let mut moved: std::ffi::c_int = 1;
+                // SAFETY: The storage mutex retains the live connection, and
+                // the fixed control writes exactly one initialized c_int.
+                let result = unsafe {
+                    rusqlite::ffi::sqlite3_file_control(
+                        connection.handle(), b"main\0".as_ptr().cast(),
+                        rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
+                        (&mut moved as *mut std::ffi::c_int).cast(),
+                    )
+                };
+                if result != rusqlite::ffi::SQLITE_OK || moved != 0 {
+                    return Err(Error::IdentityChanged);
+                }
+                self.ensure_current()
+            }).map_err(|error| match error {
+                LifetimeOwnerError::Unavailable => Error::Io(std::io::Error::other("Shared database unavailable")),
+                LifetimeOwnerError::DifferentOwner => Error::StaleOwner,
+                LifetimeOwnerError::Validation(error) => error,
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = db;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+}
+
+/// Operation-owned ordinary GUI coordination for existing runtime roots. This
+/// is not a managed ResourcePermit and grants no private file-effect authority.
+/// Managed callers must keep using their strict writer/resource permits.
+/// Move the whole group into blocking work; nested helpers borrow it instead
+/// of reacquiring a non-reentrant lease. It deliberately cannot be cloned.
+pub struct OrdinaryRuntimeLeaseGroup {
+    // Release runtime leases before this operation's retained profile lease.
+    #[cfg(target_os = "linux")]
+    leases: Vec<linux::Lease>,
+    #[cfg(target_os = "linux")]
+    directories: Vec<Arc<linux::ProfileLeaseDirectory>>,
+    profile: ProfileLease,
+}
+
+impl OrdinaryRuntimeLeaseGroup {
+    /// Resolve every existing absolute root before taking leases. Aliases of
+    /// one physical directory are deduplicated; acquisition order is dev/ino,
+    /// not caller order or profile identity. Never creates a runtime directory.
+    /// Caller order remains profile lifetime, operation gate, runtime group,
+    /// then DB/effects; do not retain a DB mutex while acquiring this group.
+    pub fn acquire(profile: &ProfileLease, roots: Vec<PathBuf>) -> Result<Self> {
+        profile.ensure_current()?;
+        #[cfg(target_os = "linux")]
+        {
+            let directories = roots.iter()
+                .map(|root| linux::ProfileLeaseDirectory::existing(root).map(Arc::new))
+                .collect::<Result<Vec<_>>>()?;
+            Self::acquire_directories(profile, directories)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = roots;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    /// Explicit ordinary-writer bootstrap, never client inspection/status.
+    /// Only one final directory component may be created below an existing
+    /// parent, then its fixed lease is acquired before any business effect.
+    /// An existing final symlink/non-directory is rejected, not repaired.
+    /// Failure may leave an empty directory and/or persistent coordination
+    /// file; it does not authorize a DB/auth/config write or a retry fallback.
+    pub fn acquire_for_writer_with_bootstrap(
+        profile: &ProfileLease,
+        root: impl AsRef<Path>,
+    ) -> Result<Self> {
+        profile.ensure_current()?;
+        #[cfg(target_os = "linux")]
+        {
+            let directory = Arc::new(linux::ProfileLeaseDirectory::bootstrap_runtime(root.as_ref())?);
+            Self::acquire_directories(profile, vec![directory])
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = root;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn acquire_directories(
+        profile: &ProfileLease,
+        mut directories: Vec<Arc<linux::ProfileLeaseDirectory>>,
+    ) -> Result<Self> {
+        profile.ensure_current()?;
+        directories.sort_by_key(|directory| (directory.key.device, directory.key.inode));
+        directories.dedup_by_key(|directory| (directory.key.device, directory.key.inode));
+        let mut leases = Vec::with_capacity(directories.len());
+        for directory in &directories {
+            let lease = linux::Lease::acquire_runtime(directory).map_err(|error| match error {
+                Error::OwnerBusy => Error::ResourceBusy,
+                other => other,
+            })?;
+            leases.push(lease);
+        }
+        // Failure drops only this attempt's descriptors, never fixed lock files.
+        let group = Self { leases, directories, profile: profile.clone() };
+        group.ensure_current()?;
+        Ok(group)
+    }
+
+    /// Call again before snapshots/effects and inside blocking workers. This
+    /// detects observed replacement; it does not eliminate pathname TOCTOU or
+    /// stop a hostile same-UID actor changing mounts/directories after a check.
+    pub fn ensure_current(&self) -> Result<()> {
+        self.profile.ensure_current()?;
+        #[cfg(target_os = "linux")]
+        {
+            for lease in &self.leases { lease.ensure_current()?; }
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        { Err(Error::UnsupportedPlatform) }
+    }
+
+    /// A frozen runtime selection must still resolve to one of this group's
+    /// physical roots. Checking another path never adds it to the group.
+    pub fn require_runtime(&self, path: &Path) -> Result<()> {
+        self.ensure_current()?;
+        #[cfg(target_os = "linux")]
+        {
+            let directory = linux::ProfileLeaseDirectory::existing(path)?;
+            if !self.directories.iter().any(|held| held.key == directory.key) {
+                return Err(Error::IdentityChanged);
+            }
+            self.ensure_current()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = path;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProfileIdentity {
     path: PathBuf,
@@ -134,21 +385,34 @@ impl ProfileOwner {
     pub fn acquire(profile: ProfileIdentity) -> Result<OwnerPermit> {
         #[cfg(target_os = "linux")]
         {
-            let lease = linux::Lease::acquire(&profile.directory, PROFILE_LEASE_FILE)?;
-            let mut epoch = [0; 16];
-            getrandom::fill(&mut epoch).map_err(|_| Error::RandomUnavailable)?;
-            Ok(OwnerPermit {
-                inner: Arc::new(OwnerInner {
-                    profile,
-                    epoch,
-                    gate: Arc::new(Mutex::new(())),
-                    lease,
-                }),
-            })
+            let raw_lease = linux::Lease::acquire(&profile.directory, PROFILE_LEASE_FILE)?;
+            let lease = ProfileLease {
+                path: profile.path.clone(), key: profile.key,
+                inner: Arc::new(ProfileLeaseCore { lease: raw_lease }),
+            };
+            Self::from_lease(profile, lease)
         }
         #[cfg(not(target_os = "linux"))]
         {
             let _ = profile;
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+
+    fn from_lease(profile: ProfileIdentity, lease: ProfileLease) -> Result<OwnerPermit> {
+        #[cfg(target_os = "linux")]
+        {
+            profile.ensure_current()?;
+            lease.ensure_current()?;
+            let mut epoch = [0; 16];
+            getrandom::fill(&mut epoch).map_err(|_| Error::RandomUnavailable)?;
+            Ok(OwnerPermit { inner: Arc::new(OwnerInner {
+                profile, epoch, gate: Arc::new(Mutex::new(())), lease,
+            }) })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (profile, lease);
             Err(Error::UnsupportedPlatform)
         }
     }
@@ -158,8 +422,7 @@ struct OwnerInner {
     profile: ProfileIdentity,
     epoch: OwnerEpoch,
     gate: Arc<Mutex<()>>,
-    #[cfg(target_os = "linux")]
-    lease: linux::Lease,
+    lease: ProfileLease,
 }
 
 /// Clone capabilities, never duplicate the underlying lock's File descriptor.
@@ -174,8 +437,12 @@ impl OwnerPermit {
     // storage crate retains this lease without depending on management types.
     #[cfg(target_os = "linux")]
     pub(crate) fn lifetime_owner(&self) -> Arc<dyn Send + Sync> {
-        self.inner.clone()
+        self.inner.lease.lifetime_owner()
     }
+
+    /// Reuses the ordinary coordination allocation; it cannot create another
+    /// managed owner or writer gate.
+    pub fn profile_lease(&self) -> &ProfileLease { &self.inner.lease }
 
     pub fn profile(&self) -> &ProfileIdentity {
         &self.inner.profile
@@ -270,6 +537,14 @@ impl RuntimeResourceIdentity {
     pub fn canonical_path(&self) -> &Path { self.0.canonical_path() }
     pub fn key(&self) -> ProfileKey { self.0.key() }
     pub fn ensure_current(&self) -> Result<()> { self.0.ensure_current() }
+
+    /// Only the private fixed-leaf reader borrows this handle. No resource
+    /// lease is acquired and this does not authorize any write.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn inspection_directory(&self) -> Result<&std::fs::File> {
+        self.ensure_current()?;
+        Ok(self.0.directory.config_directory())
+    }
 }
 
 /// Borrows the writer so the profile gate and owner cannot end first. Nested
@@ -397,7 +672,7 @@ pub(crate) mod linux {
 
     impl CheckedDirectory {
         // This descriptor is not a path-based filesystem API. Only the private
-        // permit-gated fixed-config effect borrows it from the owner boundary.
+        // fixed-leaf reader and permit-gated fixed-config effect borrow it.
         pub(super) fn config_directory(&self) -> &File {
             &self.file
         }
@@ -450,6 +725,117 @@ pub(crate) mod linux {
             }
             Ok(())
         }
+
+        pub(super) fn ensure_lease_writable(&self) -> Result<()> {
+            self.ensure_current()?;
+            if self.file.metadata()?.mode() & 0o300 != 0o300 {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied).into());
+            }
+            Ok(())
+        }
+    }
+
+    /// Physical coordination only. Keep strict management qualification in
+    /// CheckedDirectory, rather than making ordinary GUI availability depend
+    /// on managed filesystem/ancestor policy. Actual open/flock may still fail.
+    pub(crate) struct ProfileLeaseDirectory {
+        pub(crate) path: PathBuf,
+        pub(crate) key: ProfileKey,
+        file: File,
+        uid: u32,
+    }
+
+    impl ProfileLeaseDirectory {
+        pub(crate) fn existing(path: &Path) -> Result<Self> {
+            require_absolute(path)?;
+            let path = fs::canonicalize(path)?;
+            let uid = current_uid()?;
+            let file = OpenOptions::new().read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(&path)?;
+            let directory = Self { path, key: key(&file.metadata()?), file, uid };
+            directory.ensure_current()?;
+            Ok(directory)
+        }
+
+        /// A narrow ordinary-writer exception: create only the final empty
+        /// runtime directory, anchored to a held existing parent. No chmod,
+        /// recursive creation, symlink replacement or strict managed policy.
+        pub(crate) fn bootstrap_runtime(path: &Path) -> Result<Self> {
+            require_absolute(path)?;
+            let leaf = path.file_name().ok_or(Error::UnsafeDirectory)?;
+            let parent = Self::existing(path.parent().ok_or(Error::UnsafeDirectory)?)?;
+            let canonical = parent.path.join(leaf);
+            let leaf = CString::new(leaf.as_bytes()).map_err(|_| Error::UnsafeDirectory)?;
+            parent.ensure_current()?;
+            match fs::symlink_metadata(&canonical) {
+                Ok(meta) if !meta.is_dir() => return Err(Error::UnsafeDirectory),
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    // SAFETY: The held parent FD and single NUL-terminated
+                    // leaf are valid. Preserve ordinary mkdir/umask behavior.
+                    if unsafe { libc::mkdirat(parent.file.as_raw_fd(), leaf.as_ptr(), 0o777) } != 0 {
+                        let error = io::Error::last_os_error();
+                        if error.kind() != io::ErrorKind::AlreadyExists {
+                            return Err(error.into());
+                        }
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+            parent.ensure_current()?;
+            // Reject a symlink created by a racing creator too. The held FD
+            // and canonical pathname are compared again after opening.
+            if !fs::symlink_metadata(&canonical)?.is_dir() {
+                return Err(Error::UnsafeDirectory);
+            }
+            // SAFETY: openat returns a new directory FD, owned below. No final
+            // symlink is followed, and no existing object's mode is changed.
+            let fd = unsafe {
+                libc::openat(parent.file.as_raw_fd(), leaf.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            };
+            if fd < 0 { return Err(io::Error::last_os_error().into()); }
+            // SAFETY: The descriptor was just returned by openat above.
+            let file = unsafe { File::from_raw_fd(fd) };
+            let directory = Self { path: canonical, key: key(&file.metadata()?), file, uid: parent.uid };
+            parent.ensure_current()?;
+            directory.ensure_current()?;
+            Ok(directory)
+        }
+
+        fn ensure_current(&self) -> Result<()> {
+            if current_uid()? != self.uid { return Err(Error::PeerRejected); }
+            for meta in [self.file.metadata()?, fs::symlink_metadata(&self.path)?] {
+                if !meta.is_dir() || key(&meta) != self.key {
+                    return Err(Error::IdentityChanged);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    enum LeaseDirectory {
+        Managed(Arc<CheckedDirectory>),
+        Ordinary(Arc<ProfileLeaseDirectory>),
+    }
+
+    impl LeaseDirectory {
+        fn file(&self) -> &File {
+            match self { Self::Managed(dir) => &dir.file, Self::Ordinary(dir) => &dir.file }
+        }
+        fn path(&self) -> &Path {
+            match self { Self::Managed(dir) => &dir.path, Self::Ordinary(dir) => &dir.path }
+        }
+        fn uid(&self) -> u32 {
+            match self { Self::Managed(dir) => dir.uid, Self::Ordinary(dir) => dir.uid }
+        }
+        fn ensure_current(&self) -> Result<()> {
+            match self {
+                Self::Managed(dir) => dir.ensure_current(),
+                Self::Ordinary(dir) => dir.ensure_current(),
+            }
+        }
     }
 
     pub(crate) fn create_private_leaf(path: &Path) -> Result<PathBuf> {
@@ -485,22 +871,33 @@ pub(crate) mod linux {
 
     pub(crate) struct Lease {
         file: File,
-        directory: Arc<CheckedDirectory>,
+        directory: LeaseDirectory,
         path: PathBuf,
         key: ProfileKey,
     }
 
     impl Lease {
         pub(crate) fn acquire(directory: &Arc<CheckedDirectory>, name: &str) -> Result<Self> {
+            // Keep the original managed/resource acquisition requirements.
+            directory.ensure_lease_writable()?;
+            Self::acquire_in(LeaseDirectory::Managed(directory.clone()), name)
+        }
+
+        pub(crate) fn acquire_profile(directory: &Arc<ProfileLeaseDirectory>) -> Result<Self> {
+            Self::acquire_in(LeaseDirectory::Ordinary(directory.clone()), PROFILE_LEASE_FILE)
+        }
+
+        pub(crate) fn acquire_runtime(directory: &Arc<ProfileLeaseDirectory>) -> Result<Self> {
+            Self::acquire_in(LeaseDirectory::Ordinary(directory.clone()), RESOURCE_LEASE_FILE)
+        }
+
+        fn acquire_in(directory: LeaseDirectory, name: &str) -> Result<Self> {
             directory.ensure_current()?;
-            if directory.file.metadata()?.mode() & 0o300 != 0o300 {
-                return Err(io::Error::from(io::ErrorKind::PermissionDenied).into());
-            }
             let name_c = CString::new(name).map_err(|_| Error::UnsafeLockFile)?;
-            let path = directory.path.join(name);
+            let path = directory.path().join(name);
             let previous_key = match fs::symlink_metadata(&path) {
                 Ok(meta) => {
-                    validate_lock(&meta, directory.uid)?;
+                    validate_lock(&meta, directory.uid())?;
                     Some(key(&meta))
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -514,7 +911,7 @@ pub(crate) mod linux {
             // terminated. O_NOFOLLOW/O_NONBLOCK avoid following links/blocking
             // on special files; fstat below rejects all non-regular objects.
             let fd = unsafe {
-                libc::openat(directory.file.as_raw_fd(), name_c.as_ptr(),
+                libc::openat(directory.file().as_raw_fd(), name_c.as_ptr(),
                     libc::O_RDWR | create_flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
                     0o600 as libc::mode_t)
             };
@@ -527,7 +924,7 @@ pub(crate) mod linux {
             if previous_key.is_some_and(|previous| previous != key(&meta)) {
                 return Err(Error::IdentityChanged);
             }
-            let lease = Self { file, directory: directory.clone(), path, key: key(&meta) };
+            let lease = Self { file, directory, path, key: key(&meta) };
             lease.ensure_current()?;
             fs2::FileExt::try_lock_exclusive(&lease.file).map_err(|error| {
                 if error.kind() == io::ErrorKind::WouldBlock { Error::OwnerBusy } else { Error::Io(error) }
@@ -539,7 +936,7 @@ pub(crate) mod linux {
         pub(crate) fn ensure_current(&self) -> Result<()> {
             self.directory.ensure_current()?;
             for meta in [self.file.metadata()?, fs::symlink_metadata(&self.path)?] {
-                validate_lock(&meta, self.directory.uid)?;
+                validate_lock(&meta, self.directory.uid())?;
                 if key(&meta) != self.key {
                     return Err(Error::IdentityChanged);
                 }
@@ -582,3 +979,7 @@ pub(crate) mod linux {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "owner/profile_lease_tests.rs"]
+mod profile_lease_tests;

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use ai_toolbox_storage::change_hook::install_change_recorder;
 use ai_toolbox_storage::codex_context_journal::{
-    advance, insert_saved, lookup, AdvanceResult, FailureCode, InsertResult, JournalEntry,
+    advance, insert_saved, lookup, read_status, AdvanceResult, FailureCode, InsertResult, JournalEntry,
     JournalError, JournalInput, Lookup, Phase,
 };
 use ai_toolbox_storage::helpers::{db_count, db_get, db_patch_fields, db_put, db_transaction};
@@ -89,6 +89,72 @@ fn interrupted_projection_is_durable_and_replay_is_uncertain() {
         change(&reopened, Phase::SavedOnly, Phase::ProjectionStarted, None).unwrap(),
         AdvanceResult::Replay(_)
     ));
+}
+
+#[test]
+fn status_read_reopens_existing_row_without_writing_its_uncertain_interpretation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("status-journal.db");
+    let state = SqliteDbState::open(path.clone()).unwrap();
+    transact(&state, |tx| insert_saved(tx, input())).unwrap();
+    change(&state, Phase::SavedOnly, Phase::ProjectionStarted, None).unwrap();
+    drop(state);
+    let reopened = SqliteDbState::open(path).unwrap();
+    let changes = Arc::new(Mutex::new(Vec::new()));
+    reopened.with_conn(|conn| {
+        install_change_recorder(conn, changes.clone())?;
+        let before = db_get(conn, DbTable::CodexContextOperation, &input().request_id)?;
+        let total_changes = conn.total_changes();
+        conn.execute_batch("PRAGMA query_only = ON").map_err(|e| e.to_string())?;
+        let entry = read_status(conn, &input().request_id)
+            .map_err(|e| e.to_string())?.unwrap();
+        assert_eq!(entry.input, input());
+        assert_eq!(entry.phase, Phase::ProjectionStarted);
+        assert_eq!(entry.replay_phase(), Phase::ProjectionUncertain);
+        assert_eq!(entry.failure, None);
+        assert_eq!(db_get(conn, DbTable::CodexContextOperation, &input().request_id)?, before);
+        assert_eq!(conn.total_changes(), total_changes);
+        Ok(())
+    }).unwrap();
+    assert!(changes.lock().unwrap().is_empty());
+}
+
+#[test]
+fn status_read_checks_identifiers_before_storage_and_missing_is_not_created() {
+    // An uninitialized connection proves invalid IDs fail before any table read.
+    let empty = rusqlite::Connection::open_in_memory().unwrap();
+    for id in [String::new(), "x".repeat(129), "bad\nvalue".into(), "../value".into()] {
+        assert_eq!(read_status(&empty, &id), Err(JournalError::InvalidId));
+    }
+    let state = SqliteDbState::in_memory_for_test().unwrap();
+    state.with_conn(|conn| {
+        let before = conn.total_changes();
+        assert_eq!(read_status(conn, "absent-request"), Ok(None));
+        assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
+        assert_eq!(conn.total_changes(), before);
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn status_read_is_not_fingerprint_authorization_for_a_new_write() {
+    let state = SqliteDbState::in_memory_for_test().unwrap();
+    transact(&state, |tx| insert_saved(tx, input())).unwrap();
+    state.with_conn(|conn| {
+        assert_eq!(read_status(conn, &input().request_id).unwrap().unwrap().input, input());
+        assert_eq!(
+            lookup(conn, &input().request_id, &"d".repeat(64)),
+            Err(JournalError::FingerprintConflict)
+        );
+        Ok(())
+    }).unwrap();
+    let mut different = input();
+    different.request_fingerprint = "d".repeat(64);
+    assert_eq!(
+        transact(&state, |tx| insert_saved(tx, different)),
+        Err(JournalError::FingerprintConflict.to_string())
+    );
+    assert_eq!(read(&state).phase, Phase::SavedOnly);
 }
 
 #[test]
@@ -411,8 +477,9 @@ fn stored_schema_rejects_unknown_payloads_versions_and_invalid_phases() {
                 )?;
                 assert_eq!(
                     lookup(conn, &input().request_id, &input().request_fingerprint),
-                    Err(expected)
+                    Err(expected.clone())
                 );
+                assert_eq!(read_status(conn, &input().request_id), Err(expected));
                 Ok(())
             })
             .unwrap();

@@ -1,14 +1,16 @@
 //! Internal Linux ConfigOnly service. No CLI, GUI or transport entry is enabled.
 //! All data paths are fixed by the acquired owner and existing master data.
 use std::{fs, path::Path, os::unix::fs::MetadataExt};
-use ai_toolbox_codex_config::plan::{plan_context_projection, ContextPatch, Target};
+use ai_toolbox_codex_config::plan::{
+    inspect_context_overrides, plan_context_projection, ContextPatch, Source, Target,
+};
 use ai_toolbox_storage::{SqliteDbState, SQLITE_DATABASE_FILE, codex_context_journal as journal};
 use journal::{AdvanceResult, FailureCode, InsertResult, JournalEntry, JournalInput, Lookup, Phase};
 use rusqlite::{Connection, Transaction};
 use sha2::{Digest, Sha256};
 use crate::{
     codex_master::{read_master, patch_master, MasterSnapshot, MasterError},
-    config_file::{ConfigFile, ConfigFileErrorReason},
+    config_file::{ConfigFile, ConfigFileErrorReason, ConfigSnapshot, MAX_CONFIG_BYTES},
     owner::{OwnerPermit, ProfileIdentity, ProfileOwner, RuntimeResourceIdentity},
 };
 
@@ -46,6 +48,33 @@ pub(crate) struct ContextStatus {
     pub context: Option<i64>,
     pub auto_compact: Option<i64>,
 }
+
+/// Whitelisted inspection data only. Effective means merged master overrides,
+/// not model capabilities/defaults or proof that both live values match them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InspectedOverride {
+    pub effective: Option<i64>,
+    pub source: Source,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContextInspection {
+    pub provider_id: String,
+    pub revision: String,
+    pub model_context_window: InspectedOverride,
+    pub model_auto_compact_token_limit: InspectedOverride,
+}
+
+/// Historical metadata, deliberately excluding fingerprints, raw records and
+/// configuration. Provider and numeric outcomes come from this request's row,
+/// never from the current provider/runtime. Reading cannot resume the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContextRequestStatus {
+    pub request_id: String,
+    pub provider_id: String,
+    pub outcome: ContextStatus,
+}
+
 impl ContextStatus {
     fn from_entry(entry: JournalEntry, replay: bool) -> Self {
         Self {
@@ -119,6 +148,15 @@ fn journal_error(error: journal::JournalError) -> ServiceError {
         journal::JournalError::Storage(_) => ServiceError::Storage,
         journal::JournalError::FingerprintConflict => ServiceError::JournalConflict,
         _ => ServiceError::JournalInvalid,
+    }
+}
+
+fn inspection_file_error(error: crate::config_file::ConfigFileError) -> ServiceError {
+    match error.reason() {
+        ConfigFileErrorReason::ConfigChanged | ConfigFileErrorReason::ReadbackMismatch => {
+            ServiceError::RevisionConflict
+        }
+        _ => ServiceError::FileUnavailable,
     }
 }
 
@@ -323,6 +361,76 @@ impl ContextService {
             live,
         ]))
     }
+
+    /// Optimistic inspection on the existing owner/connection only. The local
+    /// in-memory gate creates no runtime lease; another profile may still write
+    /// the same root. Rechecks detect observed drift, not an atomic DB/file
+    /// snapshot. execute must acquire its real resource lease and check revision.
+    pub(crate) fn inspect(&self) -> Result<ContextInspection, ServiceError> {
+        self.ensure_current()?;
+        let writer = self.owner.try_writer().map_err(|_| ServiceError::Ownership)?;
+        let master = self.master()?;
+        let runtime = Self::runtime(&master)?;
+        let snapshot = ConfigSnapshot::read(&writer, &runtime).map_err(inspection_file_error)?;
+        self.inspect_snapshot(&master, &runtime, &snapshot)
+    }
+
+    fn inspect_snapshot(
+        &self,
+        master: &MasterSnapshot,
+        runtime: &RuntimeResourceIdentity,
+        snapshot: &ConfigSnapshot<'_>,
+    ) -> Result<ContextInspection, ServiceError> {
+        if !valid_id(&master.provider_id)
+            || master.common_config.len() > MAX_CONFIG_BYTES
+            || master.provider_config.len() > MAX_CONFIG_BYTES
+        {
+            return Err(ServiceError::InvalidMaster);
+        }
+        let values = inspect_context_overrides(&master.common_config, &master.provider_config)
+            .map_err(|_| ServiceError::InvalidMaster)?;
+        if !master.unchanged_from(&self.master()?) {
+            return Err(ServiceError::RevisionConflict);
+        }
+        snapshot.readback().map_err(inspection_file_error)?;
+        runtime.ensure_current().map_err(|_| ServiceError::RuntimeUnsupported)?;
+        self.ensure_current()?;
+        Ok(ContextInspection {
+            provider_id: master.provider_id.clone(),
+            revision: self.revision(master, runtime, snapshot.bytes())?,
+            model_context_window: InspectedOverride {
+                effective: values.context.value,
+                source: values.context.source,
+            },
+            model_auto_compact_token_limit: InspectedOverride {
+                effective: values.auto_compact.value,
+                source: values.auto_compact.source,
+            },
+        })
+    }
+
+    /// Read the original journal row without acquiring a writer/resource lease,
+    /// reading current master/runtime data, or persisting a replay interpretation.
+    pub(crate) fn request_status(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<ContextRequestStatus>, ServiceError> {
+        if !valid_id(request_id) {
+            return Err(ServiceError::InvalidRequest);
+        }
+        self.db.with_conn(|connection| {
+            Ok(self.validate_current_connection(connection).and_then(|_| {
+                journal::read_status(connection, request_id).map_err(journal_error).map(|entry| {
+                    entry.map(|entry| ContextRequestStatus {
+                        request_id: entry.input.request_id.clone(),
+                        provider_id: entry.input.provider_id.clone(),
+                        outcome: ContextStatus::from_entry(entry, true),
+                    })
+                })
+            }))
+        }).map_err(|_| ServiceError::Storage)?
+    }
+
     /// Reads only through an already initialized owner; does not create a new
     /// profile, database or default provider. Runtime lease is an internal effect.
     pub(crate) fn current_revision(&self) -> Result<(String, String), ServiceError> {
@@ -778,6 +886,240 @@ mod tests {
         };
         e
     }
+
+    struct AuthWatch(std::os::fd::OwnedFd);
+
+    impl AuthWatch {
+        fn new(path: &Path) -> Self {
+            use std::os::{fd::{AsRawFd, FromRawFd}, unix::ffi::OsStrExt};
+            // SAFETY: No pointer arguments; the returned descriptor is checked
+            // and immediately owned. Nonblocking reads cannot await an event.
+            let raw = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
+            assert!(raw >= 0);
+            let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+            let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+            // SAFETY: The descriptor and NUL-terminated synthetic path are live.
+            assert!(unsafe {
+                libc::inotify_add_watch(
+                    fd.as_raw_fd(),
+                    path.as_ptr(),
+                    libc::IN_OPEN | libc::IN_ACCESS | libc::IN_MODIFY | libc::IN_ATTRIB,
+                )
+            } >= 0);
+            Self(fd)
+        }
+
+        fn assert_quiet(&self) {
+            use std::os::fd::AsRawFd;
+            let mut buffer = [0_u8; 4096];
+            // SAFETY: A valid owned descriptor and writable byte buffer are
+            // passed; events need not be decoded to prove the watch is quiet.
+            let count = unsafe {
+                libc::read(self.0.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len())
+            };
+            assert_eq!(count, -1, "the synthetic auth file must not be accessed");
+            assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::WouldBlock);
+        }
+    }
+
+    #[test]
+    fn disk_inspect_is_bounded_read_only_and_never_opens_auth_or_creates_runtime_lease() {
+        let f = Fixture::new();
+        let service = f.open();
+        let before = records(&service);
+        let live = f.live();
+        let inode = fs::metadata(f.runtime.join("config.toml")).unwrap().ino();
+        fs::set_permissions(f.runtime.join("config.toml"), fs::Permissions::from_mode(0o400)).unwrap();
+        fs::set_permissions(&f.runtime, fs::Permissions::from_mode(0o500)).unwrap();
+        let changes = service.db.with_conn(|c| Ok(c.total_changes())).unwrap();
+        let auth = AuthWatch::new(&f.runtime.join("auth.json"));
+        let inspected = service.inspect().unwrap();
+        assert_eq!(inspected.provider_id, "synthetic-provider");
+        assert_eq!(inspected.revision.len(), 64);
+        assert!(inspected.revision.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+        assert_eq!(inspected.model_context_window, InspectedOverride { effective: Some(1_000_000), source: Source::Common });
+        assert_eq!(inspected.model_auto_compact_token_limit, InspectedOverride { effective: Some(900_000), source: Source::Provider });
+        assert!(!format!("{inspected:?}").contains("not-a-credential"));
+        assert!(!format!("{inspected:?}").contains(f.runtime.to_str().unwrap()));
+        auth.assert_quiet();
+        assert!(!f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+        assert_eq!(fs::read_dir(&f.runtime).unwrap().count(), 2);
+        assert_eq!(fs::metadata(f.runtime.join("config.toml")).unwrap().ino(), inode);
+        assert_eq!(f.live(), live);
+        assert_eq!(records(&service), before);
+        service.db.with_conn(|c| {
+            assert_eq!(c.total_changes(), changes);
+            assert_eq!(ai_toolbox_storage::helpers::db_count(c, DbTable::CodexContextOperation)?, 0);
+            Ok(())
+        }).unwrap();
+        drop(auth);
+        f.auth_unchanged();
+        drop(service);
+        fs::set_permissions(&f.runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn disk_inspect_matches_existing_leased_revision_without_using_that_path() {
+        let f = Fixture::new();
+        let service = f.open();
+        let inspected = service.inspect().unwrap();
+        assert!(!f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+        // The old internal method deliberately still takes a real resource lease.
+        let (revision, provider) = service.current_revision().unwrap();
+        assert_eq!(inspected.revision, revision);
+        assert_eq!(inspected.provider_id, provider);
+        assert!(f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+        f.auth_unchanged();
+    }
+
+    #[test]
+    fn disk_inspect_reads_the_attached_original_connections_uncommitted_master() {
+        let f = Fixture::new();
+        let owner = ProfileOwner::acquire(ProfileIdentity::existing(&f.profile).unwrap()).unwrap();
+        let db = SqliteDbState::open(f.profile.join(SQLITE_DATABASE_FILE)).unwrap();
+        let service = ContextService::attach(&owner, &db).unwrap();
+        db.with_conn(|c| {
+            c.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+            ai_toolbox_storage::helpers::db_patch_fields(c, DbTable::CodexCommonConfig, "common", &[
+                ("config", json!("model_context_window=1100000\n")),
+            ])?;
+            Ok(())
+        }).unwrap();
+        let inspected = service.inspect().unwrap();
+        assert_eq!(inspected.model_context_window.effective, Some(1_100_000));
+        db.with_conn(|c| c.execute_batch("ROLLBACK").map_err(|e| e.to_string())).unwrap();
+        assert_eq!(service.inspect().unwrap().model_context_window.effective, Some(1_000_000));
+        assert!(!f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+        f.auth_unchanged();
+    }
+
+    #[test]
+    fn disk_inspect_rechecks_full_master_and_file_snapshot_before_returning_revision() {
+        for master_drift in [false, true] {
+            let f = Fixture::new();
+            let service = f.open();
+            let writer = service.owner.try_writer().unwrap();
+            let master = service.master().unwrap();
+            let runtime = ContextService::runtime(&master).unwrap();
+            let snapshot = ConfigSnapshot::read(&writer, &runtime).unwrap();
+            if master_drift {
+                // An intentionally uncooperative fixture writer changes a field
+                // outside the numeric pair, which must still invalidate revision.
+                service.db.with_conn(|c| {
+                    ai_toolbox_storage::helpers::db_patch_fields(c, DbTable::CodexCommonConfig, "common", &[
+                        ("unknown", json!({"retained": false})),
+                    ])?;
+                    Ok(())
+                }).unwrap();
+            } else {
+                fs::write(f.runtime.join("config.toml"), b"# synthetic external drift\n").unwrap();
+            }
+            assert_eq!(service.inspect_snapshot(&master, &runtime, &snapshot), Err(ServiceError::RevisionConflict));
+            assert!(!f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+            f.auth_unchanged();
+        }
+    }
+
+    #[test]
+    fn disk_inspect_validates_master_while_request_status_needs_no_runtime_or_writer_gate() {
+        let f = Fixture::new();
+        let service = f.open();
+        let writer = service.owner.try_writer().unwrap();
+        assert_eq!(service.inspect(), Err(ServiceError::Ownership));
+        assert_eq!(service.request_status("missing-request"), Ok(None));
+        for id in [String::new(), "x".repeat(129), "bad\nrequest".into()] {
+            assert_eq!(service.request_status(&id), Err(ServiceError::InvalidRequest));
+        }
+        drop(writer);
+        service.db.with_conn(|c| {
+            ai_toolbox_storage::helpers::db_patch_fields(c, DbTable::CodexCommonConfig, "common", &[
+                ("config", json!("model_context_window='invalid'\n")),
+            ])?;
+            Ok(())
+        }).unwrap();
+        assert_eq!(service.inspect(), Err(ServiceError::InvalidMaster));
+        assert!(!f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+        let moved = f._root.path().join("moved-runtime");
+        fs::rename(&f.runtime, &moved).unwrap();
+        assert_eq!(service.request_status("missing-request"), Ok(None));
+        assert!(!f.runtime.exists());
+        assert!(!moved.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+    }
+
+    #[test]
+    fn disk_readers_revalidate_the_original_database_and_bound_master_inspection() {
+        let f = Fixture::new();
+        let service = f.open();
+        let database = f.profile.join(SQLITE_DATABASE_FILE);
+        fs::set_permissions(&database, fs::Permissions::from_mode(0o666)).unwrap();
+        assert_eq!(service.inspect(), Err(ServiceError::Storage));
+        assert_eq!(service.request_status("missing-request"), Err(ServiceError::Storage));
+        fs::set_permissions(&database, fs::Permissions::from_mode(0o600)).unwrap();
+        service.db.with_conn(|c| {
+            ai_toolbox_storage::helpers::db_patch_fields(c, DbTable::CodexCommonConfig, "common", &[
+                ("config", json!(format!("#{}", "x".repeat(MAX_CONFIG_BYTES)))),
+            ])?;
+            Ok(())
+        }).unwrap();
+        assert_eq!(service.inspect(), Err(ServiceError::InvalidMaster));
+        assert_eq!(service.request_status("missing-request"), Ok(None));
+        assert!(!f.runtime.join(crate::owner::RESOURCE_LEASE_FILE).exists());
+        f.auth_unchanged();
+    }
+
+    #[test]
+    fn disk_request_status_reopens_partial_and_verified_rows_without_resuming_or_reading_runtime() {
+        for (checkpoint, expected) in [
+            (Checkpoint::AfterSaved, Phase::SavedOnly),
+            (Checkpoint::AfterStarted, Phase::ProjectionUncertain),
+            (Checkpoint::AfterWrite, Phase::ProjectionUncertain),
+            (Checkpoint::AfterProjected, Phase::ProjectedUnverified),
+            (Checkpoint::None, Phase::Verified),
+        ] {
+            let f = Fixture::new();
+            let service = f.open();
+            let r = request(&service, "inspect-historical-request", Target::Common);
+            let executed = service.execute_at(&r, checkpoint);
+            if checkpoint == Checkpoint::None {
+                assert_eq!(executed.unwrap().phase, Phase::Verified);
+            } else {
+                assert_eq!(executed, Err(ServiceError::Interrupted));
+            }
+            let journal_before = journal_entry(&service, &r);
+            service.db.with_conn(|c| {
+                ai_toolbox_storage::helpers::db_patch_fields(c, DbTable::CodexProvider, "synthetic-provider", &[
+                    ("is_applied", json!(false)),
+                ])?;
+                Ok(())
+            }).unwrap();
+            let moved = f._root.path().join("moved-runtime");
+            fs::rename(&f.runtime, &moved).unwrap();
+            let live_before = fs::read(moved.join("config.toml")).unwrap();
+            let config_inode = fs::metadata(moved.join("config.toml")).unwrap().ino();
+            let auth = AuthWatch::new(&moved.join("auth.json"));
+            let changes = service.db.with_conn(|c| Ok(c.total_changes())).unwrap();
+            let writer = service.owner.try_writer().unwrap();
+            let status = service.request_status(&r.request_id).unwrap().unwrap();
+            assert_eq!(status.request_id, r.request_id);
+            assert_eq!(status.provider_id, "synthetic-provider");
+            assert_eq!(status.outcome.phase, expected);
+            assert!(status.outcome.replay);
+            assert_eq!(status.outcome.exit_code() == 0, expected == Phase::Verified);
+            assert_eq!(journal_entry(&service, &r), journal_before);
+            assert_eq!(service.db.with_conn(|c| Ok(c.total_changes())).unwrap(), changes);
+            auth.assert_quiet();
+            drop(writer);
+            drop(service);
+            let reopened = f.open();
+            assert_eq!(reopened.request_status(&r.request_id).unwrap().unwrap(), status);
+            assert_eq!(journal_entry(&reopened, &r), journal_before);
+            auth.assert_quiet();
+            assert!(!f.runtime.exists());
+            assert_eq!(fs::read(moved.join("config.toml")).unwrap(), live_before);
+            assert_eq!(fs::metadata(moved.join("config.toml")).unwrap().ino(), config_inode);
+        }
+    }
+
     #[test]
     fn disk_common_roundtrip_reopens_and_preserves_auth_unknowns_and_unrequested_fields() {
         let f = Fixture::new();

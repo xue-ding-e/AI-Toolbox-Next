@@ -121,6 +121,7 @@ fn save_official_account(db: &SqliteDbState, provider_id: &str) {
 
 #[test]
 fn official_only_import_uses_local_official_runtime_without_persisted_account() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::official_only_import_uses_local_official_runtime_without_persisted_account")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(official_auth());
@@ -143,6 +144,7 @@ fn official_only_import_uses_local_official_runtime_without_persisted_account() 
 
 #[test]
 fn lazy_list_imports_local_official_runtime_without_persisted_account() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::lazy_list_imports_local_official_runtime_without_persisted_account")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(official_auth());
@@ -163,6 +165,7 @@ fn lazy_list_imports_local_official_runtime_without_persisted_account() {
 
 #[test]
 fn official_only_import_requires_valid_local_official_auth() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::official_only_import_requires_valid_local_official_auth")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_config("model = \"gpt-5.2\"\n");
@@ -180,6 +183,7 @@ fn official_only_import_requires_valid_local_official_auth() {
 
 #[test]
 fn import_uses_fresh_provider_id_even_when_official_account_exists() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::import_uses_fresh_provider_id_even_when_official_account_exists")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(official_auth());
@@ -211,6 +215,7 @@ fn import_uses_fresh_provider_id_even_when_official_account_exists() {
 
 #[test]
 fn startup_and_lazy_import_are_idempotent() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::startup_and_lazy_import_are_idempotent")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(official_auth());
@@ -229,6 +234,7 @@ fn startup_and_lazy_import_are_idempotent() {
 
 #[test]
 fn startup_keeps_third_party_local_config_temporary_even_with_official_runtime() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::startup_keeps_third_party_local_config_temporary_even_with_official_runtime")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(official_auth());
@@ -256,6 +262,7 @@ base_url = "https://example.invalid/v1"
 
 #[test]
 fn does_not_create_provider_without_local_config_files() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::does_not_create_provider_without_local_config_files")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     let db = db_with_codex_root(&root.root_dir);
@@ -272,6 +279,7 @@ fn does_not_create_provider_without_local_config_files() {
 
 #[test]
 fn official_only_import_does_not_import_custom_api_key_config() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::official_only_import_does_not_import_custom_api_key_config")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(json!({
@@ -300,6 +308,7 @@ base_url = "https://example.invalid/v1"
 
 #[test]
 fn official_only_import_does_not_import_custom_top_level_base_url_config() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::official_only_import_does_not_import_custom_top_level_base_url_config")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_config("model = \"gpt-test\"\nbase_url = \"https://example.invalid/v1\"\n");
@@ -317,6 +326,7 @@ fn official_only_import_does_not_import_custom_top_level_base_url_config() {
 
 #[test]
 fn lazy_list_imports_official_auth_as_persisted_provider_without_local_fallback_id() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::lazy_list_imports_official_auth_as_persisted_provider_without_local_fallback_id")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(official_auth());
@@ -336,6 +346,7 @@ fn lazy_list_imports_official_auth_as_persisted_provider_without_local_fallback_
 
 #[test]
 fn lazy_list_keeps_custom_local_config_as_temporary_provider() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::lazy_list_keeps_custom_local_config_as_temporary_provider")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(json!({
@@ -365,6 +376,7 @@ base_url = "https://example.invalid/v1"
 
 #[test]
 fn command_level_e2e_imported_provider_unlocks_official_local_account() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::command_level_e2e_imported_provider_unlocks_official_local_account")) else { return; };
     let _lock = codex_runtime_lock();
     let root = TestCodexRoot::new();
     root.write_auth(official_auth());

@@ -224,6 +224,15 @@ fn read_entry(conn: &Connection, id: &str) -> Result<Option<JournalEntry>, Journ
     Ok(Some(record.entry))
 }
 
+/// Read an existing request by ID through the same closed-record validation as
+/// replay. This does not authorize a write, advance a phase, or need a caller's
+/// fingerprint. Inspect replay_phase() for a conservative interrupted outcome;
+/// reading never persists that interpretation back into the journal.
+pub fn read_status(conn: &Connection, id: &str) -> Result<Option<JournalEntry>, JournalError> {
+    check_id(id)?;
+    read_entry(conn, id)
+}
+
 /// Must precede both revision checking and master-data mutation, so a completed
 /// request can be replayed even though its own writes changed the revision.
 /// Every Replay returns the recorded outcome only; it is not permission to

@@ -981,6 +981,7 @@ async fn write_auth_json_to_disk(
     db: &crate::db::SqliteDbState,
     auth: &Value,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(db).await?;
     let root_dir = codex_auth_root(Some(db)).await?;
     if !root_dir.exists() {
         fs::create_dir_all(&root_dir)
@@ -2512,6 +2513,7 @@ pub async fn apply_codex_official_account(
     provider_id: String,
     account_id: String,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     ensure_persisted_provider_id(&provider_id)?;
     let provider = query_provider(&db, &provider_id).await?;
@@ -2597,6 +2599,7 @@ pub async fn refresh_applied_codex_accounts_if_needed(
     db: &SqliteDbState,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(db).await?;
     let accounts = db.with_conn(|conn| {
         Ok(db_list(conn, DbTable::CodexOfficialAccount, None)?
             .into_iter()
@@ -2633,12 +2636,13 @@ pub async fn refresh_applied_codex_accounts_if_needed(
 }
 
 #[tauri::command]
-pub async fn refresh_codex_official_account_limits(
+pub async fn refresh_codex_official_account_limits<R: tauri::Runtime>(
     state: tauri::State<'_, SqliteDbState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     provider_id: String,
     account_id: String,
 ) -> Result<CodexOfficialAccount, String> {
+    let _codex_admission = crate::management_admission::admit_legacy_codex(state.db()).await?;
     let db = state.db();
     ensure_persisted_provider_id(&provider_id)?;
     let provider = query_provider(&db, &provider_id).await?;
@@ -2674,7 +2678,7 @@ pub async fn refresh_codex_official_account_limits(
 
 /// The live `auth.json` now holds a rotated credential, so the same consumers
 /// as apply need to be told (tray + WSL sync target).
-fn emit_runtime_credential_changed(app: &tauri::AppHandle) {
+fn emit_runtime_credential_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let _ = app.emit("config-changed", "window");
     #[cfg(target_os = "windows")]
     let _ = app.emit("wsl-sync-request-codex", ());

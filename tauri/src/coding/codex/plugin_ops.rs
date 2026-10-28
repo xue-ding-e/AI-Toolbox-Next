@@ -192,7 +192,13 @@ fn install_plugin_atomically(source_path: &Path, target_dir: &Path) -> Result<()
 pub async fn ensure_codex_plugins_feature_enabled(
     db: &crate::db::SqliteDbState,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_codex(db).await?;
     let config_path = crate::coding::runtime_location::get_codex_config_path_async(db).await?;
+    let runtime_root = config_path
+        .parent()
+        .ok_or_else(|| "The Codex runtime root is unavailable".to_string())?;
+    _runtime_admission.require_runtime(runtime_root)?;
     plugin_toml::set_plugins_feature_enabled(&config_path, true)
 }
 
@@ -200,8 +206,11 @@ pub async fn install_codex_plugin(
     db: &crate::db::SqliteDbState,
     plugin_id: &str,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_codex(db).await?;
     let runtime_location =
         crate::coding::runtime_location::get_codex_runtime_location_async(db).await?;
+    _runtime_admission.require_runtime(&runtime_location.host_path)?;
     let (plugin_name, marketplace_name) = parse_plugin_id(plugin_id)?;
     let marketplace_plugins = plugin_state::list_codex_marketplace_plugins(db).await?;
     let marketplace_plugin = marketplace_plugins
@@ -247,6 +256,7 @@ pub async fn install_codex_plugin(
         &version,
     );
 
+    _runtime_admission.ensure_current()?;
     if let Some(parent_dir) = target_dir.parent() {
         fs::create_dir_all(parent_dir)
             .map_err(|error| format!("Failed to create {}: {}", parent_dir.display(), error))?;
@@ -265,8 +275,11 @@ pub async fn uninstall_codex_plugin(
     db: &crate::db::SqliteDbState,
     plugin_id: &str,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_codex(db).await?;
     let runtime_location =
         crate::coding::runtime_location::get_codex_runtime_location_async(db).await?;
+    _runtime_admission.require_runtime(&runtime_location.host_path)?;
     let (plugin_name, marketplace_name) = parse_plugin_id(plugin_id)?;
     let plugin_dir = plugin_base_dir(&runtime_location.host_path, &marketplace_name, &plugin_name);
     remove_path(&plugin_dir)?;
@@ -281,8 +294,11 @@ pub async fn set_codex_plugin_enabled(
     plugin_id: &str,
     enabled: bool,
 ) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_codex(db).await?;
     let runtime_location =
         crate::coding::runtime_location::get_codex_runtime_location_async(db).await?;
+    _runtime_admission.require_runtime(&runtime_location.host_path)?;
     let config_path = runtime_location.host_path.join("config.toml");
     if enabled {
         plugin_toml::set_plugins_feature_enabled(&config_path, true)?;
@@ -294,14 +310,18 @@ pub async fn set_codex_installed_plugins_enabled(
     db: &crate::db::SqliteDbState,
     enabled: bool,
 ) -> Result<usize, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = crate::management_admission::admit_legacy_codex(db).await?;
     let runtime_location =
         crate::coding::runtime_location::get_codex_runtime_location_async(db).await?;
+    _runtime_admission.require_runtime(&runtime_location.host_path)?;
     let installed_plugins = plugin_state::list_codex_installed_plugins(db).await?;
     let plugin_ids: Vec<String> = installed_plugins
         .into_iter()
         .map(|plugin| plugin.plugin_id)
         .collect();
     let config_path = runtime_location.host_path.join("config.toml");
+    _runtime_admission.ensure_current()?;
     plugin_toml::set_plugins_enabled(&config_path, &plugin_ids, enabled)?;
     Ok(plugin_ids.len())
 }

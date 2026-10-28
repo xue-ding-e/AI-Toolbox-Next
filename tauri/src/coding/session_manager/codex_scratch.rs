@@ -442,6 +442,17 @@ pub(super) fn run_cleanup(
     run_cleanup_with_references(requests, options, summary, &HashMap::new());
 }
 
+pub(super) fn run_cleanup_with_session(
+    requests: &[CodexCleanupRequest],
+    options: CodexCleanupOptions,
+    summary: &mut CodexCleanupSummary,
+    profile_session: super::ProfileSession,
+) {
+    run_cleanup_with_references_and_session(
+        requests, options, summary, &HashMap::new(), profile_session,
+    );
+}
+
 /// [`run_cleanup`] with the rollout scans a caller has already performed.
 ///
 /// A residue cleanup reads the same reference sets to decide what to offer, so it
@@ -452,8 +463,76 @@ pub(super) fn run_cleanup_with_references(
     summary: &mut CodexCleanupSummary,
     known_references: &HashMap<PathBuf, Option<ReferenceKeys>>,
 ) {
+    let profile_session = match crate::management_admission::reject_managed_operation() {
+        Ok(session) => session,
+        Err(error) => {
+            // Preserve the auxiliary-cleanup contract without exposing paths.
+            summary.push_failure("Codex scratch cleanup", error);
+            return;
+        }
+    };
+
+    run_cleanup_with_references_and_session(
+        requests, options, summary, known_references, profile_session,
+    );
+}
+
+fn ensure_cleanup_profile_session(profile_session: &super::ProfileSession) -> Result<(), String> {
+    #[cfg(not(test))]
+    if profile_session.is_none() {
+        return Err("The GUI profile owner is unavailable".to_string());
+    }
+    if let Some(session) = profile_session {
+        session.ensure_current()?;
+        if session.is_managed() {
+            return Err("This operation is not supported while managed Codex writes are enabled".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn run_cleanup_with_references_and_session(
+    requests: &[CodexCleanupRequest],
+    options: CodexCleanupOptions,
+    summary: &mut CodexCleanupSummary,
+    known_references: &HashMap<PathBuf, Option<ReferenceKeys>>,
+    profile_session: super::ProfileSession,
+) {
+    if let Err(error) = ensure_cleanup_profile_session(&profile_session) {
+        summary.push_failure("Codex scratch cleanup", error);
+        return;
+    }
+
     if options.is_empty() {
         return;
+    }
+
+    // Requests carry config.toml resolved from a trusted Codex context, not
+    // a root guessed from a rollout or the workspace being removed.
+    let mut runtime_admissions = Vec::new();
+    for request in requests {
+        let Some(codex_home) = request.config_path.parent() else {
+            summary.push_failure(
+                "Codex scratch cleanup",
+                "The Codex runtime root is unavailable".to_string(),
+            );
+            return;
+        };
+        match crate::management_admission::admit_legacy_runtime_with_session(
+            profile_session.clone(), codex_home,
+        ) {
+            Ok(admission) => runtime_admissions.push(admission),
+            Err(error) => {
+                summary.push_failure("Codex scratch cleanup", error);
+                return;
+            }
+        }
+    }
+    for admission in &runtime_admissions {
+        if let Err(error) = admission.ensure_current() {
+            summary.push_failure("Codex scratch cleanup", error);
+            return;
+        }
     }
 
     let mut config_cache: HashMap<PathBuf, ConfigRead> = HashMap::new();
@@ -503,6 +582,12 @@ pub(super) fn run_cleanup_with_references(
                         // report — counting it as removed would overstate what the
                         // cleanup changed.
                     } else {
+                        for admission in &runtime_admissions {
+                            if let Err(error) = admission.ensure_current() {
+                                summary.push_failure("Codex scratch cleanup", error);
+                                return;
+                            }
+                        }
                         match scratch::remove_workspace(&request.workspace_path) {
                             Ok(()) => summary
                                 .removed_workspaces
@@ -557,6 +642,12 @@ pub(super) fn run_cleanup_with_references(
     for (config_path, mut keys) in trust_keys_by_config {
         keys.sort();
         keys.dedup();
+        for admission in &runtime_admissions {
+            if let Err(error) = admission.ensure_current() {
+                summary.push_failure("Codex scratch cleanup", error);
+                return;
+            }
+        }
         match scratch::remove_trust_keys(&config_path, &keys) {
             // Only the keys the file actually held: a key removed by another
             // writer in the meantime (Codex running) is not a removal to report.
@@ -658,8 +749,37 @@ pub(super) fn clean_residue(
     trust_keys: &[String],
     date_dirs: &[String],
 ) -> CodexCleanupSummary {
-    let sources = collect_residue_sources(contexts, source_mode);
     let mut summary = CodexCleanupSummary::default();
+    let profile_session = match crate::management_admission::reject_managed_operation() {
+        Ok(session) => session,
+        Err(error) => {
+            // Date-directory cleanup below is independent of run_cleanup.
+            summary.push_failure("Codex scratch cleanup", error);
+            return summary;
+        }
+    };
+
+    clean_residue_with_session(
+        contexts, source_mode, workspace_paths, trust_keys, date_dirs, profile_session,
+    )
+}
+
+pub(super) fn clean_residue_with_session(
+    contexts: &SessionContextSet,
+    source_mode: SessionSourceMode,
+    workspace_paths: &[String],
+    trust_keys: &[String],
+    date_dirs: &[String],
+    profile_session: super::ProfileSession,
+) -> CodexCleanupSummary {
+    let mut summary = CodexCleanupSummary::default();
+    if let Err(error) = ensure_cleanup_profile_session(&profile_session) {
+        summary.push_failure("Codex scratch cleanup", error);
+        return summary;
+    }
+    // Preserve the existing read-only source discovery. A source is not a
+    // writer target until a selected workspace, trust key or date belongs to it.
+    let sources = collect_residue_sources(contexts, source_mode);
 
     // The scans just performed answer the eligibility question below, so the
     // cleanup does not walk the same rollout trees a second time.
@@ -756,7 +876,7 @@ pub(super) fn clean_residue(
 
     // Workspaces first: removing one may empty a date directory the caller also
     // selected, and the empty-directory removal then converges on a missing path.
-    run_cleanup_with_references(
+    run_cleanup_with_references_and_session(
         &requests,
         CodexCleanupOptions {
             remove_workspace: !workspace_paths.is_empty(),
@@ -764,19 +884,40 @@ pub(super) fn clean_residue(
         },
         &mut summary,
         &reference_sets,
+        profile_session.clone(),
     );
 
+    let mut runtime_admissions = Vec::new();
     for date_dir in date_dirs {
         let Some(anchor) = scratch::codex_scratch_date_anchor(date_dir) else {
             summary.push_skip(date_dir, "not a Codex scratch date directory");
             continue;
         };
-        if !sources
+        let Some(source) = sources
             .iter()
-            .any(|source| source.anchors_match_anchor(&anchor))
-        {
+            .find(|source| source.anchors_match_anchor(&anchor))
+        else {
             summary.push_skip(date_dir, "not inside a Codex scratch root");
             continue;
+        };
+        let Some((codex_home, _)) = codex_context_paths(&source.entry) else {
+            summary.push_failure("Codex scratch cleanup", "The Codex runtime root is unavailable".to_string());
+            return summary;
+        };
+        match crate::management_admission::admit_legacy_runtime_with_session(
+            profile_session.clone(), &codex_home,
+        ) {
+            Ok(admission) => runtime_admissions.push(admission),
+            Err(error) => {
+                summary.push_failure("Codex scratch cleanup", error);
+                return summary;
+            }
+        }
+        for admission in &runtime_admissions {
+            if let Err(error) = admission.ensure_current() {
+                summary.push_failure("Codex scratch cleanup", error);
+                return summary;
+            }
         }
         match scratch::remove_empty_date_dir(date_dir) {
             Ok(()) => summary.removed_date_dirs.push(date_dir.clone()),
@@ -2051,5 +2192,160 @@ mod tests {
             summary.skipped[0].reason
         );
         assert!(summary.failures.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ordinary_cleanup_worker_leases_only_sources_of_selected_effects() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Arc;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-scratch-selection-")
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let selected = directory.path().join("selected");
+        let unrelated = directory.path().join("unrelated");
+        for home in [&selected, &unrelated] {
+            fs::create_dir(home).unwrap();
+            fs::set_permissions(home, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let missing = directory.path().join("missing-wsl-parent/home");
+        let workspace = scratch_workspace(directory.path(), "2026-09-25", "synthetic");
+        let date_dir = workspace.parent().unwrap().to_path_buf();
+        fs::write(workspace.join("note.txt"), "synthetic workspace").unwrap();
+        let config = trust_entry(&workspace);
+        fs::write(selected.join("config.toml"), &config).unwrap();
+        let contexts = crate::coding::session_manager::session_context_set(
+            [&missing, &unrelated, &selected].into_iter().map(|home| SessionContextEntry {
+                context: ToolSessionContext::Codex {
+                    sessions_root: home.join("sessions"),
+                    codex_home: Some(home.to_path_buf()),
+                },
+                source: if home == &selected { SessionRuntimeSource::Local } else { SessionRuntimeSource::Wsl },
+                distro: (home != &selected).then(|| "synthetic-only".to_string()),
+            }).collect(),
+        );
+        let session_at = |name: &str| {
+            let path = directory.path().join(name);
+            fs::create_dir(&path).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            crate::management_admission::GuiProfileSession::ordinary(
+                ai_toolbox_management::owner::ProfileLeaseStartup::acquire(&path)
+                    .unwrap().into_ordinary(),
+            )
+        };
+        let writer = session_at("writer-profile");
+        let run_worker = |session: Arc<crate::management_admission::GuiProfileSession>| {
+            let contexts = contexts.clone();
+            let path = workspace.to_string_lossy().to_string();
+            let date = date_dir.to_string_lossy().to_string();
+            std::thread::spawn(move || clean_residue_with_session(
+                &contexts, SessionSourceMode::All, &[path.clone()], &[path], &[date], Some(session),
+            )).join().unwrap()
+        };
+        {
+            let holder = session_at("selected-holder-profile");
+            let _held = crate::management_admission::admit_legacy_runtime_with_session(
+                Some(holder.clone()), &selected,
+            ).unwrap();
+            let refused = run_worker(writer.clone());
+            assert!(refused.removed_workspaces.is_empty());
+            assert!(refused.removed_trust_keys.is_empty());
+            assert!(refused.removed_date_dirs.is_empty());
+            assert!(!refused.failures.is_empty());
+            for failure in refused.failures {
+                assert_eq!(failure.target, "Codex scratch cleanup");
+                assert_eq!(failure.error,
+                    "The Codex runtime cannot be coordinated; no business write was started");
+            }
+            assert!(workspace.join("note.txt").exists());
+            assert_eq!(fs::read_to_string(selected.join("config.toml")).unwrap(), config);
+        }
+        let unrelated_holder = session_at("unrelated-holder-profile");
+        let _unrelated_held = crate::management_admission::admit_legacy_runtime_with_session(
+            Some(unrelated_holder.clone()), &unrelated,
+        ).unwrap();
+        // A contended unrelated source and a nonexistent WSL source must not
+        // prevent the selected local cleanup or create either source's home.
+        let accepted = run_worker(writer);
+        assert!(accepted.failures.is_empty(), "{:?}", accepted.failures);
+        assert_eq!(accepted.removed_workspaces.len(), 1);
+        assert_eq!(accepted.removed_trust_keys.len(), 1);
+        assert_eq!(accepted.removed_date_dirs.len(), 1);
+        assert!(!workspace.exists());
+        assert!(!date_dir.exists());
+        assert!(!missing.parent().unwrap().exists());
+        assert!(!unrelated.join("config.toml").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_cleanup_preserves_workspace_trust_and_date_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-managed-scratch-")
+            .tempdir_in(std::env::temp_dir())
+            .expect("create isolated managed fixture");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let owner = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(directory.path())
+            .unwrap()
+            .into_managed()
+            .unwrap();
+        let session = crate::management_admission::GuiProfileSession::managed(owner);
+        let codex_home = directory.path().join("runtime");
+        fs::create_dir_all(&codex_home).unwrap();
+        let workspace = scratch_workspace(directory.path(), "2026-09-25", "synthetic");
+        let marker = workspace.join("note.txt");
+        fs::write(&marker, "synthetic workspace").unwrap();
+        let config_path = codex_home.join("config.toml");
+        let config = trust_entry(&workspace);
+        fs::write(&config_path, &config).unwrap();
+        let date_dir = directory.path().join("Documents/Codex/2026-09-26");
+        fs::create_dir_all(&date_dir).unwrap();
+        let request = cleanup_request(&codex_home, &workspace);
+        let mut references = HashMap::new();
+        references.insert(request.sessions_root.clone(), Some(HashSet::new()));
+        let _scope = crate::management_admission::test_session(&session);
+        let mut summary = CodexCleanupSummary::default();
+        run_cleanup_with_references(
+            &[request],
+            CodexCleanupOptions {
+                remove_workspace: true,
+                remove_trust_entry: true,
+            },
+            &mut summary,
+            &references,
+        );
+        // An empty source set keeps this rejection test independent of the
+        // host's Documents directory even if an admission regression occurs.
+        let contexts = SessionContextSet {
+            entries: Vec::new(),
+            available_sources: Vec::new(),
+        };
+        let date_summary = clean_residue(
+            &contexts,
+            SessionSourceMode::All,
+            &[],
+            &[],
+            &[date_dir.to_string_lossy().to_string()],
+        );
+        for result in [&summary, &date_summary] {
+            assert!(result.removed_workspaces.is_empty());
+            assert!(result.removed_trust_keys.is_empty());
+            assert!(result.removed_date_dirs.is_empty());
+            assert!(result.skipped.is_empty());
+            assert_eq!(result.failures.len(), 1);
+            assert_eq!(result.failures[0].target, "Codex scratch cleanup");
+            assert_eq!(
+                result.failures[0].error,
+                "This operation is not supported while managed Codex writes are enabled"
+            );
+        }
+        assert_eq!(fs::read_to_string(marker).unwrap(), "synthetic workspace");
+        assert_eq!(fs::read_to_string(config_path).unwrap(), config);
+        assert!(date_dir.is_dir());
     }
 }

@@ -14,6 +14,10 @@ pub async fn apply_or_switch_provider<R: Runtime>(
     provider_id: &str,
     from_tray: bool,
 ) -> Result<GatewayCliTakeoverStatus, String> {
+    // Provider apply can write auxiliary state outside the gateway target list.
+    // Until that whole transaction is admitted, managed mode rejects it before
+    // resolving application state; ordinary behavior is unchanged.
+    let _session = crate::management_admission::reject_managed_operation()?;
     // Keep restore -> apply -> re-engage atomic with respect to a data-root switch.
     let _data_dir_transition = crate::app_paths::DATA_DIR_CHANGE_LOCK.lock().await;
     let gateway_state = app.state::<ProxyGatewayState>();
@@ -21,6 +25,7 @@ pub async fn apply_or_switch_provider<R: Runtime>(
     let db_state = app.state::<SqliteDbState>();
     let db = db_state.db();
     let paths = proxy_gateway_paths(app)?;
+    let _admission = cli_proxy::admit_gateway_write(db, cli_key).await?;
     let gateway_status = current_gateway_status(&gateway_state)?;
     let current_status = cli_proxy::cli_takeover_status(db, &paths, cli_key, &gateway_status).await;
 

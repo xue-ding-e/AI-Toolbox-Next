@@ -12,6 +12,7 @@ mod config_file;
 mod codex_service;
 
 pub mod coordination;
+pub mod context_session;
 pub mod owner;
 pub mod transport;
 

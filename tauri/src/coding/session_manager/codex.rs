@@ -713,6 +713,7 @@ fn is_rollout_artifact_file(path: &Path) -> bool {
 /// goes). Without a resolvable id or sessions root there is nothing to collapse
 /// onto, so the requested file alone is removed.
 pub fn delete_session(path: &Path) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let artifacts = match (find_sessions_root(path), artifact_session_id(path)) {
         (Some(root), Some(session_id)) => {
             let mut artifacts = session_artifacts(&root, &session_id);
@@ -785,6 +786,7 @@ fn ensure_no_external_references(path: &Path, artifacts: &[PathBuf]) -> Result<(
 }
 
 pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let normalized_title = next_title.trim();
     if normalized_title.is_empty() {
         return Err("Session title cannot be empty".to_string());
@@ -850,6 +852,7 @@ pub fn import_native_snapshot(
     session_id: &str,
     snapshot: &serde_json::Value,
 ) -> Result<PathBuf, String> {
+    let _profile_session = crate::management_admission::reject_managed_operation()?;
     let relative_session_path = snapshot
         .get("relativeSessionPath")
         .and_then(serde_json::Value::as_str)
@@ -2026,5 +2029,60 @@ mod tests {
             sessions[0].resume_command.as_deref(),
             Some("pushd \"D:/GitHub/project with space\" && codex resume 11111111-2222-3333-4444-555555555555")
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_session_mutations_preserve_rollout_index_and_import_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-managed-session-")
+            .tempdir_in(std::env::temp_dir())
+            .expect("create isolated managed fixture");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let owner = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(directory.path())
+            .unwrap()
+            .into_managed()
+            .unwrap();
+        let session = crate::management_admission::GuiProfileSession::managed(owner);
+        let sessions_root = directory.path().join("runtime/sessions");
+        let id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+        let rollout = sessions_root.join(format!("rollout-2026-09-17T10-00-00-{id}.jsonl"));
+        write_session_meta(&rollout, id);
+        let rollout_bytes = fs::read(&rollout).unwrap();
+        let index = sessions_root.parent().unwrap().join("session_index.jsonl");
+        fs::write(&index, "index sentinel\n").unwrap();
+        let snapshot = serde_json::json!({
+            "relativeSessionPath": "new/rollout-imported.jsonl",
+            "sessionFileContent": "synthetic imported session\n",
+        });
+        let scope = crate::management_admission::test_session(&session);
+        let expected = "This operation is not supported while managed Codex writes are enabled";
+
+        assert_eq!(delete_session(&rollout).unwrap_err(), expected);
+        assert_eq!(
+            super::rename_session(rollout.to_str().unwrap(), "new title").unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            super::import_native_snapshot(&sessions_root, "imported", &snapshot).unwrap_err(),
+            expected
+        );
+        assert_eq!(fs::read(&rollout).unwrap(), rollout_bytes);
+        assert_eq!(fs::read_to_string(&index).unwrap(), "index sentinel\n");
+        assert!(!sessions_root.join("new").exists());
+        // Snapshot reads do not acquire the unsupported-write gate.
+        assert!(super::export_native_snapshot(&sessions_root, &rollout).is_ok());
+
+        drop(scope);
+        drop(session);
+        let lease = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(directory.path())
+            .unwrap()
+            .into_ordinary();
+        let ordinary = crate::management_admission::GuiProfileSession::ordinary(lease);
+        let _ordinary_scope = crate::management_admission::test_session(&ordinary);
+        super::rename_session(rollout.to_str().unwrap(), "ordinary title").unwrap();
+        assert!(fs::read_to_string(index).unwrap().contains("ordinary title"));
     }
 }

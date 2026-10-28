@@ -412,9 +412,18 @@ async fn apply_record<F, Fut>(
 async fn reapply_codex<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
     use crate::coding::codex;
 
+    let mut result = ReapplyCliResult::default();
+    // Recovery is an unsupported managed writer, even when no applied row is
+    // present. Do not query/import state or probe a target before admission.
+    let admission = match crate::management_admission::reject_managed_operation() {
+        Ok(admission) => admission,
+        Err(error) => {
+            result.warnings.push(error);
+            return result;
+        }
+    };
     let db_state = app.state::<SqliteDbState>();
     let db = db_state.db();
-    let mut result = ReapplyCliResult::default();
     let provider_id = resolve_record_id(
         &mut result,
         "provider",
@@ -444,6 +453,12 @@ async fn reapply_codex<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
         }
     }
 
+    if let Some(session) = &admission {
+        if let Err(error) = session.ensure_current() {
+            result.warnings.push(error);
+            return result;
+        }
+    }
     if gateway_locked(app, GatewayCliKey::Codex) {
         if let Some(provider_id) = provider_id {
             result.warnings.push(format!(
@@ -462,6 +477,12 @@ async fn reapply_codex<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
         .await;
     }
 
+    if let Some(session) = &admission {
+        if let Err(error) = session.ensure_current() {
+            result.warnings.push(error);
+            return result;
+        }
+    }
     apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
         codex::apply_prompt_config_internal_without_events(app.state(), app, &prompt_id).await
     })
@@ -1246,6 +1267,50 @@ mod tests {
         apply_record, resolve_record_id, restore_reapply_mode, unchanged_wsl_modules,
         wsl_module_for_reapply_label, ReapplyCliResult, RestoreReapplyMode,
     };
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_codex_reapply_rejects_before_requesting_database_state() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::Builder::new()
+            .prefix("ai-toolbox-managed-reapply-")
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        let owner = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(directory.path())
+            .unwrap()
+            .into_managed()
+            .unwrap();
+        let session = crate::management_admission::GuiProfileSession::managed(owner);
+        let scope = crate::management_admission::test_session(&session);
+        // Deliberately no DB state: reaching app.state() would panic. This calls
+        // the real reapply entry, not a replacement implementation of the gate.
+        let app = tauri::test::mock_app();
+        let result = super::reapply_codex(app.handle()).await;
+        assert!(result.applied.is_empty());
+        assert_eq!(result.warnings, vec![
+            "This operation is not supported while managed Codex writes are enabled"
+        ]);
+
+        drop(session);
+        let expired = super::reapply_codex(app.handle()).await;
+        assert!(expired.applied.is_empty());
+        assert_eq!(expired.warnings, vec!["The GUI profile owner is unavailable"]);
+        drop(scope);
+
+        let lease = ai_toolbox_management::owner::ProfileLeaseStartup::acquire(directory.path())
+            .unwrap()
+            .into_ordinary();
+        let ordinary = crate::management_admission::GuiProfileSession::ordinary(lease);
+        let _scope = crate::management_admission::test_session(&ordinary);
+        use tauri::Manager;
+        app.manage(crate::db::SqliteDbState::in_memory_for_test().unwrap());
+        let result = super::reapply_codex(app.handle()).await;
+        assert!(result.applied.is_empty());
+        assert!(result.warnings.is_empty());
+    }
 
     #[tokio::test]
     async fn failed_provider_step_does_not_prevent_prompt_step() {

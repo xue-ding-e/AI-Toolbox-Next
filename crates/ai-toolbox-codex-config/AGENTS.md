@@ -23,6 +23,7 @@
 - 桌面原有回归：`cargo test --manifest-path tauri/Cargo.toml --lib append_toml_configs`；修改组合行为还须运行完整 Codex 回归与仓库全量闸门。
 - `plan_context_patch` 是两个显式正 i64 根键的纯候选计划。分别校验 common/provider 主数据及最终 effective 阈值，避免 provider 暂时遮蔽无效 common 数据；未设置的 context 不从模型缓存虚构默认值。
 - candidate 包含完整主数据文本，可能包含敏感字段，只供服务内部使用；未来 CLI 默认输出不得直接序列化它，须用 typed/redacted diff。
+- 只读 override inspection 与 patch plan 共用同一层校验和 effective/source 解释 helper，继续调用唯一 merger；inspection 只返回两项显式值，不返回原文/candidate，不把空 patch 变成有效写请求，也不推断模型默认值。
 - storage/apply/verify、profile owner 和 CLI/MCP 业务入口仍未完成；纯计划不能返回 saved/applied/verified 成功。
 - `plan_context_projection` 仅在调用方提供的 live TOML 文本上计划两个 context 根键；复用 `plan_context_patch` 的 effective 值及同一个保留 decor 的 set，不能调用会清理认证字段的完整桌面投影函数。
 - `ContextPatch` 的 `None` 表示不请求修改，不是删除；只有明确请求的键可以新增或更新。common 被 provider 遮蔽时仍按 effective provider 值投影，并保留 shadowed 说明；不能为纠正 live 漂移修改未请求键。

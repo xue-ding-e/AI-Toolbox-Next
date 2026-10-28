@@ -916,7 +916,15 @@ async fn resolve_codex_runtime_location_uncached_async(
         })
         .await;
 
-    let (path, source) = if let Some(path) = path_info {
+    resolve_codex_runtime_location_for_custom_root(path_info.as_deref())
+}
+
+/// Resolve a proposed Codex root using the same precedence as a persisted
+/// record, without saving a record or changing the process runtime cache.
+pub(crate) fn resolve_codex_runtime_location_for_custom_root(
+    custom_root: Option<&str>,
+) -> Result<RuntimeLocationInfo, String> {
+    let (path, source) = if let Some(path) = custom_root {
         (PathBuf::from(path), "custom".to_string())
     } else if let Ok(env_path) = std::env::var("CODEX_HOME") {
         if !env_path.trim().is_empty() {

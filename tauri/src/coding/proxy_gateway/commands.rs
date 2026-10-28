@@ -110,9 +110,11 @@ pub async fn proxy_gateway_update_settings(
     if running {
         settings.enabled_on_startup = true;
     }
-    let previous = settings::load_settings_from_sqlite_state(&sqlite_state)?;
-    let saved = settings::save_settings(&sqlite_state, settings)?;
-    let websocket_gate_changed = saved.codex_websocket_enabled != previous.codex_websocket_enabled;
+    let (saved, projection) = save_settings_with_codex_projection(
+        &sqlite_state,
+        &proxy_gateway_paths(&app)?,
+        settings,
+    )?;
     if running {
         let mut manager = gateway_state
             .manager
@@ -127,11 +129,8 @@ pub async fn proxy_gateway_update_settings(
     // The settings are already saved at this point, so a projection failure is
     // reported as a warning rather than rolling back a valid save; the next
     // toggle or re-engage rewrites the field.
-    if websocket_gate_changed {
-        let projection = proxy_gateway_paths(&app).and_then(|paths| {
-            cli_proxy::reproject_codex_websocket_capability(&paths, saved.codex_websocket_enabled)
-        });
-        match projection {
+    if let Some(projection) = projection {
+        match projection.apply(saved.codex_websocket_enabled) {
             Ok(true) => emit_gateway_cli_wsl_sync_request(&app, GatewayCliKey::Codex),
             Ok(false) => {}
             Err(error) => log::warn!(
@@ -140,6 +139,23 @@ pub async fn proxy_gateway_update_settings(
         }
     }
     Ok(saved)
+}
+
+// Kept as a production helper so synthetic tests can verify that admission
+// failure leaves the DB unchanged without launching the desktop runtime.
+pub(super) fn save_settings_with_codex_projection(
+    sqlite_state: &SqliteDbState,
+    paths: &ProxyGatewayPaths,
+    settings: ProxyGatewaySettings,
+) -> Result<(ProxyGatewaySettings, Option<cli_proxy::CodexWebsocketProjection>), String> {
+    let settings = settings::normalize_settings(settings)?;
+    let previous = settings::load_settings_from_sqlite_state(sqlite_state)?;
+    let websocket_gate_changed = settings.codex_websocket_enabled != previous.codex_websocket_enabled;
+    // Reject an unsupported Codex projection before the settings DB write or
+    // runtime update. No takeover/no field change is not a Codex write.
+    let projection = cli_proxy::prepare_codex_websocket_projection(paths, websocket_gate_changed)?;
+    let saved = settings::save_settings(sqlite_state, settings)?;
+    Ok((saved, projection))
 }
 
 #[tauri::command]
@@ -376,6 +392,7 @@ pub async fn proxy_gateway_engage_single(
         manager.status()
     };
     let paths = proxy_gateway_paths(&app)?;
+    let _admission = cli_proxy::admit_gateway_write(db_state.db(), cli_key).await?;
     let next_status =
         cli_proxy::engage_single_cli(db_state.db(), &paths, cli_key, &status, provider_id).await?;
     gateway_state.clear_provider_cache()?;
@@ -400,6 +417,7 @@ pub async fn proxy_gateway_engage_failover(
         manager.status()
     };
     let paths = proxy_gateway_paths(&app)?;
+    let _admission = cli_proxy::admit_gateway_write(db_state.db(), cli_key).await?;
     let next_status =
         cli_proxy::engage_failover_cli(db_state.db(), &paths, cli_key, &status).await?;
     gateway_state.clear_provider_cache()?;
@@ -437,6 +455,7 @@ pub async fn proxy_gateway_engage_aggregate(
         manager.status()
     };
     let paths = proxy_gateway_paths(&app)?;
+    let _admission = cli_proxy::admit_gateway_write(db_state.db(), cli_key).await?;
     let separator = separator
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -699,6 +718,7 @@ pub async fn proxy_gateway_disengage_failover(
         manager.status()
     };
     let paths = proxy_gateway_paths(&app)?;
+    let _admission = cli_proxy::admit_gateway_write(db_state.db(), cli_key).await?;
     let next_status =
         cli_proxy::disengage_failover_cli(db_state.db(), &paths, cli_key, &status).await?;
     gateway_state.clear_provider_cache()?;
@@ -721,6 +741,7 @@ pub async fn proxy_gateway_restore_cli_direct(
         manager.status()
     };
     let paths = proxy_gateway_paths(&app)?;
+    let _admission = cli_proxy::admit_gateway_write(db_state.db(), cli_key).await?;
     let next_status =
         cli_proxy::restore_cli_direct(db_state.db(), &paths, cli_key, &status).await?;
     gateway_state.clear_provider_cache()?;

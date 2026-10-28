@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::cache_cleanup::get_git_cache_ttl_secs;
+use super::commands::SkillsWriteAdmission;
 use super::central_repo::{
     ensure_central_repo, resolve_central_repo_path, resolve_skill_central_path,
     to_relative_central_path,
@@ -34,6 +35,10 @@ pub async fn install_local_skill(
     source_path: &Path,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    // Central replacement/cache discovery has no complete, stable target plan
+    // yet. Fail before mkdir, proxy setup, clone, staging, or desired-state writes.
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     if !source_path.exists() {
         anyhow::bail!("source path not found: {:?}", source_path);
     }
@@ -44,6 +49,7 @@ pub async fn install_local_skill(
         .unwrap_or_else(|| "unnamed-skill".to_string());
 
     let central_dir = resolve_central_repo_path(app, state).await?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     ensure_central_repo(&central_dir)?;
     let central_path = central_dir.join(&name);
     ensure_source_target_not_overlapping(source_path, &central_path)?;
@@ -56,6 +62,7 @@ pub async fn install_local_skill(
                 .await
                 .ok()
                 .flatten();
+            admission.ensure_current().map_err(anyhow::Error::msg)?;
             std::fs::remove_dir_all(&central_path)
                 .with_context(|| format!("failed to remove existing skill: {:?}", central_path))?;
             existing
@@ -66,6 +73,7 @@ pub async fn install_local_skill(
         None
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     copy_skill_dir(source_path, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", source_path, central_path))?;
 
@@ -110,6 +118,7 @@ pub async fn install_local_skill(
         sync_details: None,
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let skill_id = skill_store::upsert_skill(state, &record)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -161,6 +170,10 @@ pub async fn install_local_skill_from_selection(
     subpath: &str,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    // Central replacement/cache discovery has no complete, stable target plan
+    // yet. Fail before mkdir, proxy setup, clone, staging, or desired-state writes.
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let copy_src = if subpath == "." {
         source_path.to_path_buf()
     } else {
@@ -179,6 +192,7 @@ pub async fn install_local_skill_from_selection(
     });
 
     let central_dir = resolve_central_repo_path(app, state).await?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     ensure_central_repo(&central_dir)?;
     let central_path = central_dir.join(&name);
     ensure_source_target_not_overlapping(&copy_src, &central_path)?;
@@ -190,6 +204,7 @@ pub async fn install_local_skill_from_selection(
                 .await
                 .ok()
                 .flatten();
+            admission.ensure_current().map_err(anyhow::Error::msg)?;
             std::fs::remove_dir_all(&central_path)
                 .with_context(|| format!("failed to remove existing skill: {:?}", central_path))?;
             existing
@@ -200,6 +215,7 @@ pub async fn install_local_skill_from_selection(
         None
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     copy_skill_dir(&copy_src, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
 
@@ -251,6 +267,7 @@ pub async fn install_local_skill_from_selection(
         sync_details: None,
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let skill_id = skill_store::upsert_skill(state, &record)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -271,8 +288,13 @@ pub async fn install_git_skill(
     branch: Option<&str>,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    // Central replacement/cache discovery has no complete, stable target plan
+    // yet. Fail before mkdir, proxy setup, clone, staging, or desired-state writes.
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     // Initialize proxy from app settings
-    init_proxy_from_settings(state).await;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
+    init_proxy_from_settings(state).await?;
 
     let parsed = parse_github_url(repo_url);
     // Use provided branch, or fall back to parsed branch from URL, or default to "main"
@@ -280,6 +302,7 @@ pub async fn install_git_skill(
 
     // Clone first, then read skill name from SKILL.md
     let ttl = get_git_cache_ttl_secs(state).await;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let (repo_dir, rev) = clone_to_cache(app, ttl, &parsed.clone_url, effective_branch)?;
 
     let copy_src = if let Some(subpath) = &parsed.subpath {
@@ -323,6 +346,7 @@ pub async fn install_git_skill(
         .unwrap_or_else(|| derive_name_from_repo_url(&parsed.clone_url));
 
     let central_dir = resolve_central_repo_path(app, state).await?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     ensure_central_repo(&central_dir)?;
     let central_path = central_dir.join(&name);
 
@@ -334,6 +358,7 @@ pub async fn install_git_skill(
                 .await
                 .ok()
                 .flatten();
+            admission.ensure_current().map_err(anyhow::Error::msg)?;
             std::fs::remove_dir_all(&central_path)
                 .with_context(|| format!("failed to remove existing skill: {:?}", central_path))?;
             existing
@@ -344,6 +369,7 @@ pub async fn install_git_skill(
         None
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     copy_skill_dir(&copy_src, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
 
@@ -407,6 +433,7 @@ pub async fn install_git_skill(
         sync_details: None,
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let skill_id = skill_store::upsert_skill(state, &record)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -426,9 +453,14 @@ pub fn list_git_skills(
     repo_url: &str,
     branch: Option<&str>,
 ) -> Result<Vec<GitSkillCandidate>> {
+    // Central replacement/cache discovery has no complete, stable target plan
+    // yet. Fail before mkdir, proxy setup, clone, staging, or desired-state writes.
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let parsed = parse_github_url(repo_url);
     // Use provided branch, or fall back to parsed branch from URL
     let effective_branch = branch.or(parsed.branch.as_deref());
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let (repo_dir, _rev) =
         clone_to_cache(app, cache_ttl_secs, &parsed.clone_url, effective_branch)?;
 
@@ -483,8 +515,13 @@ pub async fn install_git_skill_from_selection(
     branch: Option<&str>,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    // Central replacement/cache discovery has no complete, stable target plan
+    // yet. Fail before mkdir, proxy setup, clone, staging, or desired-state writes.
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     // Initialize proxy from app settings
-    init_proxy_from_settings(state).await;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
+    init_proxy_from_settings(state).await?;
 
     let parsed = parse_github_url(repo_url);
     // Use provided branch, or fall back to parsed branch from URL
@@ -492,6 +529,7 @@ pub async fn install_git_skill_from_selection(
 
     // Clone first, then read skill name from SKILL.md
     let ttl = get_git_cache_ttl_secs(state).await;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let (repo_dir, revision) = clone_to_cache(app, ttl, &parsed.clone_url, effective_branch)?;
 
     let copy_src = if subpath == "." {
@@ -512,6 +550,7 @@ pub async fn install_git_skill_from_selection(
     });
 
     let central_dir = resolve_central_repo_path(app, state).await?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     ensure_central_repo(&central_dir)?;
     let central_path = central_dir.join(&display_name);
 
@@ -523,6 +562,7 @@ pub async fn install_git_skill_from_selection(
                 .await
                 .ok()
                 .flatten();
+            admission.ensure_current().map_err(anyhow::Error::msg)?;
             std::fs::remove_dir_all(&central_path)
                 .with_context(|| format!("failed to remove existing skill: {:?}", central_path))?;
             existing
@@ -533,6 +573,7 @@ pub async fn install_git_skill_from_selection(
         None
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     copy_skill_dir(&copy_src, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
 
@@ -589,6 +630,7 @@ pub async fn install_git_skill_from_selection(
         enabled_tools: Vec::new(),
         sync_details: None,
     };
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let skill_id = skill_store::upsert_skill(state, &record)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -607,8 +649,13 @@ pub async fn update_managed_skill_from_source(
     state: &SqliteDbState,
     skill_id: &str,
 ) -> Result<UpdateResult> {
+    // Central replacement/cache discovery has no complete, stable target plan
+    // yet. Fail before mkdir, proxy setup, clone, staging, or desired-state writes.
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     // Initialize proxy from app settings (for git source types)
-    init_proxy_from_settings(state).await;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
+    init_proxy_from_settings(state).await?;
 
     let record = skill_store::get_skill_by_id(state, skill_id)
         .await
@@ -629,8 +676,10 @@ pub async fn update_managed_skill_from_source(
     let now = now_ms();
 
     // Build new content in a staging dir
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let staging_dir = central_parent.join(format!(".skills-update-{}", Uuid::new_v4()));
     if staging_dir.exists() {
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         let _ = std::fs::remove_dir_all(&staging_dir);
     }
 
@@ -657,6 +706,7 @@ pub async fn update_managed_skill_from_source(
             anyhow::bail!("path not found in repo: {:?}", copy_src);
         }
 
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         copy_skill_dir(&copy_src, &staging_dir)
             .with_context(|| format!("copy {:?} -> {:?}", copy_src, staging_dir))?;
     } else if record.source_type == "local" {
@@ -668,6 +718,7 @@ pub async fn update_managed_skill_from_source(
         if !source_path.exists() {
             anyhow::bail!("source path not found: {:?}", source_path);
         }
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         copy_skill_dir(&source_path, &staging_dir)
             .with_context(|| format!("copy {:?} -> {:?}", source_path, staging_dir))?;
     } else {
@@ -683,6 +734,7 @@ pub async fn update_managed_skill_from_source(
     let staged_hash = compute_content_hash(&staging_dir);
     let current_hash = compute_content_hash(&central_path);
     if staged_hash.is_some() && staged_hash == current_hash {
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         let _ = std::fs::remove_dir_all(&staging_dir);
         log::debug!(
             "[update] content unchanged, skipping swap for '{}'",
@@ -716,6 +768,7 @@ pub async fn update_managed_skill_from_source(
             enabled_tools: record.enabled_tools.clone(),
             sync_details: record.sync_details.clone(),
         };
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         skill_store::upsert_skill(state, &updated)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
@@ -735,14 +788,18 @@ pub async fn update_managed_skill_from_source(
     // it: the central dir may contain direct user edits (or edits made through
     // a symlinked tool directory) that an update would otherwise lose. Copies
     // are pruned to the newest 5 per skill.
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     backup_central_before_replace(app, &record, &central_path)?;
 
     // Swap: remove old dir and rename staging into place
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     std::fs::remove_dir_all(&central_path)
         .with_context(|| format!("failed to remove old central dir {:?}", central_path))?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     if let Err(err) = std::fs::rename(&staging_dir, &central_path) {
         copy_dir_recursive(&staging_dir, &central_path)
             .with_context(|| format!("fallback copy {:?} -> {:?}", staging_dir, central_path))?;
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         let _ = std::fs::remove_dir_all(&staging_dir);
         log::warn!("[update] rename warning: {}", err);
     }
@@ -773,6 +830,7 @@ pub async fn update_managed_skill_from_source(
         enabled_tools: record.enabled_tools.clone(),
         sync_details: record.sync_details.clone(),
     };
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     skill_store::upsert_skill(state, &updated)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -831,6 +889,7 @@ pub async fn update_managed_skill_from_source(
             || crate::coding::tools::builtin_tool_forces_skill_copy(&t.tool)
             || custom_tool_force_copy;
 
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         let sync_result = if target_path_moved {
             let sync_result = sync_skill_to_target(
                 &t.tool,
@@ -862,6 +921,7 @@ pub async fn update_managed_skill_from_source(
             synced_at: Some(now),
             error_message: None,
         };
+        admission.ensure_current().map_err(anyhow::Error::msg)?;
         let _ = skill_store::upsert_skill_target(state, skill_id, &target_record).await;
 
         if !updated_targets.iter().any(|tool| tool == &t.tool) {
@@ -1175,9 +1235,14 @@ fn clone_to_cache(
     clone_url: &str,
     branch: Option<&str>,
 ) -> Result<(PathBuf, String)> {
+    // Central replacement/cache discovery has no complete, stable target plan
+    // yet. Fail before mkdir, proxy setup, clone, staging, or desired-state writes.
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let _ = app;
     let cache_dir = crate::app_paths::resolved_cache_dir();
     let cache_root = cache_dir.join("skills-git-cache");
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     std::fs::create_dir_all(&cache_root)
         .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
 
@@ -1201,17 +1266,21 @@ fn clone_to_cache(
         }
     }
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let rev = match clone_or_pull(clone_url, &repo_dir, branch) {
         Ok(rev) => rev,
         Err(err) => {
             // If cache got corrupted, retry once from a clean state
             if repo_dir.exists() {
+                admission.ensure_current().map_err(anyhow::Error::msg)?;
                 let _ = std::fs::remove_dir_all(&repo_dir);
             }
+            admission.ensure_current().map_err(anyhow::Error::msg)?;
             clone_or_pull(clone_url, &repo_dir, branch).with_context(|| format!("{:#}", err))?
         }
     };
 
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     let _ = std::fs::write(
         &meta_path,
         serde_json::to_string(&RepoCacheMeta {
@@ -1236,12 +1305,40 @@ fn repo_cache_key(clone_url: &str, branch: Option<&str>) -> String {
 }
 
 /// Initialize proxy settings from app settings database
-async fn init_proxy_from_settings(state: &SqliteDbState) {
+async fn init_proxy_from_settings(state: &SqliteDbState) -> Result<()> {
+    let admission = SkillsWriteAdmission::unsupported().map_err(anyhow::Error::msg)?;
     let proxy_result = http_client::get_proxy_from_settings(state).await.ok();
     let proxy_mode = match proxy_result {
         Some((http_client::ProxyMode::Direct, _)) => GitProxyMode::Direct,
         Some((http_client::ProxyMode::Custom, url)) if !url.is_empty() => GitProxyMode::Custom(url),
         _ => GitProxyMode::System,
     };
+    admission.ensure_current().map_err(anyhow::Error::msg)?;
     set_proxy(proxy_mode);
+    Ok(())
+}
+
+#[cfg(test)]
+mod managed_install_admission_order_tests {
+    // Source-order checks supplement the command fixtures: these entry points
+    // must reject before discovery can initialize proxy/cache/central state.
+    #[test]
+    fn unsupported_installers_reject_before_first_mutating_step() {
+        let source = include_str!("installer.rs");
+        for (name, first_effect) in [
+            ("install_local_skill", "ensure_central_repo("),
+            ("install_local_skill_from_selection", "ensure_central_repo("),
+            ("install_git_skill", "init_proxy_from_settings("),
+            ("install_git_skill_from_selection", "init_proxy_from_settings("),
+            ("update_managed_skill_from_source", "init_proxy_from_settings("),
+            ("list_git_skills", "clone_to_cache("),
+            ("clone_to_cache", "std::fs::create_dir_all("),
+        ] {
+            let start = source.find(&format!("fn {}(", name)).unwrap();
+            let body = &source[start..];
+            let guard = body.find("SkillsWriteAdmission::unsupported()").unwrap();
+            let effect = body.find(first_effect).unwrap();
+            assert!(guard < effect, "{} must reject before {}", name, first_effect);
+        }
+    }
 }

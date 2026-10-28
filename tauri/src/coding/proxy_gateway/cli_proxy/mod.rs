@@ -26,6 +26,81 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use toml_edit::{value, DocumentMut, Item};
 
+// Keep admission alive across backups, manifest writes, rollback, and status.
+// Nested Codex helpers reuse the session's physical-root lease, never re-flock.
+pub(super) enum GatewayWriteAdmission {
+    Codex(crate::management_admission::LegacyRuntimeAdmission),
+    Other(crate::management_admission::CrossTargetAdmission),
+}
+
+impl GatewayWriteAdmission {
+    fn ensure_current(&self) -> Result<(), String> {
+        match self {
+            Self::Codex(admission) => admission.ensure_current(),
+            Self::Other(admission) => admission.ensure_current(),
+        }
+    }
+}
+
+pub(super) async fn admit_gateway_write(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+) -> Result<GatewayWriteAdmission, String> {
+    // Every takeover also changes profile-local manifests/backups. Neither
+    // Codex nor another CLI's transaction is supported by managed admission.
+    let _session = crate::management_admission::reject_managed_operation()?;
+    if cli_key == GatewayCliKey::Codex {
+        Ok(GatewayWriteAdmission::Codex(
+            crate::management_admission::admit_legacy_codex(db).await?,
+        ))
+    } else {
+        // Preserve ordinary validation/no-op ordering: do not resolve or create
+        // a runtime root merely to reject a managed transaction.
+        Ok(GatewayWriteAdmission::Other(
+            crate::management_admission::admit_non_codex_targets(Some(cli_key.as_str()), &[])?,
+        ))
+    }
+}
+
+fn admit_codex_file_write(
+    path: &Path,
+) -> Result<crate::management_admission::LegacyRuntimeAdmission, String> {
+    let root = path.parent().ok_or_else(|| "Codex target has no runtime root".to_string())?;
+    crate::management_admission::admit_legacy_runtime(root)
+}
+
+fn admit_gateway_target_write(
+    cli_key: GatewayCliKey,
+    targets: &CliProxyTargets,
+    paths: Option<&ProxyGatewayPaths>,
+) -> Result<GatewayWriteAdmission, String> {
+    let admission = if cli_key == GatewayCliKey::Codex {
+        let admission = crate::management_admission::admit_legacy_runtime(&targets.runtime_root)?;
+        for target in &targets.files {
+            let root = target.path.parent()
+                .ok_or_else(|| "Codex target has no runtime root".to_string())?;
+            admission.require_runtime(root)?;
+        }
+        GatewayWriteAdmission::Codex(admission)
+    } else {
+        // Non-Codex names are not proof of disjointness: custom roots can alias
+        // protected Codex/profile paths. Include all control-file destinations.
+        let mut destinations = targets.files.iter()
+            .map(|target| target.path.clone()).collect::<Vec<_>>();
+        destinations.push(targets.runtime_root.clone());
+        if let Some(paths) = paths {
+            destinations.push(paths.manifest_path(cli_key));
+            destinations.push(paths.backup_dir(cli_key));
+        }
+        let references = destinations.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+        GatewayWriteAdmission::Other(crate::management_admission::admit_non_codex_targets(
+            Some(cli_key.as_str()), &references,
+        )?)
+    };
+    admission.ensure_current()?;
+    Ok(admission)
+}
+
 const GATEWAY_PROVIDER_ID: &str = "ai-toolbox-gateway";
 const GATEWAY_API_KEY: &str = "ai-toolbox-gateway";
 const CLAUDE_STANDARD_MODEL: &str = "claude-sonnet-5";
@@ -182,6 +257,7 @@ fn patch_codex_agent_defaults(
     path: &Path,
     defaults: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<(), String> {
+    let _admission = admit_codex_file_write(path)?;
     use crate::coding::proxy_gateway::cli_proxy::manifest::{
         CODEX_AGENT_EFFORT_KEY, CODEX_AGENT_MODEL_KEY,
     };
@@ -265,6 +341,7 @@ fn reconcile_codex_agent_defaults_on_leave(
     targets: &CliProxyTargets,
     manifest: &CliProxyManifest,
 ) -> Result<(), String> {
+    let _admission = admit_gateway_target_write(cli_key, targets, Some(paths))?;
     let Some(managed) = manifest
         .aggregate
         .as_ref()
@@ -621,6 +698,7 @@ pub async fn engage_single_cli(
     gateway_status: &ProxyGatewayStatus,
     primary_provider_id: String,
 ) -> Result<GatewayCliTakeoverStatus, String> {
+    let _admission = admit_gateway_write(db, cli_key).await?;
     if !is_supported_cli(cli_key) {
         return Err("This CLI is not supported by the gateway MVP".to_string());
     }
@@ -694,6 +772,7 @@ pub async fn engage_aggregate_cli(
     subagent_exposed_models: Vec<String>,
     subagent_defaults: crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<GatewayCliTakeoverStatus, String> {
+    let _admission = admit_gateway_write(db, cli_key).await?;
     if cli_key != GatewayCliKey::Codex {
         return Err("Aggregate mode is currently supported for Codex only".to_string());
     }
@@ -947,6 +1026,11 @@ pub async fn save_aggregate_draft(
     cli_key: GatewayCliKey,
     config: GatewayAggregateConfig,
 ) -> Result<GatewayAggregateConfig, String> {
+    let _session = if cli_key == GatewayCliKey::Codex {
+        crate::management_admission::reject_managed_operation()?
+    } else {
+        None
+    };
     if cli_key != GatewayCliKey::Codex {
         return Err("Aggregate mode is currently supported for Codex only".to_string());
     }
@@ -966,6 +1050,13 @@ fn persist_aggregate_draft(
     cli_key: GatewayCliKey,
     config: &GatewayAggregateConfig,
 ) {
+    let _session = match crate::management_admission::reject_managed_operation() {
+        Ok(session) => session,
+        Err(error) => {
+            log::warn!("Cannot admit gateway aggregate draft persistence: {error}");
+            return;
+        }
+    };
     if let Err(error) = super::aggregate_draft::write_aggregate_draft(paths, cli_key, config) {
         log::warn!("Failed to persist gateway aggregate draft: {error}");
     }
@@ -1072,9 +1163,11 @@ async fn write_codex_aggregate_catalog_file(
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
     cross_site_failover: bool,
 ) -> Result<(), String> {
+    let admission = crate::management_admission::admit_legacy_codex(db).await?;
     use crate::coding::codex::commands as codex_commands;
 
     let config_dir = codex_commands::get_codex_config_dir_from_db_async(db).await?;
+    admission.require_runtime(&config_dir)?;
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)
             .map_err(|e| format!("Failed to create .codex directory: {e}"))?;
@@ -1162,6 +1255,7 @@ pub async fn engage_failover_cli(
     cli_key: GatewayCliKey,
     gateway_status: &ProxyGatewayStatus,
 ) -> Result<GatewayCliTakeoverStatus, String> {
+    let _admission = admit_gateway_write(db, cli_key).await?;
     if !is_supported_cli(cli_key) {
         return Err("This CLI is not supported by the gateway MVP".to_string());
     }
@@ -1223,6 +1317,7 @@ pub async fn disengage_failover_cli(
     cli_key: GatewayCliKey,
     gateway_status: &ProxyGatewayStatus,
 ) -> Result<GatewayCliTakeoverStatus, String> {
+    let _admission = admit_gateway_write(db, cli_key).await?;
     if !is_supported_cli(cli_key) {
         return Err("This CLI is not supported by the gateway MVP".to_string());
     }
@@ -1294,6 +1389,7 @@ fn apply_codex_aggregate_catalog_leave(
     config_dir: &Path,
     pre_aggregate_catalog: Option<&PreAggregateCodexCatalog>,
 ) -> Result<(), String> {
+    let _admission = crate::management_admission::admit_legacy_runtime(config_dir)?;
     use crate::coding::codex::commands as codex_commands;
 
     match pre_aggregate_catalog {
@@ -1322,6 +1418,13 @@ async fn retire_codex_aggregate_catalog(
     if cli_key != GatewayCliKey::Codex {
         return;
     }
+    let admission = match crate::management_admission::admit_legacy_codex(db).await {
+        Ok(admission) => admission,
+        Err(error) => {
+            log::warn!("Cannot admit Codex aggregate catalog retirement: {error}");
+            return;
+        }
+    };
     use crate::coding::codex::commands as codex_commands;
 
     // Best effort: this runs on the way out of aggregate mode, and a failure
@@ -1335,7 +1438,9 @@ async fn retire_codex_aggregate_catalog(
             return;
         }
     };
-    let result = apply_codex_aggregate_catalog_leave(&config_dir, pre_aggregate_catalog);
+    let result = admission.require_runtime(&config_dir).and_then(|()| {
+        apply_codex_aggregate_catalog_leave(&config_dir, pre_aggregate_catalog)
+    });
     if let Err(error) = result {
         log::warn!("Failed to retire Codex aggregate model catalog: {error}");
     }
@@ -1347,6 +1452,7 @@ pub async fn restore_cli_direct(
     cli_key: GatewayCliKey,
     gateway_status: &ProxyGatewayStatus,
 ) -> Result<GatewayCliTakeoverStatus, String> {
+    let _admission = admit_gateway_write(db, cli_key).await?;
     if !is_supported_cli(cli_key) {
         return Err("This CLI is not supported by the gateway MVP".to_string());
     }
@@ -1408,17 +1514,48 @@ pub fn reproject_codex_websocket_capability(
     paths: &ProxyGatewayPaths,
     codex_websocket_enabled: bool,
 ) -> Result<bool, String> {
-    let cli_key = GatewayCliKey::Codex;
-    let Some(manifest) = read_manifest(paths, cli_key).map_err(|error| error.to_string())? else {
+    let Some(target) = codex_websocket_projection_target(paths)? else {
         return Ok(false);
     };
+    admit_codex_websocket_projection(target)?.apply(codex_websocket_enabled)
+}
+
+/// Prepare only when a setting update will actually project a Codex file.
+/// The command retains this same admission before saving settings and through
+/// the real writer; unrelated settings and no-op projections remain available.
+pub(super) fn prepare_codex_websocket_projection(
+    paths: &ProxyGatewayPaths,
+    websocket_gate_changed: bool,
+) -> Result<Option<CodexWebsocketProjection>, String> {
+    if !websocket_gate_changed {
+        return Ok(None);
+    }
+    let target = match codex_websocket_projection_target(paths) {
+        Ok(target) => target,
+        Err(error) => {
+            // Preserve settings-save behavior for a corrupt/unreadable manifest:
+            // no projection can run, so warn without rejecting unrelated fields.
+            log::warn!("Failed to prepare Codex WebSocket setting projection: {error}");
+            return Ok(None);
+        }
+    };
+    target.map(admit_codex_websocket_projection).transpose()
+}
+
+fn codex_websocket_projection_target(
+    paths: &ProxyGatewayPaths,
+) -> Result<Option<(PathBuf, Vec<String>)>, String> {
+    let cli_key = GatewayCliKey::Codex;
+    let Some(manifest) = read_manifest(paths, cli_key).map_err(|error| error.to_string())? else {
+        return Ok(None);
+    };
     if !manifest.enabled {
-        return Ok(false);
+        return Ok(None);
     }
     // Aggregate mode keeps its own projection (`false` regardless of the gate);
     // this function only follows the setting for single/failover takeovers.
     if manifest.mode == GatewayProxyMode::Aggregate {
-        return Ok(false);
+        return Ok(None);
     }
     let config_file = manifest
         .files
@@ -1429,23 +1566,48 @@ pub fn reproject_codex_websocket_capability(
     if !config_path.exists() {
         // A missing runtime file is a drifted takeover; recreating it here would
         // produce a provider table without `base_url` that looks taken over.
-        return Ok(false);
+        return Ok(None);
     }
 
-    let mut document = read_or_new_toml_document(&config_path)?;
-    // Prefer the provider table this takeover actually wrote. Re-resolving the
-    // active provider from the document would follow a post-takeover edit and
-    // could stamp the capability onto a real upstream provider instead.
-    let provider_id = managed_codex_provider_id(&config_file.managed_fields)
-        .unwrap_or_else(|| resolve_codex_takeover_provider_id(&document));
-    let provider_table = document["model_providers"]
-        .as_table_mut()
-        .and_then(|providers| providers.get_mut(provider_id.as_str()))
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| format!("Codex [model_providers.{provider_id}] must be a table"))?;
-    provider_table["supports_websockets"] = value(codex_websocket_enabled);
-    write_toml_file(&config_path, &document)?;
-    Ok(true)
+    Ok(Some((config_path, config_file.managed_fields.clone())))
+}
+
+fn admit_codex_websocket_projection(
+    (config_path, managed_fields): (PathBuf, Vec<String>),
+) -> Result<CodexWebsocketProjection, String> {
+    let admission = admit_codex_file_write(&config_path)?;
+    Ok(CodexWebsocketProjection { config_path, managed_fields, admission })
+}
+
+pub(super) struct CodexWebsocketProjection {
+    config_path: PathBuf,
+    managed_fields: Vec<String>,
+    admission: crate::management_admission::LegacyRuntimeAdmission,
+}
+
+impl CodexWebsocketProjection {
+    pub(super) fn apply(self, codex_websocket_enabled: bool) -> Result<bool, String> {
+        let root = self.config_path.parent()
+            .ok_or_else(|| "Codex target has no runtime root".to_string())?;
+        self.admission.require_runtime(root)?;
+        if !self.config_path.exists() {
+            return Ok(false);
+        }
+        let mut document = read_or_new_toml_document(&self.config_path)?;
+        // Prefer the table recorded by the takeover, never a newly active
+        // upstream provider selected by an out-of-band runtime edit.
+        let provider_id = managed_codex_provider_id(&self.managed_fields)
+            .unwrap_or_else(|| resolve_codex_takeover_provider_id(&document));
+        let provider_table = document["model_providers"]
+            .as_table_mut()
+            .and_then(|providers| providers.get_mut(provider_id.as_str()))
+            .and_then(Item::as_table_mut)
+            .ok_or_else(|| format!("Codex [model_providers.{provider_id}] must be a table"))?;
+        provider_table["supports_websockets"] = value(codex_websocket_enabled);
+        self.admission.require_runtime(root)?;
+        write_toml_file(&self.config_path, &document)?;
+        Ok(true)
+    }
 }
 
 /// Provider table key recorded in a takeover's managed fields.
@@ -2076,6 +2238,7 @@ fn write_manifest(
     cli_key: GatewayCliKey,
     manifest: &CliProxyManifest,
 ) -> Result<(), String> {
+    let _session = crate::management_admission::reject_managed_operation()?;
     let manifest_path = paths.manifest_path(cli_key);
     if let Some(parent) = manifest_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -2128,6 +2291,7 @@ fn prepare_manifest(
     mode: GatewayProxyMode,
     primary_provider_id: &str,
 ) -> Result<CliProxyManifest, String> {
+    let _admission = admit_gateway_target_write(cli_key, targets, Some(paths))?;
     let timestamp = chrono::Utc::now().to_rfc3339();
     let previous_manifest = read_manifest_for_reengage(paths, cli_key, mode, primary_provider_id)?;
     if let Some(previous_manifest) = previous_manifest
@@ -2185,6 +2349,13 @@ fn clear_gateway_backups(
     cli_key: GatewayCliKey,
     manifest: &CliProxyManifest,
 ) {
+    let _session = match crate::management_admission::reject_managed_operation() {
+        Ok(session) => session,
+        Err(error) => {
+            log::warn!("Cannot admit gateway backup cleanup: {error}");
+            return;
+        }
+    };
     let backup_dir = paths.backup_dir(cli_key);
     for file in &manifest.files {
         if validate_backup_rel_path(&file.backup_rel_path).is_err() {
@@ -2207,6 +2378,12 @@ fn backup_target_file(
     target: &CliProxyTarget,
     backup_dir: &Path,
 ) -> Result<CliProxyManifestFile, String> {
+    let _session = crate::management_admission::reject_managed_operation()?;
+    let _runtime_admission = if matches!(target.kind, CODEX_CONFIG_KIND | CODEX_AUTH_KIND) {
+        Some(admit_codex_file_write(&target.path)?)
+    } else {
+        None
+    };
     let backup_rel_path = format!("{}.bak", target.kind);
     validate_backup_rel_path(&backup_rel_path)?;
     let backup_path = backup_dir.join(&backup_rel_path);
@@ -2356,6 +2533,7 @@ fn apply_gateway_config(
     preserve_codex_official_auth: bool,
     codex_agent_defaults: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<(), String> {
+    let _admission = admit_gateway_target_write(cli_key, targets, None)?;
     match cli_key {
         GatewayCliKey::Claude => {
             let Some(primary_provider) = primary_provider else {
@@ -2463,6 +2641,7 @@ fn restore_gateway_config(
     targets: &CliProxyTargets,
     manifest: &CliProxyManifest,
 ) -> Result<(), String> {
+    let _admission = admit_gateway_target_write(cli_key, targets, Some(paths))?;
     match cli_key {
         GatewayCliKey::Claude => {
             let path = required_target_path(targets, CLAUDE_SETTINGS_KIND)?;
@@ -3239,6 +3418,7 @@ fn patch_codex_config(
     mode: GatewayProxyMode,
     codex_websocket_enabled: bool,
 ) -> Result<String, String> {
+    let _admission = admit_codex_file_write(path)?;
     let mut document = read_or_new_toml_document(path)?;
     let provider_id = resolve_codex_takeover_provider_id(&document);
 
@@ -3436,6 +3616,7 @@ fn restore_codex_config(
     backup_content: Option<&str>,
     managed_agent_defaults: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<(), String> {
+    let _admission = admit_codex_file_write(path)?;
     let mut current = read_or_new_toml_document(path)?;
     let backup = backup_content
         .map(|content| parse_toml_document(content, "Codex gateway backup"))
@@ -3517,6 +3698,7 @@ fn patch_codex_auth(
     preserve_official_auth: bool,
     backup_content: Option<&str>,
 ) -> Result<(), String> {
+    let _admission = admit_codex_file_write(path)?;
     if preserve_official_auth {
         return restore_codex_gateway_auth_fields(path, backup_content);
     }
@@ -3539,6 +3721,7 @@ fn restore_codex_gateway_auth_fields(
     path: &Path,
     backup_content: Option<&str>,
 ) -> Result<(), String> {
+    let _admission = admit_codex_file_write(path)?;
     if !path.exists() {
         return Ok(());
     }
@@ -3551,6 +3734,7 @@ fn restore_codex_gateway_auth_fields(
 }
 
 fn restore_codex_auth(path: &Path, backup_content: Option<&str>) -> Result<(), String> {
+    let _admission = admit_codex_file_write(path)?;
     let mut current = if path.exists() {
         read_json_file(path)?
     } else {
@@ -4021,6 +4205,9 @@ fn sha256_hex(content: &[u8]) -> String {
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {

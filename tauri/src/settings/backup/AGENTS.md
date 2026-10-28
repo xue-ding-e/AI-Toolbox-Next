@@ -65,6 +65,7 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- Managed Codex 模式目前不支持整库/整 profile 恢复。共享 `restore_from_archive` 必须在路径解析、SQLite staging/覆盖或外部文件写入之前拒绝，并在真实同步恢复 worker 中保留普通 session guard；不能先恢复 SQLite 再在 Codex 文件分支拒绝。普通模式沿用现有恢复语义。启动恢复编排与 `reapply_codex` 仍须各自入门，不能把此共享函数视为它们的隐式授权。
 - Owner 协调文件由 `ai_toolbox_management::transport::is_reserved_coordination_name` 的精确契约保护：两个固定 lock 名及两段 16 位小写 hex 的 socket 名；不能扩大为全部 dotfile/lock/socket。源 WalkDir 必须剪枝，文件 sink 同时校验 source 与 archive 名。恢复先只读预扫所有归档名、custom manifest 目标和将删除的 legacy DB tree，必须早于 SQLite restore、mkdir 或 staging；custom restore 仍是增量覆盖，不因目标根内存在普通 sibling owner lock 而整树拒绝。紧邻旧树删除复检并不消除 TOCTOU，任意硬链接/未审计业务 writer 仍不在此保护证明内。
 
 - 加密备份恢复/生成必须经过共享入口（`prepare_backup_bytes` / `generate.rs`）。任何渠道出现“缺密码、错密码、截断、篡改”都必须在**任何恢复写入之前**报错；`CryptoError::AuthFailed` 映射为 `passwordWrong`，`PasswordRequired` 映射为 `passwordRequired`，前端据此在同一次恢复选择中弹出密码框重试，取消与错误都不能修改数据库/外部配置。

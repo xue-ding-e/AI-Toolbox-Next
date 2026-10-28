@@ -115,6 +115,10 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- #41 admission 候选把 Gateway 接管/故障转移/恢复/供应商切换整编排视为 managed 不支持路径：不只 Codex，其他 CLI 的 manifest 与 `.bak` 同样写入受保护 profile，必须在首次 DB/备份/运行时副作用前拒绝。普通模式仍按原流程运行；Codex 整入口持 `admit_legacy_codex`，实际文件 helper 按真实 runtime root 持 `admit_legacy_runtime`，嵌套复用 session 的物理根缓存，不新建第二套锁。非 Codex 低层目标预检也必须包含真实文件与已知 manifest/backup 路径，工具名不是与 Codex 根不重叠的证明。
+- Gateway settings 不是一律禁用：仅在 `codex_websocket_enabled` 真正改变、且 enabled single/failover manifest 指向仍存在的 Codex 配置文件时，于 settings DB 保存前取得 projection admission，并把同一 guard 保留到实际写执行体。未接管、aggregate、缺失目标或无关设置不创建 Codex runtime；不可读 manifest 仍沿旧行为仅告警、不执行投影。guard 拒绝必须原样失败，不能被保存后的 best-effort 告警吞掉。该候选不表示 managed GUI 完整共存或生产 ContextSet endpoint 已启用。
+- 该门的合成控制位于 `cli_proxy/admission_tests.rs`：覆盖整入口提前拒绝、恢复删除分支无副作用、settings 预检前不改 DB、无关设置保留、worker 在 caller drop 后仍持 profile/runtime、非 Codex alias 目标拒绝。测试代码存在不等于已编译或执行；本轮候选所有这些控制均未运行。
+
 - 应用数据目录切换会让新进程读不到旧目录的接管 manifest/原始备份，因此 `app_paths` 保存前必须通过 `ensure_data_dir_can_change` 确认所有可接管 CLI 已恢复直连；损坏或不可读 manifest 同样拒绝。保存与 `engage_single` / `engage_failover` 命令及整个 `provider_switch` 编排共用 `DATA_DIR_CHANGE_LOCK`，不能只锁最终 engage，否则中间 restore/apply 阶段可能被切目录打断。待重启目录变更存在时，在任何运行时配置写入前拒绝新的接管；显式恢复直连继续可用。
 
 - 不要用 `enabled_cli_keys` 表示“当前已接管”。它只是旧设置兼容字段；实际接管状态看 manifest。

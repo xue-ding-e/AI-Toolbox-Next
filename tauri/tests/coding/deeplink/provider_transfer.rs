@@ -53,6 +53,7 @@ fn row(app: &tauri::App<MockRuntime>, table: DbTable, id: &str) -> Value {
 
 #[tokio::test]
 async fn database_targets_import_read_back_skip_and_copy_without_activating() {
+    let Some(_ownership) = crate::ordinary_fixture::enter(concat!(module_path!(), "::database_targets_import_read_back_skip_and_copy_without_activating")) else { return; };
     let _guard = TEST_LOCK.lock().await;
     let app = app();
     for (target, table) in [

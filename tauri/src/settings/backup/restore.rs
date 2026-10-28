@@ -263,6 +263,13 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     skip_cli_custom_roots: bool,
 ) -> Result<RestoreResult, String> {
+    // Restore can replace the whole profile, not only a Codex runtime file.
+    // Retain admission in this synchronous worker before even resolving paths
+    // that may create directories. Managed restore is not implemented yet.
+    let admission = crate::management_admission::reject_managed_operation()?;
+    if let Some(session) = &admission {
+        session.ensure_current()?;
+    }
     let db_path = get_db_path(app_handle)?;
     super::utils::preflight_backup_coordination_paths(archive)?;
     super::utils::reject_coordination_output_path(&db_path)?;
@@ -294,6 +301,9 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
     let skipped_optional_cli_runtime = !include_cli_config_files;
     let backup_meta = read_backup_meta_from_archive(archive);
 
+    if let Some(session) = &admission {
+        session.ensure_current()?;
+    }
     let restored_sqlite = restore_sqlite_database_snapshot_from_zip(archive, app_handle)?;
     if restored_sqlite {
         sanitize_restored_claude_database_for_current_os(app_handle)?;

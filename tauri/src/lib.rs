@@ -29,6 +29,7 @@ pub mod db;
 pub mod http_client;
 pub mod keep_awake;
 pub mod lightweight;
+mod management_admission;
 pub mod mini_browser;
 pub mod settings;
 pub mod single_instance;
@@ -39,6 +40,7 @@ pub mod update;
 
 // Re-export SqliteDbState for use in other modules
 pub use db::SqliteDbState;
+pub use management_admission::{initialize_ordinary_profile, OrdinaryProfileOwnership};
 pub(crate) static APP_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 const DEFAULT_APP_WINDOW_TITLE: &str = "AI Toolbox Next";
@@ -939,6 +941,10 @@ pub fn run() {
     // main SQLite DB is opened from it later in setup(). Reading the bootstrap
     // override here means a custom data path takes effect for the whole
     // session, including diagnostics files.
+    #[cfg(target_os = "linux")]
+    app_paths::init_gui_resolved_data_dir()
+        .expect("Failed to freeze the GUI profile directory before startup");
+    #[cfg(not(target_os = "linux"))]
     app_paths::init_resolved_data_dir();
 
     // 初始化日志系统
@@ -1042,6 +1048,15 @@ pub fn run() {
             info!("开始执行 setup()...");
             let app_handle = app.handle().clone();
 
+            // The single-instance plugin has already handled activation of an
+            // existing window. Coordinate this actual GUI lifetime before DB,
+            // model-cache or background writers are initialized. Diagnostics
+            // initialized before setup retain their existing startup behavior.
+            let profile_session = management_admission::ordinary_startup(
+                &app_paths::resolved_data_dir(),
+            ).map_err(std::io::Error::other)?;
+            app.manage(profile_session.clone());
+
             #[cfg(target_os = "linux")]
             if auto_downgrade_enabled {
                 start_linux_wayland_webview_auto_downgrade_watchdog(
@@ -1122,6 +1137,10 @@ pub fn run() {
                     panic!("Failed to initialize SQLite database: {}", e);
                 }
             };
+
+            // Retention belongs to the shared Connection holder, so surviving
+            // DB clones keep the profile lease after GUI state is dropped.
+            profile_session.retain_database(&db_state).map_err(std::io::Error::other)?;
 
             tauri::async_runtime::block_on(async {
                 if let Err(e) =
