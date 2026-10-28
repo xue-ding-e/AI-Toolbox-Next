@@ -1,4 +1,4 @@
-# Prepared only: fixed 7eb subject, reviewed control SHA, no release or product write.
+# Prepared only: fixed 60067a8 subject, reviewed control SHA, no release or product write.
 # The one shared 65-minute clock starts before toolchain/APT setup. Command
 # ceilings never reset it. The 75-minute job reserves checkout/upload/cleanup.
 name: Maintenance validation
@@ -28,14 +28,14 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: control
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - uses: actions/checkout@v4
         timeout-minutes: 2
         with:
-          ref: 7ebffaf24844eb01e91cc3745f6c5167b67c8339
+          ref: 60067a8a8581845c01dc5535712b924eb5d46129
           path: work/source
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - name: Verify exact subject and sealed control before setup
         timeout-minutes: 2

@@ -15,12 +15,13 @@ import sys
 import time
 
 HERE = Path(__file__).resolve().parent
-SHA = '7ebffaf24844eb01e91cc3745f6c5167b67c8339'
-TREE = '81477d7b573dc466215a49f429ba9cc4361adde1'
-PARENT = '17d787f061c1e4d05464a392f459a705ce858556'
+SHA = '60067a8a8581845c01dc5535712b924eb5d46129'
+TREE = 'a465079b58647e7cbe0f0b864d724d8cab440536'
+PARENT = '7ebffaf24844eb01e91cc3745f6c5167b67c8339'
+FORMAT_BASELINE = '17d787f061c1e4d05464a392f459a705ce858556'
 BRANCH = 'refs/heads/validation/missing-parent-admission-20261028'
 TEST = 'tauri/src/management_admission_tests.rs'
-TEST_HASH = '2bf62d70f326b5ba0c2ad67fc3205925abbe29a5554a92859426711780ff3f86'
+TEST_HASH = '5ae5a22997fb46f83c2b06010c7e1fa7cdd72c112afd586e64537a099be49215'
 HELPER_BLOB = '4dbf928a7206ba01ea9ad46173317c6c4c9ff5a8'
 raw = (HERE / 'resource_control.py').read_bytes()
 assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == HELPER_BLOB
@@ -92,7 +93,7 @@ def validate(source, env):
             h.require(h.run(tool+'-version', [tool, '--version'], 15, source, env).decode().startswith(tool+' 1.99.1 '), 'wrong toolchain')
         h.run('rustfmt-version', ['rustfmt', '--version'], 15, source, env)
         baseline = h.EVIDENCE / 'baseline-management-admission.rs'
-        baseline.write_bytes(git(source, env, 'baseline-source', 'show', PARENT+':'+TEST))
+        baseline.write_bytes(git(source, env, 'baseline-source', 'show', FORMAT_BASELINE+':'+TEST))
         h.require(h.file_digest(baseline) == 'ec2dd6cb48587b43d2b6ff3dc5a0d15a2800170645c2b85dadd2bc5cf5ee96d7', 'baseline format input differs')
         fmt = {}
         for label, path in [('baseline', baseline), ('candidate', source / TEST)]:

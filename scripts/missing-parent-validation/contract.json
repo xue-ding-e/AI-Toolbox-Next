@@ -2,11 +2,11 @@
   "status": "IMPLEMENTED_STATIC_CHECKED_NOT_DISPATCHED",
   "repository": "xue-ding-e/AI-Toolbox-Next",
   "subject": {
-    "sha": "7ebffaf24844eb01e91cc3745f6c5167b67c8339",
-    "tree": "81477d7b573dc466215a49f429ba9cc4361adde1",
-    "parent": "17d787f061c1e4d05464a392f459a705ce858556",
+    "sha": "60067a8a8581845c01dc5535712b924eb5d46129",
+    "tree": "a465079b58647e7cbe0f0b864d724d8cab440536",
+    "parent": "7ebffaf24844eb01e91cc3745f6c5167b67c8339",
     "test_file": "tauri/src/management_admission_tests.rs",
-    "test_file_sha256": "2bf62d70f326b5ba0c2ad67fc3205925abbe29a5554a92859426711780ff3f86",
+    "test_file_sha256": "5ae5a22997fb46f83c2b06010c7e1fa7cdd72c112afd586e64537a099be49215",
     "exact_checkout_not_patch_overlay": true
   },
   "runner": {
