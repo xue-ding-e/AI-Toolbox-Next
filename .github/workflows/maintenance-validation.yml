@@ -16,8 +16,8 @@ concurrency:
   group: ai-toolbox-maintenance-validation
   cancel-in-progress: false
 jobs:
-  missing-parent-admission:
-    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/missing-parent-admission-20261028' && github.event_name == 'workflow_dispatch' && inputs.expected_sha == github.sha
+  history-tail-preservation:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/history-tail-preservation-20261028' && github.event_name == 'workflow_dispatch' && inputs.expected_sha == github.sha
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     env:
@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       - name: Verify exact subject and sealed control before setup
         timeout-minutes: 2
-        run: python3 control/scripts/missing-parent-validation/focus.py --phase preflight
+        run: python3 control/scripts/history-tail-validation/focus.py --phase preflight
       - uses: dtolnay/rust-toolchain@stable
         timeout-minutes: 3
         with:
@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          evidence="$RUNNER_TEMP/typed-context-admission-stage2-evidence"
+          evidence="$RUNNER_TEMP/history-tail-evidence"
           seconds=$(python3 - "$evidence/preflight-budget.json" <<'PY'
           import json,sys,time
           remaining=int(json.load(open(sys.argv[1]))['deadline_monotonic']-time.monotonic()-130)
@@ -124,12 +124,12 @@ jobs:
             wrapper_status=$?
           fi
           exit "$wrapper_status"
-      - name: Fresh focused admission and integration evidence, not whole-suite acceptance
+      - name: Fresh sealed-overlay history-sync evidence, not whole-suite acceptance
         timeout-minutes: 65
         shell: bash
         run: |
           set -uo pipefail
-          evidence="$RUNNER_TEMP/typed-context-admission-stage2-evidence"
+          evidence="$RUNNER_TEMP/history-tail-evidence"
           seconds=$(python3 - "$evidence/preflight-budget.json" <<'PY_CLOCK'
           import json,sys,time
           remaining=int(json.load(open(sys.argv[1]))['deadline_monotonic']-time.monotonic())
@@ -156,7 +156,7 @@ jobs:
           PY_WRAPPER
           }
           trap write_validation_summary EXIT
-          if timeout --signal=TERM --kill-after=10s "${seconds}s" python3 control/scripts/missing-parent-validation/focus.py --phase validation; then
+          if timeout --signal=TERM --kill-after=10s "${seconds}s" python3 control/scripts/history-tail-validation/focus.py --phase validation; then
             wrapper_status=0
           else
             wrapper_status=$?
@@ -167,10 +167,11 @@ jobs:
         uses: actions/upload-artifact@v4
         timeout-minutes: 3
         with:
-          name: missing-parent-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          name: history-tail-preservation-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/typed-context-admission-stage2-evidence/*.json
-            ${{ runner.temp }}/typed-context-admission-stage2-evidence/*.log
+            ${{ runner.temp }}/history-tail-evidence/*.json
+            ${{ runner.temp }}/history-tail-evidence/*.log
+            ${{ runner.temp }}/history-tail-evidence/*.diff
           if-no-files-found: error
           retention-days: 7
 

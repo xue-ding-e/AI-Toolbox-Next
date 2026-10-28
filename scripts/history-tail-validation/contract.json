@@ -1,0 +1,69 @@
+{
+  "status": "IMPLEMENTED_STATIC_REVIEW_PENDING_NOT_DISPATCHED",
+  "reuse_control_sha": "4b6a71006a936319c8f2f7ce6c792e4dfa37af0a",
+  "reuse_run": 40740465081,
+  "baseline_sha": "60067a8a8581845c01dc5535712b924eb5d46129",
+  "baseline_tree": "a465079b58647e7cbe0f0b864d724d8cab440536",
+  "path": "tauri/src/coding/codex/history_sync.rs",
+  "baseline_sha256": "e81cb84153ec83c1377908481814db65b1e6f46fef86167286606c6f127f7799",
+  "candidate_sha256": "7002b5bbdd63007abb30bcdaa4f326ac6af6467cc5dca740344c4304b5bf23d2",
+  "patch_sha256": "ac7888ac23f0749ac16f24aae1136df95ed9bdc912f5dad4f6ef907df237ab85",
+  "candidate_commit": null,
+  "candidate_tree": "d8836377a79bc898f13d8b5acb30850b26e11278",
+  "publication_blocker": "Parent review of sealed executable control and heavy-slot approval",
+  "lib_suite": {
+    "filter": "coding::codex::history_sync::tests::",
+    "expected_normal": [
+      "coding::codex::history_sync::tests::api_key_auth_without_config_provider_does_not_use_official_fallback",
+      "coding::codex::history_sync::tests::forged_sidecar_preserves_database_index_lock_inode_and_backup_set",
+      "coding::codex::history_sync::tests::managed_history_writers_reject_before_backup_or_index_effects",
+      "coding::codex::history_sync::tests::official_auth_without_config_provider_uses_official_fallback",
+      "coding::codex::history_sync::tests::ordinary_history_runtime_lease_is_reused_and_competing_profile_cannot_write",
+      "coding::codex::history_sync::tests::restore_latest_restores_database_and_session_metadata",
+      "coding::codex::history_sync::tests::retry_sqlite_operation_recovers_from_transient_lock",
+      "coding::codex::history_sync::tests::sqlite_locked_error_message_is_actionable",
+      "coding::codex::history_sync::tests::status_ignores_model_only_differences",
+      "coding::codex::history_sync::tests::sync_legacy_schema_updates_provider_only",
+      "coding::codex::history_sync::tests::sync_preserves_opaque_tail_bytes_and_non_provider_metadata",
+      "coding::codex::history_sync::tests::sync_updates_provider_only_and_preserves_existing_models"
+    ],
+    "expected_ignored_names": [],
+    "expected_passed": 12
+  },
+  "exact_test": "coding::codex::history_sync::tests::sync_preserves_opaque_tail_bytes_and_non_provider_metadata",
+  "targets": [
+    {
+      "name": "ai_toolbox_lib",
+      "src_path": "tauri/src/lib.rs",
+      "test": true
+    }
+  ],
+  "mutation": {
+    "status": "DEFERRED_REQUIRES_RECOMPILE_NO_MUTATION_IN_THIS_CONTROL",
+    "count": 1,
+    "function": "rewrite_session_meta_first_line",
+    "old": "let new_text = format!(\"{new_first_line}{line_ending}{remainder}\");",
+    "new": "let new_text = format!(\"{new_first_line}{line_ending}\");",
+    "must_compile": true,
+    "expected_exact_test": "FAILED at exact tail byte assertion",
+    "timeout_or_other_failure": "inconclusive; not killed",
+    "must_restore_source_before_final_snapshot": true,
+    "must_not_publish_mutated_code": true
+  },
+  "candidate_blob": "d35074b9f6db894a596912bd0095797a5f6954d9",
+  "source_mode": "explicit baseline600 + sealed test-only overlay; no candidate commit yet",
+  "compile": {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "tauri/Cargo.toml",
+      "--lib",
+      "--no-run",
+      "--message-format=json",
+      "--jobs",
+      "2"
+    ]
+  }
+}
