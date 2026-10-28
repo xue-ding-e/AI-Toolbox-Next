@@ -3,7 +3,8 @@
 
 use super::*;
 use ai_toolbox_management::{
-    owner::{OrdinaryRuntimeLeaseGroup, ProfileLeaseStartup, RuntimeResourceIdentity}, Error,
+    owner::{OrdinaryRuntimeLeaseGroup, ProfileLeaseStartup, RuntimeResourceIdentity},
+    Error,
 };
 use std::{
     fs::{self, DirBuilder, OpenOptions},
@@ -11,7 +12,10 @@ use std::{
     os::unix::fs::{symlink, DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicBool, Ordering}, mpsc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -22,13 +26,14 @@ const MARKER: &[u8] = b"synthetic-gui-admission-v1";
 
 /// No automatic deletion: a panic or an unconfirmed worker/actor leaves the
 /// fixture intact. Only the successful, fully joined path calls cleanup.
-struct Fixture { path: PathBuf }
+struct Fixture {
+    path: PathBuf,
+}
 
 impl Fixture {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "ai-toolbox-gui-admission-{}", uuid::Uuid::new_v4(),
-        ));
+        let path = std::env::temp_dir()
+            .join(format!("ai-toolbox-gui-admission-{}", uuid::Uuid::new_v4(),));
         private_directory(&path);
         write_private(&path.join("fixture-marker"), MARKER);
         Self { path }
@@ -55,9 +60,14 @@ fn private_directory(path: &Path) {
 
 fn write_private(path: &Path, content: &[u8]) {
     use std::io::Write;
-    let mut file = OpenOptions::new().write(true).create_new(true).mode(0o600)
-        .open(path).unwrap();
-    file.set_permissions(fs::Permissions::from_mode(0o600)).unwrap();
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .unwrap();
     file.write_all(content).unwrap();
 }
 
@@ -73,7 +83,10 @@ fn session_at(path: &Path, managed: bool) -> Arc<GuiProfileSession> {
 }
 
 fn assert_busy(path: &Path) {
-    assert!(matches!(ProfileLeaseStartup::acquire(path), Err(Error::OwnerBusy)));
+    assert!(matches!(
+        ProfileLeaseStartup::acquire(path),
+        Err(Error::OwnerBusy)
+    ));
 }
 
 fn assert_released(path: &Path) {
@@ -144,11 +157,16 @@ fn thread_local_override_is_not_inherited_by_an_os_thread() {
         let no_override = TEST_SESSION.with(|slot| slot.borrow().is_none());
         sent.send(no_override).unwrap();
     });
-    let no_override = received.recv_timeout(WAIT).expect("bounded TLS probe response");
+    let no_override = received
+        .recv_timeout(WAIT)
+        .expect("bounded TLS probe response");
     // Receiving a message alone is not proof that a thread has exited.
     let deadline = Instant::now() + WAIT;
     while !worker.is_finished() {
-        assert!(Instant::now() < deadline, "TLS probe exit was not confirmed");
+        assert!(
+            Instant::now() < deadline,
+            "TLS probe exit was not confirmed"
+        );
         thread::yield_now();
     }
     worker.join().expect("TLS probe must join without panic");
@@ -167,7 +185,10 @@ fn expired_override_fails_closed_instead_of_falling_back_to_ordinary() {
     let scope = test_session(&session);
     drop(session);
     assert!(weak.upgrade().is_none());
-    assert!(override_pointer().is_some(), "the expired override must remain installed");
+    assert!(
+        override_pointer().is_some(),
+        "the expired override must remain installed"
+    );
     assert!(matches!(current_session(), Err(error) if error == UNAVAILABLE));
     assert!(matches!(begin_codex_write(), Err(error) if error == UNAVAILABLE));
     assert!(matches!(reject_managed_operation(), Err(error) if error == UNAVAILABLE));
@@ -222,16 +243,25 @@ struct BoundedRuntime(Option<tokio::runtime::Runtime>);
 
 impl BoundedRuntime {
     fn new() -> Self {
-        Self(Some(tokio::runtime::Builder::new_current_thread()
-            .enable_time().max_blocking_threads(1).build().unwrap()))
+        Self(Some(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .max_blocking_threads(1)
+                .build()
+                .unwrap(),
+        ))
     }
 
-    fn runtime(&self) -> &tokio::runtime::Runtime { self.0.as_ref().unwrap() }
+    fn runtime(&self) -> &tokio::runtime::Runtime {
+        self.0.as_ref().unwrap()
+    }
 }
 
 impl Drop for BoundedRuntime {
     fn drop(&mut self) {
-        if let Some(runtime) = self.0.take() { runtime.shutdown_timeout(WAIT); }
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_timeout(WAIT);
+        }
     }
 }
 
@@ -239,18 +269,24 @@ struct ReleaseWorker(Option<mpsc::Sender<()>>);
 
 impl ReleaseWorker {
     fn release(&mut self) {
-        if let Some(sender) = self.0.take() { let _ = sender.send(()); }
+        if let Some(sender) = self.0.take() {
+            let _ = sender.send(());
+        }
     }
 }
 
 impl Drop for ReleaseWorker {
-    fn drop(&mut self) { self.release(); }
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 struct ObserveOuterDrop(Arc<AtomicBool>);
 
 impl Drop for ObserveOuterDrop {
-    fn drop(&mut self) { self.0.store(true, Ordering::SeqCst); }
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }
 
 enum MovedAdmission {
@@ -274,7 +310,9 @@ fn blocking_worker_outlives_cancelled_outer(managed: bool, legacy: bool) {
     let scope = test_session(&session);
     let legacy_root = fixture.path.join("legacy-runtime");
     let contender_fixture = legacy.then(Fixture::new);
-    let contender_session = contender_fixture.as_ref().map(|fixture| fixture.session(false));
+    let contender_session = contender_fixture
+        .as_ref()
+        .map(|fixture| fixture.session(false));
     let admission = if legacy {
         assert!(!managed);
         private_directory(&legacy_root);
@@ -301,9 +339,11 @@ fn blocking_worker_outlives_cancelled_outer(managed: bool, legacy: bool) {
             // the blocking boundary. Never reacquire admission on this thread.
             admission.ensure_current()?;
             let no_override = TEST_SESSION.with(|slot| slot.borrow().is_none());
-            started_tx.send((thread::current().id(), no_override))
+            started_tx
+                .send((thread::current().id(), no_override))
                 .map_err(|_| "synthetic start observer disappeared".to_owned())?;
-            release_rx.recv_timeout(WAIT)
+            release_rx
+                .recv_timeout(WAIT)
                 .map_err(|_| "synthetic worker release deadline exceeded".to_owned())?;
             admission.ensure_current()?;
             drop(admission);
@@ -322,9 +362,16 @@ fn blocking_worker_outlives_cancelled_outer(managed: bool, legacy: bool) {
                 started = started_rx => started.expect("worker must acknowledge admission"),
                 _ = &mut outer => panic!("outer completed before the worker was released"),
             };
-            (handle_rx.await.expect("retain worker handle for bounded joining"),
-                worker_thread, no_override)
-        }).await.expect("bounded blocking-worker start")
+            (
+                handle_rx
+                    .await
+                    .expect("retain worker handle for bounded joining"),
+                worker_thread,
+                no_override,
+            )
+        })
+        .await
+        .expect("bounded blocking-worker start")
     });
     assert_ne!(worker_thread, caller_thread);
     assert!(no_override);
@@ -338,10 +385,15 @@ fn blocking_worker_outlives_cancelled_outer(managed: bool, legacy: bool) {
     drop((scope, session));
     assert_busy(&fixture.path);
     if let Some(contender) = &contender_session {
-        assert!(matches!(probe_runtime(contender, &legacy_root), Err(Error::ResourceBusy)));
+        assert!(matches!(
+            probe_runtime(contender, &legacy_root),
+            Err(Error::ResourceBusy)
+        ));
     }
     {
-        let retained = weak.upgrade().expect("accepted worker must retain the session");
+        let retained = weak
+            .upgrade()
+            .expect("accepted worker must retain the session");
         retained.ensure_current().unwrap();
         if let LinuxMode::Managed(owner) = &retained.mode {
             assert!(matches!(owner.try_writer(), Err(Error::WriterBusy)));
@@ -349,7 +401,8 @@ fn blocking_worker_outlives_cancelled_outer(managed: bool, legacy: bool) {
     }
     release.release();
     runtime.runtime().block_on(async {
-        tokio::time::timeout(WAIT, worker).await
+        tokio::time::timeout(WAIT, worker)
+            .await
             .expect("worker completion was not confirmed; retain fixture")
             .expect("blocking worker panicked")
             .expect("blocking worker failed");
@@ -362,7 +415,9 @@ fn blocking_worker_outlives_cancelled_outer(managed: bool, legacy: bool) {
     }
     drop(runtime);
     drop(contender_session);
-    if let Some(contender) = contender_fixture { contender.cleanup(); }
+    if let Some(contender) = contender_fixture {
+        contender.cleanup();
+    }
     fixture.cleanup();
 }
 
@@ -382,7 +437,8 @@ fn legacy_runtime_blocking_guard_survives_outer_future_cancellation() {
 }
 
 fn probe_runtime(
-    session: &Arc<GuiProfileSession>, root: &Path,
+    session: &Arc<GuiProfileSession>,
+    root: &Path,
 ) -> ai_toolbox_management::Result<OrdinaryRuntimeLeaseGroup> {
     let LinuxMode::Ordinary(profile) = &session.mode else {
         panic!("runtime contender must use an ordinary synthetic profile");
@@ -402,8 +458,14 @@ fn ordinary_nested_runtime_and_alias_admission_reuse_the_same_arc() {
     let first = admit_legacy_runtime(&root).unwrap();
     let nested = admit_legacy_runtime(&root).unwrap();
     let aliased = admit_legacy_runtime(&alias).unwrap();
-    assert!(Arc::ptr_eq(first.runtime.as_ref().unwrap(), nested.runtime.as_ref().unwrap()));
-    assert!(Arc::ptr_eq(first.runtime.as_ref().unwrap(), aliased.runtime.as_ref().unwrap()));
+    assert!(Arc::ptr_eq(
+        first.runtime.as_ref().unwrap(),
+        nested.runtime.as_ref().unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        first.runtime.as_ref().unwrap(),
+        aliased.runtime.as_ref().unwrap()
+    ));
     assert_eq!(session.ordinary_roots.lock().unwrap().len(), 1);
     first.ensure_current().unwrap();
     nested.ensure_current().unwrap();
@@ -428,7 +490,10 @@ fn different_ordinary_profiles_contend_on_one_physical_runtime() {
         let _contender_scope = test_session(&contender);
         assert!(admit_legacy_runtime(&alias).is_err());
         assert!(contender.ordinary_roots.lock().unwrap().is_empty());
-        assert!(matches!(probe_runtime(&contender, &root), Err(Error::ResourceBusy)));
+        assert!(matches!(
+            probe_runtime(&contender, &root),
+            Err(Error::ResourceBusy)
+        ));
     }
     drop((first, first_scope, first_session));
     {
@@ -454,11 +519,17 @@ fn ordinary_session_conservatively_retains_previous_runtime_roots() {
     let scope = test_session(&session);
     let old_guard = admit_legacy_runtime(&old_root).unwrap();
     let new_guard = admit_legacy_runtime(&new_root).unwrap();
-    assert!(!Arc::ptr_eq(old_guard.runtime.as_ref().unwrap(), new_guard.runtime.as_ref().unwrap()));
+    assert!(!Arc::ptr_eq(
+        old_guard.runtime.as_ref().unwrap(),
+        new_guard.runtime.as_ref().unwrap()
+    ));
     drop((old_guard, new_guard));
     assert_eq!(session.ordinary_roots.lock().unwrap().len(), 2);
     for root in [&old_root, &new_root] {
-        assert!(matches!(probe_runtime(&contender, root), Err(Error::ResourceBusy)));
+        assert!(matches!(
+            probe_runtime(&contender, root),
+            Err(Error::ResourceBusy)
+        ));
     }
     // Admission-cache coverage only: no root-change settings/DB transaction
     // is invoked here, so this does not prove failed settings remain unwritten.
@@ -483,11 +554,21 @@ impl ManagedTargets {
         let profile = fixture.path.join("managed-profile");
         let runtime = fixture.path.join("codex-runtime");
         let other = fixture.path.join("other-tool");
-        for path in [&profile, &runtime, &other] { private_directory(path); }
-        let owner = ProfileLeaseStartup::acquire(&profile).unwrap().into_managed().unwrap();
+        for path in [&profile, &runtime, &other] {
+            private_directory(path);
+        }
+        let owner = ProfileLeaseStartup::acquire(&profile)
+            .unwrap()
+            .into_managed()
+            .unwrap();
         let identity = RuntimeResourceIdentity::existing(&runtime).unwrap();
         let session = GuiProfileSession::managed_with_runtime(owner, identity).unwrap();
-        Self { profile, runtime, other, session }
+        Self {
+            profile,
+            runtime,
+            other,
+            session,
+        }
     }
 }
 
@@ -508,18 +589,33 @@ struct TreeEntry {
 fn snapshot_tree(root: &Path) -> Vec<TreeEntry> {
     fn visit(root: &Path, path: &Path, entries: &mut Vec<TreeEntry>) {
         let meta = fs::symlink_metadata(path).unwrap();
-        let symlink_target = meta.file_type().is_symlink().then(|| fs::read_link(path).unwrap());
-        let content = if meta.is_file() { fs::read(path).unwrap() } else { Vec::new() };
+        let symlink_target = meta
+            .file_type()
+            .is_symlink()
+            .then(|| fs::read_link(path).unwrap());
+        let content = if meta.is_file() {
+            fs::read(path).unwrap()
+        } else {
+            Vec::new()
+        };
         entries.push(TreeEntry {
             relative: path.strip_prefix(root).unwrap().to_path_buf(),
-            device: meta.dev(), inode: meta.ino(), mode: meta.mode(), links: meta.nlink(),
-            content, symlink_target,
+            device: meta.dev(),
+            inode: meta.ino(),
+            mode: meta.mode(),
+            links: meta.nlink(),
+            content,
+            symlink_target,
         });
         if meta.is_dir() {
-            let mut children = fs::read_dir(path).unwrap()
-                .map(|entry| entry.unwrap().path()).collect::<Vec<_>>();
+            let mut children = fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
             children.sort();
-            for child in children { visit(root, &child, entries); }
+            for child in children {
+                visit(root, &child, entries);
+            }
         }
     }
     let mut entries = Vec::new();
@@ -529,8 +625,12 @@ fn snapshot_tree(root: &Path) -> Vec<TreeEntry> {
 
 fn assert_cross_target_denied_without_creation(fixture: &Fixture, target: &Path) {
     let before = snapshot_tree(&fixture.path);
-    assert!(matches!(admit_non_codex_targets(Some("claude_code"), &[target]),
-        Err(error) if error == MANAGED_UNSUPPORTED), "unexpected target admission: {}", target.display());
+    assert!(
+        matches!(admit_non_codex_targets(Some("claude_code"), &[target]),
+        Err(error) if error == MANAGED_UNSUPPORTED),
+        "unexpected target admission: {}",
+        target.display()
+    );
     assert_eq!(snapshot_tree(&fixture.path), before);
 }
 
@@ -541,8 +641,10 @@ fn managed_codex_and_legacy_requests_are_rejected_without_creating_missing_roots
     let scope = test_session(&targets.session);
     let missing = targets.other.join("missing-runtime");
     let before = snapshot_tree(&fixture.path);
-    assert!(matches!(admit_non_codex_targets(Some("codex"), &[&missing]),
-        Err(error) if error == MANAGED_UNSUPPORTED));
+    assert!(
+        matches!(admit_non_codex_targets(Some("codex"), &[&missing]),
+        Err(error) if error == MANAGED_UNSUPPORTED)
+    );
     assert!(matches!(admit_non_codex_targets(Some("claude_code"), &[]),
         Err(error) if error == MANAGED_UNSUPPORTED));
     assert!(matches!(admit_legacy_runtime(&missing),
@@ -558,13 +660,20 @@ fn managed_non_codex_disjoint_targets_are_admitted_without_creating_missing_tail
     let fixture = Fixture::new();
     let targets = ManagedTargets::new(&fixture);
     let existing = targets.other.join("settings.json");
-    let missing = targets.other.join("not-created").join("nested").join("config.json");
+    let missing = targets
+        .other
+        .join("not-created")
+        .join("nested")
+        .join("config.json");
     write_private(&existing, b"{\"synthetic\":true}");
     let scope = test_session(&targets.session);
     let before = snapshot_tree(&fixture.path);
     let accepted = admit_non_codex_targets(Some("claude_code"), &[&existing, &missing]).unwrap();
     accepted.ensure_current().unwrap();
-    assert!(Arc::ptr_eq(accepted.session.as_ref().unwrap(), &targets.session));
+    assert!(Arc::ptr_eq(
+        accepted.session.as_ref().unwrap(),
+        &targets.session
+    ));
     let unspecified_tool = admit_non_codex_targets(None, &[&targets.other]).unwrap();
     unspecified_tool.ensure_current().unwrap();
     assert_eq!(snapshot_tree(&fixture.path), before);
@@ -587,15 +696,31 @@ fn managed_cross_target_intersections_and_aliases_fail_closed_without_creation()
     symlink(&targets.profile, &profile_alias).unwrap();
     let scope = test_session(&targets.session);
     let rejected = [
-        targets.runtime.clone(), targets.profile.clone(), fixture.path.clone(),
-        runtime_child, profile_child, runtime_alias.clone(), profile_alias.clone(),
-        runtime_alias.join("child"), profile_alias.join("child"),
-        targets.runtime.join("missing").join("nested").join("payload"),
-        targets.profile.join("missing").join("nested").join("payload"),
+        targets.runtime.clone(),
+        targets.profile.clone(),
+        fixture.path.clone(),
+        runtime_child,
+        profile_child,
+        runtime_alias.clone(),
+        profile_alias.clone(),
+        runtime_alias.join("child"),
+        profile_alias.join("child"),
+        targets
+            .runtime
+            .join("missing")
+            .join("nested")
+            .join("payload"),
+        targets
+            .profile
+            .join("missing")
+            .join("nested")
+            .join("payload"),
         runtime_alias.join("missing").join("payload"),
         profile_alias.join("missing").join("payload"),
     ];
-    for target in &rejected { assert_cross_target_denied_without_creation(&fixture, target); }
+    for target in &rejected {
+        assert_cross_target_denied_without_creation(&fixture, target);
+    }
     drop((scope, targets));
     fixture.cleanup();
 }
@@ -634,8 +759,10 @@ fn managed_cross_target_without_frozen_runtime_identity_fails_closed() {
     let session = session_at(&profile, true);
     let scope = test_session(&session);
     let before = snapshot_tree(&fixture.path);
-    assert!(matches!(admit_non_codex_targets(Some("claude_code"), &[&other]),
-        Err(error) if error == UNAVAILABLE));
+    assert!(
+        matches!(admit_non_codex_targets(Some("claude_code"), &[&other]),
+        Err(error) if error == UNAVAILABLE)
+    );
     assert_eq!(snapshot_tree(&fixture.path), before);
     drop((scope, session));
     fixture.cleanup();
@@ -667,7 +794,9 @@ impl Drop for BoundedActor {
             let _ = child.kill();
             let deadline = Instant::now() + WAIT;
             while Instant::now() < deadline {
-                if child.try_wait().ok().flatten().is_some() { return; }
+                if child.try_wait().ok().flatten().is_some() {
+                    return;
+                }
                 thread::yield_now();
             }
             eprintln!("isolated GUI admission actor was not reaped; fixture retained");
@@ -678,7 +807,11 @@ impl Drop for BoundedActor {
 fn read_bounded(path: &Path) -> String {
     assert!(fs::metadata(path).unwrap().len() <= 16 * 1024);
     let mut text = String::new();
-    fs::File::open(path).unwrap().take(16 * 1024).read_to_string(&mut text).unwrap();
+    fs::File::open(path)
+        .unwrap()
+        .take(16 * 1024)
+        .read_to_string(&mut text)
+        .unwrap();
     text
 }
 
@@ -686,35 +819,71 @@ fn run_isolated_actor(mode: &str) {
     let fixture = Fixture::new();
     let stdout_path = fixture.path.join("actor.stdout");
     let stderr_path = fixture.path.join("actor.stderr");
-    let output = OpenOptions::new().write(true).create_new(true).mode(0o600)
-        .open(&stdout_path).unwrap();
-    let error = OpenOptions::new().write(true).create_new(true).mode(0o600)
-        .open(&stderr_path).unwrap();
+    let output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&stdout_path)
+        .unwrap();
+    let error = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&stderr_path)
+        .unwrap();
     let child = Command::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", ADMISSION_ACTOR, "--nocapture", "--test-threads=1"])
-        .current_dir(&fixture.path).env_clear()
+        .args([
+            "--ignored",
+            "--exact",
+            ADMISSION_ACTOR,
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .current_dir(&fixture.path)
+        .env_clear()
         .env("AITB_GUI_ADMISSION_FIXTURE", &fixture.path)
         .env("AITB_GUI_ADMISSION_PARENT", fixture.path.parent().unwrap())
         .env("AITB_GUI_ADMISSION_MODE", mode)
-        .env("HOME", &fixture.path).env("TMPDIR", &fixture.path)
-        .env("XDG_DATA_HOME", &fixture.path).env("XDG_CACHE_HOME", &fixture.path)
-        .env("XDG_CONFIG_HOME", &fixture.path).env("AI_TOOLBOX_DATA_DIR", &fixture.path)
-        .stdin(Stdio::null()).stdout(output).stderr(error).spawn().unwrap();
+        .env("HOME", &fixture.path)
+        .env("TMPDIR", &fixture.path)
+        .env("XDG_DATA_HOME", &fixture.path)
+        .env("XDG_CACHE_HOME", &fixture.path)
+        .env("XDG_CONFIG_HOME", &fixture.path)
+        .env("AI_TOOLBOX_DATA_DIR", &fixture.path)
+        .stdin(Stdio::null())
+        .stdout(output)
+        .stderr(error)
+        .spawn()
+        .unwrap();
     let mut actor = BoundedActor(Some(child));
     let deadline = Instant::now() + WAIT;
     let status = loop {
-        if let Some(status) = actor.0.as_mut().unwrap().try_wait().unwrap() { break status; }
-        assert!(Instant::now() < deadline, "admission actor deadline exceeded; retain fixture");
+        if let Some(status) = actor.0.as_mut().unwrap().try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "admission actor deadline exceeded; retain fixture"
+        );
         thread::yield_now();
     };
     actor.0.take();
     let stdout = read_bounded(&stdout_path);
     let stderr = read_bounded(&stderr_path);
-    assert!(status.success(), "isolated admission actor failed: {stderr}");
-    assert!(stdout.lines().any(|line| line.starts_with(
-        "test result: ok. 1 passed; 0 failed; 0 ignored;",
-    )), "the exact actor must complete one successful libtest result: {stdout}");
-    assert_eq!(fs::read(fixture.path.join("actor-complete")).unwrap(), MARKER);
+    assert!(
+        status.success(),
+        "isolated admission actor failed: {stderr}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;",)),
+        "the exact actor must complete one successful libtest result: {stdout}"
+    );
+    assert_eq!(
+        fs::read(fixture.path.join("actor-complete")).unwrap(),
+        MARKER
+    );
     if matches!(mode, "usage-managed" | "usage-ordinary") {
         // The real actor has exited and was reaped above. Tauri's mock App
         // retains managed State through its core PathResolver/AppHandle cycle;
@@ -741,7 +910,10 @@ fn expired_process_registry_fails_closed_without_resetting_once_lock() {
 }
 
 fn expired_registry_actor(root: &Path) {
-    assert!(SESSION.get().is_none(), "this actor must start in a fresh process");
+    assert!(
+        SESSION.get().is_none(),
+        "this actor must start in a fresh process"
+    );
     let profile = root.join("profile");
     let shadow_profile = root.join("override-profile");
     private_directory(&profile);
@@ -759,7 +931,11 @@ fn expired_registry_actor(root: &Path) {
     assert!(Arc::ptr_eq(&current_session().unwrap().unwrap(), &session));
     drop(shadow);
     drop(session);
-    assert_eq!(registry_pointer(), installed, "expired installation must not be reset");
+    assert_eq!(
+        registry_pointer(),
+        installed,
+        "expired installation must not be reset"
+    );
     assert!(SESSION.get().unwrap().upgrade().is_none());
     assert!(matches!(current_session(), Err(error) if error == UNAVAILABLE));
     assert!(matches!(begin_codex_write(), Err(error) if error == UNAVAILABLE));
@@ -771,17 +947,24 @@ fn expired_registry_actor(root: &Path) {
 #[test]
 #[ignore = "only the bounded synthetic parent may launch this exact actor"]
 fn isolated_admission_actor() {
-    let root = PathBuf::from(std::env::var_os("AITB_GUI_ADMISSION_FIXTURE")
-        .expect("explicit synthetic fixture"));
+    let root = PathBuf::from(
+        std::env::var_os("AITB_GUI_ADMISSION_FIXTURE").expect("explicit synthetic fixture"),
+    );
     assert!(root.is_absolute());
     assert_eq!(fs::canonicalize(&root).unwrap(), root);
-    let parent = PathBuf::from(std::env::var_os("AITB_GUI_ADMISSION_PARENT")
-        .expect("explicit private fixture parent"));
+    let parent = PathBuf::from(
+        std::env::var_os("AITB_GUI_ADMISSION_PARENT").expect("explicit private fixture parent"),
+    );
     assert!(parent.is_absolute());
     assert_eq!(fs::canonicalize(&parent).unwrap(), parent);
     assert_eq!(root.parent(), Some(parent.as_path()));
     assert_eq!(std::env::temp_dir(), root);
-    assert!(root.file_name().unwrap().to_str().unwrap().starts_with("ai-toolbox-gui-admission-"));
+    assert!(root
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("ai-toolbox-gui-admission-"));
     assert_eq!(fs::symlink_metadata(&root).unwrap().mode() & 0o7777, 0o700);
     assert_eq!(fs::read(root.join("fixture-marker")).unwrap(), MARKER);
     let mode = std::env::var("AITB_GUI_ADMISSION_MODE").unwrap();
@@ -806,31 +989,42 @@ fn isolated_admission_actor() {
     private_directory(&cache);
     assert!(ai_toolbox_storage::model_pricing_seed::get_model_pricing_cache_path().is_none());
     ai_toolbox_storage::model_pricing_seed::set_cache_dir(cache.clone());
-    assert_eq!(ai_toolbox_storage::model_pricing_seed::get_model_pricing_cache_path(),
-        Some(cache.join("model_pricing.json")));
+    assert_eq!(
+        ai_toolbox_storage::model_pricing_seed::get_model_pricing_cache_path(),
+        Some(cache.join("model_pricing.json"))
+    );
     let profile = root.join("profile");
     private_directory(&profile);
     let session = session_at(&profile, managed);
     let weak = Arc::downgrade(&session);
     // Real acquisition happens before initialization of a real synthetic DB.
-    let db = crate::SqliteDbState::open(profile.join(ai_toolbox_storage::SQLITE_DATABASE_FILE))
-        .unwrap();
+    let db =
+        crate::SqliteDbState::open(profile.join(ai_toolbox_storage::SQLITE_DATABASE_FILE)).unwrap();
     let clone_before_retention = db.clone();
     session.retain_database(&db).unwrap();
     session.retain_database(&clone_before_retention).unwrap();
     let last_clone = db.clone();
     drop(session);
-    assert!(weak.upgrade().is_none(), "DB retains the lease, not the GUI session Arc");
+    assert!(
+        weak.upgrade().is_none(),
+        "DB retains the lease, not the GUI session Arc"
+    );
     assert_busy(&profile);
     drop(db);
     assert_busy(&profile);
     drop(clone_before_retention);
     assert_busy(&profile);
-    let one = last_clone.with_conn(|connection| {
-        connection.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
-            .map_err(|error| error.to_string())
-    }).unwrap();
-    assert_eq!(one, 1, "the final clone must still own a live SQLite connection");
+    let one = last_clone
+        .with_conn(|connection| {
+            connection
+                .query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+                .map_err(|error| error.to_string())
+        })
+        .unwrap();
+    assert_eq!(
+        one, 1,
+        "the final clone must still own a live SQLite connection"
+    );
     drop(last_clone);
     assert_released(&profile);
     write_private(&root.join("actor-complete"), MARKER);
@@ -847,10 +1041,13 @@ fn explicit_worker_session_retains_runtime_without_thread_local_override() {
     let worker_runtime = runtime.clone();
     let admission = thread::spawn(move || {
         assert!(TEST_SESSION.with(|slot| slot.borrow().is_none()));
-        let admission = admit_legacy_runtime_with_session(Some(worker_session), &worker_runtime).unwrap();
+        let admission =
+            admit_legacy_runtime_with_session(Some(worker_session), &worker_runtime).unwrap();
         admission.require_runtime(&worker_runtime).unwrap();
         admission
-    }).join().unwrap();
+    })
+    .join()
+    .unwrap();
     drop(session);
     assert!(weak.upgrade().is_some());
     admission.ensure_current().unwrap();
@@ -870,12 +1067,13 @@ fn explicit_managed_worker_rejects_before_missing_runtime_bootstrap() {
         let result = admit_legacy_runtime_with_session(Some(worker_session), &worker_runtime);
         assert!(matches!(result, Err(error) if error == MANAGED_UNSUPPORTED));
         assert!(!worker_runtime.exists());
-    }).join().unwrap();
+    })
+    .join()
+    .unwrap();
     assert!(!runtime.exists());
     drop(session);
     fixture.cleanup();
 }
-
 
 #[test]
 fn managed_official_usage_rejects_before_persisting_preparation_failure() {
@@ -889,7 +1087,11 @@ fn ordinary_official_usage_preserves_preparation_failure_contract() {
 
 fn official_usage_admission_actor(root: &Path, managed: bool) {
     use crate::coding::codex::refresh_codex_official_account_limits;
-    use crate::db::{helpers::{db_get, db_put}, schema::DbTable, SqliteDbState};
+    use crate::db::{
+        helpers::{db_get, db_put},
+        schema::DbTable,
+        SqliteDbState,
+    };
     use serde_json::json;
     use tauri::Manager;
 
@@ -897,15 +1099,20 @@ fn official_usage_admission_actor(root: &Path, managed: bool) {
     let profile = root.join("profile");
     let runtime_root = root.join("synthetic-codex");
     let cache = root.join("pricing-cache");
-    for path in [&profile, &runtime_root, &cache] { private_directory(path); }
+    for path in [&profile, &runtime_root, &cache] {
+        private_directory(path);
+    }
     std::env::set_var("CODEX_HOME", &runtime_root);
     assert!(ai_toolbox_storage::model_pricing_seed::get_model_pricing_cache_path().is_none());
     ai_toolbox_storage::model_pricing_seed::set_cache_dir(cache);
     let session = session_at(&profile, managed);
     session.install().unwrap();
-    let database = SqliteDbState::open(profile.join(ai_toolbox_storage::SQLITE_DATABASE_FILE)).unwrap();
-    let app = tauri::test::mock_builder().manage(database)
-        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let database =
+        SqliteDbState::open(profile.join(ai_toolbox_storage::SQLITE_DATABASE_FILE)).unwrap();
+    let app = tauri::test::mock_builder()
+        .manage(database)
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
     let state = app.state::<SqliteDbState>();
     session.retain_database(state.inner()).unwrap();
     let db = state.db();
@@ -926,12 +1133,18 @@ fn official_usage_admission_actor(root: &Path, managed: bool) {
         }))?;
         Ok(())
     }).unwrap();
-    let snapshot = || db.with_conn(|conn| db_get(conn, DbTable::CodexOfficialAccount, "synthetic-account"))
-        .unwrap().unwrap();
+    let snapshot = || {
+        db.with_conn(|conn| db_get(conn, DbTable::CodexOfficialAccount, "synthetic-account"))
+            .unwrap()
+            .unwrap()
+    };
     let before = snapshot();
     assert!(before["auth_snapshot"].is_null());
     assert_eq!(before["credits"]["balance"], json!(42.5));
-    let executor = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     // No token or auth.json exists. The current credential preparation rejects
     // the missing/empty persisted snapshot before OAuth or usage requests.
     // Keep the production error contract introduced by credential recovery;
@@ -939,20 +1152,28 @@ fn official_usage_admission_actor(root: &Path, managed: bool) {
     // It is a real production command call, not a copied persistence helper.
     assert_busy(&profile);
     let result = executor.block_on(refresh_codex_official_account_limits(
-        state.clone(), app.handle().clone(),
-        "synthetic-provider".to_owned(), "synthetic-account".to_owned(),
+        state.clone(),
+        app.handle().clone(),
+        "synthetic-provider".to_owned(),
+        "synthetic-account".to_owned(),
     ));
     let after = snapshot();
     assert_busy(&profile);
     if managed {
         // Expected RED on the unmodified entry: preparation failure currently
         // writes credits/error/updated_at before any managed admission check.
-        assert_eq!(after, before, "managed usage request mutated its stored account");
+        assert_eq!(
+            after, before,
+            "managed usage request mutated its stored account"
+        );
         assert_eq!(result.unwrap_err(), MANAGED_UNSUPPORTED);
     } else {
         assert_eq!(result.unwrap_err(), "Official account snapshot is missing");
         assert!(after["credits"].is_null());
-        assert_eq!(after["last_limits_fetched_at"], before["last_limits_fetched_at"]);
+        assert_eq!(
+            after["last_limits_fetched_at"],
+            before["last_limits_fetched_at"]
+        );
         assert_eq!(after["last_error"], "Official account snapshot is missing");
         assert_ne!(after["updated_at"], before["updated_at"]);
     }
@@ -982,8 +1203,10 @@ fn ordinary_missing_parent_rejects_before_runtime_lease_retention() {
     let result = admit_legacy_runtime(&missing_root);
     assert!(matches!(result, Err(error) if
         error == "The Codex runtime cannot be coordinated; no business write was started"));
-    assert!(session.ordinary_roots.lock().unwrap().is_empty(),
-        "a rejected missing-parent request must not retain a runtime lease");
+    assert!(
+        session.ordinary_roots.lock().unwrap().is_empty(),
+        "a rejected missing-parent request must not retain a runtime lease"
+    );
     assert_eq!(snapshot_tree(&fixture.path), before);
     assert!(matches!(fs::symlink_metadata(&missing_parent),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound));
