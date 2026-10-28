@@ -1,0 +1,196 @@
+{
+  "status": "IMPLEMENTED_STATIC_CHECKED_NOT_DISPATCHED",
+  "repository": "xue-ding-e/AI-Toolbox-Next",
+  "subject": {
+    "sha": "7ebffaf24844eb01e91cc3745f6c5167b67c8339",
+    "tree": "81477d7b573dc466215a49f429ba9cc4361adde1",
+    "parent": "17d787f061c1e4d05464a392f459a705ce858556",
+    "test_file": "tauri/src/management_admission_tests.rs",
+    "test_file_sha256": "2bf62d70f326b5ba0c2ad67fc3205925abbe29a5554a92859426711780ff3f86",
+    "exact_checkout_not_patch_overlay": true
+  },
+  "runner": {
+    "os": "ubuntu-22.04",
+    "rust": "1.99.1",
+    "edition": "2021",
+    "components": [
+      "rustfmt"
+    ],
+    "job_timeout_minutes": 75,
+    "shared_budget_seconds": 3900,
+    "cleanup_reserve_seconds": 120,
+    "build_jobs": 2,
+    "debug": 0,
+    "incremental": 0,
+    "serial_tests": true
+  },
+  "reuse": {
+    "run": 40674882098,
+    "head": "7da64e0636135162f335512e013847a3290dd57d",
+    "driver_path": "scripts/typed-context-admission-stage2-validation/validate.py",
+    "driver_git_blob": "4dbf928a7206ba01ea9ad46173317c6c4c9ff5a8",
+    "driver_sha256": "23ef5e501c102a12f46b842a3de49934c23e6edd4a6b43a08b5a19789cf4af09",
+    "reuse_only": [
+      "signed official Ubuntu APT prerequisite setup",
+      "clean_env allowlist and fresh owned HOME/XDG/CODEX/APP/temp/cache",
+      "asynchronous bounded stdout/stderr and resource sampler",
+      "owned process pidfd stop/reap confirmation; retain fixture on unknown exit",
+      "complete source modes/hashes before and after; lockfiles unchanged",
+      "one shared deadline including setup; bounded artifact upload"
+    ],
+    "do_not_reuse_as_current_pass": [
+      "old binaries or Cargo target cache",
+      "old 17d test results",
+      "historical frontend artifact",
+      "candidate.patch overlay"
+    ]
+  },
+  "dependencies": [
+    "libwebkit2gtk-4.1-dev",
+    "librsvg2-dev",
+    "patchelf",
+    "libssl-dev",
+    "libgtk-3-dev",
+    "libayatana-appindicator3-dev"
+  ],
+  "format": {
+    "baseline": "git show 17d787f061c1e4d05464a392f459a705ce858556:tauri/src/management_admission_tests.rs into owned evidence only",
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2021",
+      "--check",
+      "tauri/src/management_admission_tests.rs"
+    ],
+    "baseline_and_candidate_same_toolchain": true,
+    "nonzero_is_not_pass": true,
+    "existing_format_drift_separate_from_new_lines": true,
+    "no_autoformat_or_product_edits": true,
+    "note": "If full-file rustfmt fails on inherited compact formatting, retain both diffs and request narrow reviewed handling; never waive or label passed automatically."
+  },
+  "compile": {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "tauri/Cargo.toml",
+      "--lib",
+      "--test",
+      "management_admission",
+      "--no-run",
+      "--message-format=json",
+      "--jobs",
+      "2"
+    ],
+    "deadline_seconds": 1680,
+    "full_dependency_graph": true,
+    "features": "unchanged defaults; no replacement crate or stubs",
+    "compile_asset": "Same prior explicitly declared empty dist/index.html if build requires it; owned compile-only asset, hash recorded and removed after process confirmation; not frontend/native acceptance."
+  },
+  "artifact_selection": {
+    "from": "fresh Cargo compiler-artifact JSON only",
+    "require_executable_count": 2,
+    "targets": [
+      {
+        "name": "ai_toolbox_lib",
+        "src_path": "tauri/src/lib.rs",
+        "test": true
+      },
+      {
+        "name": "management_admission",
+        "src_path": "tauri/tests/management_admission.rs",
+        "test": true
+      }
+    ],
+    "require_paths_under_owned_target": true,
+    "record": "canonical path, dev/ino/mode/size/SHA256; same binary before/after list and execution"
+  },
+  "lib_suite": {
+    "filter": "management_admission::tests::",
+    "list_argv": [
+      "management_admission::tests::",
+      "--list"
+    ],
+    "ignored_list_argv": [
+      "management_admission::tests::",
+      "--ignored",
+      "--list"
+    ],
+    "expected_normal": [
+      "management_admission::tests::different_ordinary_profiles_contend_on_one_physical_runtime",
+      "management_admission::tests::expired_override_fails_closed_instead_of_falling_back_to_ordinary",
+      "management_admission::tests::expired_process_registry_fails_closed_without_resetting_once_lock",
+      "management_admission::tests::explicit_managed_worker_rejects_before_missing_runtime_bootstrap",
+      "management_admission::tests::explicit_worker_session_retains_runtime_without_thread_local_override",
+      "management_admission::tests::last_database_clone_retains_managed_profile_lease",
+      "management_admission::tests::last_database_clone_retains_ordinary_profile_lease",
+      "management_admission::tests::legacy_runtime_blocking_guard_survives_outer_future_cancellation",
+      "management_admission::tests::managed_admission_rejects_unsupported_work_and_serializes_writer_guards",
+      "management_admission::tests::managed_blocking_guard_survives_outer_future_cancellation",
+      "management_admission::tests::managed_codex_and_legacy_requests_are_rejected_without_creating_missing_roots",
+      "management_admission::tests::managed_cross_target_hardlinked_and_leaf_symlink_files_are_rejected_without_effects",
+      "management_admission::tests::managed_cross_target_intersections_and_aliases_fail_closed_without_creation",
+      "management_admission::tests::managed_cross_target_revalidation_rejects_a_new_leaf_symlink_without_effects",
+      "management_admission::tests::managed_cross_target_without_frozen_runtime_identity_fails_closed",
+      "management_admission::tests::managed_non_codex_disjoint_targets_are_admitted_without_creating_missing_tails",
+      "management_admission::tests::managed_official_usage_rejects_before_persisting_preparation_failure",
+      "management_admission::tests::nested_test_scopes_restore_override_without_installing_production_registry",
+      "management_admission::tests::ordinary_admission_and_unsupported_operation_guard_retain_real_lease",
+      "management_admission::tests::ordinary_blocking_guard_survives_outer_future_cancellation",
+      "management_admission::tests::ordinary_missing_parent_rejects_before_runtime_lease_retention",
+      "management_admission::tests::ordinary_nested_runtime_and_alias_admission_reuse_the_same_arc",
+      "management_admission::tests::ordinary_official_usage_preserves_preparation_failure_contract",
+      "management_admission::tests::ordinary_session_conservatively_retains_previous_runtime_roots",
+      "management_admission::tests::thread_local_override_is_not_inherited_by_an_os_thread",
+      "management_admission::tests::unwinding_test_scope_restores_previous_override"
+    ],
+    "expected_ignored": 1,
+    "run_argv": [
+      "management_admission::tests::",
+      "--test-threads=1",
+      "--show-output"
+    ],
+    "expected_parent_passed": 26,
+    "expected_failed": 0,
+    "nested_actor_passes_not_added_to_parent_count": true,
+    "do_not_run_ignored_actor_directly": true,
+    "expected_ignored_names": [
+      "management_admission::tests::isolated_admission_actor"
+    ]
+  },
+  "integration_suite": {
+    "list_argv": [
+      "--list"
+    ],
+    "ignored_list_argv": [
+      "--ignored",
+      "--list"
+    ],
+    "expected_names": [
+      "production_library_missing_session_rejects_before_runtime_or_backup_effects"
+    ],
+    "expected_ignored": [],
+    "run_argv": [
+      "--test-threads=1",
+      "--show-output"
+    ],
+    "expected_passed": 1,
+    "expected_failed": 0
+  },
+  "result_proof": [
+    "Exact 27-name lib list and 1-name integration list; no duplicate/missing/unexpected names",
+    "Exact one ignored lib actor identity and zero ignored integration",
+    "Parse actual parent test ok lines and summaries, not list output as passes",
+    "New ordinary_missing_parent_rejects_before_runtime_lease_retention must have one actual parent ok line",
+    "Normal five actor parents pass; nested child actor output does not inflate parent totals",
+    "Every command and sampler exited; source/lockfiles unchanged; timeout/resource/fixture failure remains incomplete not product RED"
+  ],
+  "scope": [
+    "synthetic Linux admission boundary and production-library missing-session neighbor",
+    "not applied/history eligibility gate",
+    "not full fresh Rust suite, browser, Windows or native GUI validation",
+    "no real sessions, credentials, product-main mutation or releases"
+  ],
+  "dispatch_gate": "Parent review of resulting executable harness and source/hash binding, then parent heavy-slot approval; no dispatch or branch publication authorized by this plan"
+}

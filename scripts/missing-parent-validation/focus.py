@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Fresh exact-source focused admission verification; never runs on import.
+
+The original resource supervisor is byte-identical to the successful reviewed
+40674882098 driver. Its old overlay/frontend/full-suite entry point is NOT called.
+"""
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+
+HERE = Path(__file__).resolve().parent
+SHA = '7ebffaf24844eb01e91cc3745f6c5167b67c8339'
+TREE = '81477d7b573dc466215a49f429ba9cc4361adde1'
+PARENT = '17d787f061c1e4d05464a392f459a705ce858556'
+BRANCH = 'refs/heads/validation/missing-parent-admission-20261028'
+TEST = 'tauri/src/management_admission_tests.rs'
+TEST_HASH = '2bf62d70f326b5ba0c2ad67fc3205925abbe29a5554a92859426711780ff3f86'
+HELPER_BLOB = '4dbf928a7206ba01ea9ad46173317c6c4c9ff5a8'
+raw = (HERE / 'resource_control.py').read_bytes()
+assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == HELPER_BLOB
+spec = importlib.util.spec_from_file_location('reviewed_resource_control', HERE / 'resource_control.py')
+h = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(h)
+contract = json.loads((HERE / 'contract.json').read_text())
+
+
+def own_exited():
+    return h.ACTIVE is None and h.RESOURCE_SAMPLER is None and all(not x['survivors'] for x in h.RECORDS)
+
+
+def identity(path):
+    s = path.lstat()
+    h.require(path.is_file() and not path.is_symlink(), 'not a regular artifact')
+    return {'dev': s.st_dev, 'ino': s.st_ino, 'size': s.st_size, 'mode': s.st_mode, 'sha256': h.file_digest(path)}
+
+
+def verify_seal():
+    seal = json.loads((HERE / 'seal.json').read_text())
+    for name, digest in seal.items():
+        p = HERE.parent.parent / name if name.startswith('.github/') else HERE / name
+        h.require(not p.is_symlink() and h.file_digest(p) == digest, 'control seal differs: ' + name)
+
+
+def git(source, env, label, *args):
+    return h.run(label, ['git', *args], 30, source, env)
+
+
+def verify_subject(source, env, label):
+    h.require(git(source, env, label+'-head', 'rev-parse', 'HEAD').decode().strip() == SHA, 'wrong subject HEAD')
+    h.require(git(source, env, label+'-tree', 'rev-parse', 'HEAD^{tree}').decode().strip() == TREE, 'wrong subject tree')
+    h.require(git(source, env, label+'-parent', 'rev-parse', 'HEAD^').decode().strip() == PARENT, 'subject parent differs')
+    h.require(not git(source, env, label+'-status', 'status', '--porcelain', '--untracked-files=all').strip(), 'subject not clean')
+    h.require(h.file_digest(source / TEST) == TEST_HASH, 'new regression bytes differ')
+
+
+def run_suite(label, binary, prefix, names, ignored, source, env, full_inventory):
+    before = identity(binary)
+    filters = [prefix] if prefix else []
+    listed = h.inventory(h.run(label+'-list', [str(binary), *filters, '--list'], 30, source, env))
+    skipped = h.inventory(h.run(label+'-ignored-list', [str(binary), *filters, '--ignored', '--list'], 30, source, env))
+    h.require(listed == sorted(names + ignored) and skipped == sorted(ignored), 'actual selected inventory mismatch')
+    h.require(identity(binary) == before, 'binary changed while enumerating')
+    out = h.run(label+'-tests', [str(binary), *filters, '--test-threads=1', '--show-output'], 600, source, env)
+    blocks = h.libtest_blocks(out)
+    h.require(len(blocks) == 1, 'ambiguous parent summaries')
+    b = blocks[0]
+    expected = sorted([(n, 'ok') for n in names] + [(n, 'ignored') for n in ignored])
+    h.require(sorted(b['entries']) == expected, 'missing/duplicate/nonpassing actual parent result')
+    h.require(b['status'] == 'ok' and b['passed'] == len(names) and b['ignored'] == len(ignored)
+              and b['failed'] == b['measured'] == 0 and b['listed_run_count'] == len(expected)
+              and b['filtered'] == len(full_inventory) - len(expected), 'actual summary differs')
+    h.require(identity(binary) == before, 'binary changed during tests')
+    return {'artifact': before, 'actual_full_inventory_count': len(full_inventory), 'selected': listed,
+            'ignored_names': skipped, 'result': b, 'nested_children_are_not_additional_parent_passes': True}
+
+
+def validate(source, env):
+    result = {'ok': False, 'tests_passed': False, 'format_passed': False, 'whole_suite_executed': False,
+              'subject_sha': SHA, 'subject_tree': TREE, 'scope': 'Synthetic Linux admission and production-library neighbor only'}
+    tested = dist = dist_id = asset_id = None
+    try:
+        verify_subject(source, env, 'fresh')
+        tested = h.snapshot_source(source, env, 'before')
+        h.write_json('validation-source-before.json', tested)
+        for tool in ('rustc', 'cargo'):
+            h.require(h.run(tool+'-version', [tool, '--version'], 15, source, env).decode().startswith(tool+' 1.99.1 '), 'wrong toolchain')
+        h.run('rustfmt-version', ['rustfmt', '--version'], 15, source, env)
+        baseline = h.EVIDENCE / 'baseline-management-admission.rs'
+        baseline.write_bytes(git(source, env, 'baseline-source', 'show', PARENT+':'+TEST))
+        h.require(h.file_digest(baseline) == 'ec2dd6cb48587b43d2b6ff3dc5a0d15a2800170645c2b85dadd2bc5cf5ee96d7', 'baseline format input differs')
+        fmt = {}
+        for label, path in [('baseline', baseline), ('candidate', source / TEST)]:
+            h.run('rustfmt-'+label, ['rustfmt', '--edition', '2021', '--check', str(path)], 30, source, env, allowed_codes=(0,1))
+            fmt[label] = {'exit': h.RECORDS[-1]['exit_code'], 'logs': h.RECORDS[-1]['logs']}
+        result['format'] = fmt
+        result['format_passed'] = fmt['candidate']['exit'] == 0
+        result['format_note'] = 'Any existing/new formatting diff remains separate and unwaived; no autoformat performed'
+        rust_env = h.create_runtime_fixture(source, env)
+        dist = source / 'dist'
+        h.require(not dist.exists() and not dist.is_symlink(), 'existing compile asset refused')
+        dist.mkdir(mode=0o700)
+        st = dist.lstat(); dist_id = (st.st_dev, st.st_ino)
+        with (dist / 'index.html').open('xb'): pass
+        asset_id = identity(dist / 'index.html')
+        h.write_json('validation-compile-asset.json', {'sha256': h.digest(b''), 'purpose': 'empty compile-only asset, NOT frontend build/native acceptance'})
+        h.ARCHIVES_ALLOWED = True
+        h.STAGE = 'compile'
+        out = h.run('compile', contract['compile']['argv'], 1680, source, rust_env)
+        records = [json.loads(line) for line in out.decode().splitlines() if line.strip()]
+        h.require([r for r in records if r.get('reason') == 'build-finished'] == [{'reason':'build-finished','success':True}], 'fresh Cargo completion absent')
+        artifacts = [r for r in records if r.get('reason') == 'compiler-artifact' and r.get('executable') and r.get('profile',{}).get('test')]
+        h.require(len(artifacts) == 2, 'wrong actual binary count')
+        binaries = {}
+        expected = {'ai_toolbox_lib':'tauri/src/lib.rs', 'management_admission':'tauri/tests/management_admission.rs'}
+        for item in artifacts:
+            name = item['target']['name']
+            h.require(name in expected and name not in binaries, 'wrong/duplicate Cargo target')
+            h.require(Path(item['target']['src_path']).resolve() == (source / expected[name]).resolve(), 'wrong target source')
+            path = Path(item['executable']).resolve(strict=True)
+            h.require(path.is_relative_to(h.TARGET_ROOT) and os.access(path, os.X_OK), 'artifact escaped target')
+            binaries[name] = path
+        for name, binary in binaries.items():
+            before = identity(binary)
+            all_names = h.inventory(h.run(name.replace('_','-')+'-full-list', [str(binary), '--list'], 30, source, rust_env))
+            h.require(identity(binary) == before, 'binary changed during full list')
+            if name == 'ai_toolbox_lib':
+                selection = contract['lib_suite']
+                result['admission'] = run_suite('admission', binary, selection['filter'], selection['expected_normal'], selection['expected_ignored_names'], source, rust_env, all_names)
+            else:
+                result['integration'] = run_suite('integration', binary, '', contract['integration_suite']['expected_names'], [], source, rust_env, all_names)
+        result['tests_passed'] = True
+        result['ok'] = result['format_passed']
+        result['outcome'] = 'focused_tests_and_format_passed' if result['ok'] else 'focused_tests_passed_format_differences_need_review'
+    except BaseException as error:
+        result['error'] = str(error)
+        result['stage'] = h.STAGE
+        result['outcome'] = 'incomplete_or_failure_requires_diagnosis_not_automatic_retry'
+    finally:
+        h.FINALIZING = True
+        errors = []
+        try:
+            h.require(own_exited(), 'unknown process/sampler exit; retain fixture and asset')
+            if dist_id is not None:
+                st = dist.lstat()
+                h.require(not dist.is_symlink() and (st.st_dev,st.st_ino)==dist_id, 'compile dir changed')
+                if asset_id is not None:
+                    h.require(identity(dist/'index.html') == asset_id, 'compile asset changed')
+                    (dist/'index.html').unlink()
+                dist.rmdir()
+            if h.FIXTURE is not None: h.remove_owned_fixture()
+            result['fixture_cleanup_confirmed'] = True
+        except BaseException as error: errors.append('cleanup: '+str(error))
+        try:
+            h.require(h.RESOURCE_SAMPLER is None, 'unconfirmed sampler')
+            if tested is not None:
+                after = h.snapshot_source(source, env, 'after')
+                h.write_json('validation-source-after.json', after)
+                h.require(after == tested, 'tracked source/locks changed')
+                verify_subject(source, env, 'final')
+            h.check_disk_budgets(force=True)
+        except BaseException as error: errors.append('source/resource proof: '+str(error))
+        if not own_exited(): errors.append('final process exit not confirmed')
+        if errors: result['ok'] = False
+        result.update(finalization_errors=errors, all_owned_processes_exited=own_exited(), commands=h.RECORDS,
+                      memory=h.MEMORY_OBSERVATION, cache=h.CACHE_OBSERVATION)
+        h.write_json('validation-result.json', result)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(); parser.add_argument('--phase', choices=['preflight','validation'], required=True)
+    phase = parser.parse_args().phase
+    h.require(sys.platform == 'linux' and os.geteuid()!=0, 'unprivileged Linux required')
+    h.require(os.environ['GITHUB_REPOSITORY']=='xue-ding-e/AI-Toolbox-Next' and os.environ['GITHUB_REF']==BRANCH
+              and os.environ['GITHUB_EVENT_NAME']=='workflow_dispatch'
+              and os.environ['EXPECTED_SHA']==os.environ['GITHUB_SHA'], 'unexpected control dispatch')
+    verify_seal()
+    workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+    source = workspace / 'work/source'
+    h.PHASE = phase
+    h.EVIDENCE = Path(os.environ['RUNNER_TEMP']).resolve() / 'typed-context-admission-stage2-evidence'
+    h.require(not h.EVIDENCE.is_symlink(), 'evidence symlink')
+    h.EVIDENCE.mkdir(mode=0o700, exist_ok=True)
+    clock = h.EVIDENCE / 'preflight-budget.json'
+    for sig in (signal.SIGTERM,signal.SIGINT): signal.signal(sig,h.interrupted)
+    if phase == 'preflight':
+        h.require(not clock.exists(), 'duplicate preflight')
+        h.write_json(clock.name, {'deadline_monotonic': time.monotonic()+3900})
+        h.JOB_DEADLINE = json.loads(clock.read_text())['deadline_monotonic']
+        env = {'PATH':os.environ['PATH'],'LANG':'C.UTF-8','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null'}
+        h.require(git(HERE.parent.parent, env, 'control-head', 'rev-parse', 'HEAD').decode().strip() == os.environ['GITHUB_SHA'], 'control checkout SHA differs')
+        verify_subject(source, env, 'preflight')
+        return
+    h.require(not (h.EVIDENCE/'validation-result.json').exists(), 'duplicate validation refused')
+    h.JOB_DEADLINE = json.loads(clock.read_text())['deadline_monotonic']
+    h.RUN_ROOT = workspace/'work'; h.SOURCE_ROOT = source
+    env = h.clean_env(h.RUN_ROOT/'environment')
+    env.update(CARGO_REGISTRIES_CRATES_IO_PROTOCOL='sparse', CARGO_REGISTRIES_CRATES_IO_INDEX='sparse+https://index.crates.io/')
+    h.CACHE_ROOT = Path(env['CARGO_HOME']); h.TARGET_ROOT = Path(env['CARGO_TARGET_DIR']).resolve()
+    (h.CACHE_ROOT/'config.toml').write_text('[source.crates-io]\nregistry = "sparse+https://index.crates.io/"\n')
+    result = validate(source, env)
+    raise SystemExit(0 if result['ok'] else 1)
+
+
+if __name__ == '__main__': main()
