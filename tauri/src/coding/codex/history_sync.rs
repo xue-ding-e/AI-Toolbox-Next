@@ -1058,7 +1058,11 @@ fn load_validated_metadata_sidecar(
     let content = match fs::read_to_string(&meta_backup) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("Failed to read Codex session metadata backup: {error}")),
+        Err(error) => {
+            return Err(format!(
+                "Failed to read Codex session metadata backup: {error}"
+            ))
+        }
     };
     let entries: Vec<SessionMetaBackupEntry> = serde_json::from_str(&content)
         .map_err(|error| format!("Failed to parse Codex session metadata backup: {error}"))?;
@@ -1102,7 +1106,9 @@ fn restore_metadata_sidecars(paths: &Paths, backup_path: &Path) -> Result<(usize
 
 fn join_safe_relative(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
     if ai_toolbox_management::coordination::contains_coordination_component(relative_path)
-        || ai_toolbox_management::coordination::contains_coordination_component(&root.to_string_lossy())
+        || ai_toolbox_management::coordination::contains_coordination_component(
+            &root.to_string_lossy(),
+        )
     {
         return Err("OWNER_COORDINATION_PATH_RESERVED".to_string());
     }
@@ -1494,7 +1500,11 @@ model = "gpt-new"
 
     #[test]
     fn forged_sidecar_preserves_database_index_lock_inode_and_backup_set() {
-        for reserved in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
+        for reserved in [
+            ".ai-toolbox-owner.lock",
+            ".ai-toolbox-runtime.lock",
+            ".ai-toolbox-owner-0000000000000001-0000000000000002.sock",
+        ] {
             let env = TestCodexHistory::new();
             env.create_db(true);
             backup(&env.root, "manual").unwrap();
@@ -1506,15 +1516,30 @@ model = "gpt-new"
             let before = fs::metadata(&lock).unwrap();
             let db_before = fs::read(&paths.db_path).unwrap();
             fs::write(&paths.session_index_path, b"index unchanged").unwrap();
-            fs::write(super::session_meta_backup_path(latest), serde_json::json!([{
-                "relativePath": reserved, "firstLine": "forged"
-            }]).to_string()).unwrap();
-            assert_eq!(restore_latest(&env.root).unwrap_err(), "OWNER_COORDINATION_PATH_RESERVED");
+            fs::write(
+                super::session_meta_backup_path(latest),
+                serde_json::json!([{
+                    "relativePath": reserved, "firstLine": "forged"
+                }])
+                .to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                restore_latest(&env.root).unwrap_err(),
+                "OWNER_COORDINATION_PATH_RESERVED"
+            );
             assert_eq!(fs::read(&lock).unwrap(), b"fixed inode");
             assert_eq!(fs::read(&paths.db_path).unwrap(), db_before);
-            assert_eq!(fs::read(&paths.session_index_path).unwrap(), b"index unchanged");
-            assert_eq!(super::list_backup_files(&paths.backup_dir).unwrap(), backups);
-            #[cfg(unix)] {
+            assert_eq!(
+                fs::read(&paths.session_index_path).unwrap(),
+                b"index unchanged"
+            );
+            assert_eq!(
+                super::list_backup_files(&paths.backup_dir).unwrap(),
+                backups
+            );
+            #[cfg(unix)]
+            {
                 use std::os::unix::fs::MetadataExt;
                 assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
             }
@@ -1581,10 +1606,14 @@ model = "gpt-new"
         let paths = resolve_paths(&history.root);
         fs::write(&paths.config_path, "model_provider = \"new-provider\"\n").unwrap();
         fs::write(&paths.session_index_path, "index sentinel\n").unwrap();
-        let originals: Vec<_> = [&paths.config_path, &paths.db_path, &paths.session_index_path]
-            .into_iter()
-            .map(|path| (path.to_path_buf(), fs::read(path).unwrap()))
-            .collect();
+        let originals: Vec<_> = [
+            &paths.config_path,
+            &paths.db_path,
+            &paths.session_index_path,
+        ]
+        .into_iter()
+        .map(|path| (path.to_path_buf(), fs::read(path).unwrap()))
+        .collect();
         let _scope = crate::management_admission::test_session(&session);
         let expected = "This operation is not supported while managed Codex writes are enabled";
 
@@ -1652,7 +1681,10 @@ model = "gpt-new"
         }
         assert_eq!(fs::read(&paths.db_path).unwrap(), db_before);
         assert_eq!(fs::read(&paths.session_index_path).unwrap(), index_before);
-        assert_eq!(list_backup_files(&paths.backup_dir).unwrap(), backups_before);
+        assert_eq!(
+            list_backup_files(&paths.backup_dir).unwrap(),
+            backups_before
+        );
         // A second accepted operation borrows the retained physical root; it
         // must not conflict with its own earlier lease allocation.
         backup(&history.root, "second").unwrap();
