@@ -774,8 +774,13 @@ mod tests {
         let mut context = mock_context(noop_assets());
         *context.config_mut() = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let app = mock_builder().build(context).unwrap();
-        assert_eq!(default_data_dir(), app.path().app_data_dir().unwrap());
-        assert_eq!(default_cache_dir(), app.path().app_cache_dir().unwrap());
+        // Tauri resolves platform defaults, not the isolated launcher override.
+        // Data/cache override and bootstrap precedence have separate regressions.
+        assert_eq!(platform_default_data_dir(), app.path().app_data_dir().unwrap());
+        let platform_cache = dirs::cache_dir()
+            .map(|path| path.join("com.xue-ding-e.ai-toolbox-next"))
+            .unwrap_or_else(|| platform_default_data_dir().join("cache"));
+        assert_eq!(platform_cache, app.path().app_cache_dir().unwrap());
         let temporary = tempfile::tempdir().unwrap();
         let assets = temporary.path().join("image-studio/assets/job");
         fs::create_dir_all(&assets).unwrap();
