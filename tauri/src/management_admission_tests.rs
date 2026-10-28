@@ -965,3 +965,38 @@ fn official_usage_admission_actor(root: &Path, managed: bool) {
     // The bounded parent checks release after this process exits normally.
     // Do not use deprecated unmanage or claim MockRuntime App drop releases DB.
 }
+
+// Missing-parent refusal is an admission boundary, not an applied-provider
+// or Skills/history recovery-eligibility check. No settings command or DB
+// mutation is invoked here.
+#[test]
+fn ordinary_missing_parent_rejects_before_runtime_lease_retention() {
+    let fixture = Fixture::new();
+    let session = fixture.session(false);
+    let scope = test_session(&session);
+    let missing_parent = fixture.path.join("absent-parent");
+    let missing_root = missing_parent.join("codex");
+    assert!(session.ordinary_roots.lock().unwrap().is_empty());
+    let before = snapshot_tree(&fixture.path);
+
+    let result = admit_legacy_runtime(&missing_root);
+    assert!(matches!(result, Err(error) if
+        error == "The Codex runtime cannot be coordinated; no business write was started"));
+    assert!(session.ordinary_roots.lock().unwrap().is_empty(),
+        "a rejected missing-parent request must not retain a runtime lease");
+    assert_eq!(snapshot_tree(&fixture.path), before);
+    assert!(matches!(fs::symlink_metadata(&missing_parent),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound));
+
+    // The same live ordinary session can admit a healthy root afterwards:
+    // an expired/missing session must not satisfy the negative control.
+    let healthy_root = fixture.path.join("healthy-runtime");
+    private_directory(&healthy_root);
+    let admitted = admit_legacy_runtime(&healthy_root).unwrap();
+    admitted.ensure_current().unwrap();
+    assert_eq!(session.ordinary_roots.lock().unwrap().len(), 1);
+    assert!(!healthy_root.join("auth.json").exists());
+    assert!(!healthy_root.join("config.toml").exists());
+    drop((admitted, scope, session));
+    fixture.cleanup();
+}
