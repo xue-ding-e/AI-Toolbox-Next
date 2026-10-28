@@ -1,7 +1,7 @@
 {
-  "focus.py": "751ae318094943e4e51fd5369fb35a54ec8c1df3c83257c519fe7642a278b2ef",
+  "focus.py": "d3f8e8f0f0c2a9868e0bc48879f9204d0cba40d0a9a8db4613dd81bfc03d45f9",
   "resource_control.py": "23ef5e501c102a12f46b842a3de49934c23e6edd4a6b43a08b5a19789cf4af09",
-  "contract.json": "24e0716ecc503765f90ee07f5fb7f3d369d0b31031e13b3548a67e2e3164e975",
-  "candidate.patch": "ac7888ac23f0749ac16f24aae1136df95ed9bdc912f5dad4f6ef907df237ab85",
+  "contract.json": "580b095939e6d95bf39e9c96278de79bc372cb5c67cd6bf0621cae06f71c09ab",
+  "candidate.patch": "c240be710eb8f3fe26ac666ef4286b67d1c47c72ff07370674e869d05e9cbc12",
   ".github/workflows/maintenance-validation.yml": "a69e8babb8b13be6264a19e02785132c31756c954413e8a83780116ae6448843"
 }

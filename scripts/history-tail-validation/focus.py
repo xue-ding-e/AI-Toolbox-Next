@@ -17,14 +17,14 @@ import time
 HERE = Path(__file__).resolve().parent
 SHA = '60067a8a8581845c01dc5535712b924eb5d46129'
 TREE = 'a465079b58647e7cbe0f0b864d724d8cab440536'
-OVERLAY_TREE = 'd8836377a79bc898f13d8b5acb30850b26e11278'
-OVERLAY_BLOB = 'd35074b9f6db894a596912bd0095797a5f6954d9'
-PATCH_HASH = 'ac7888ac23f0749ac16f24aae1136df95ed9bdc912f5dad4f6ef907df237ab85'
+OVERLAY_TREE = '7d9327ca04df93f6f1ef1a8491a7be6ebaa05f32'
+OVERLAY_BLOB = 'a8d343eb1fd32bcaeba6298b694fb20e2fd89861'
+PATCH_HASH = 'c240be710eb8f3fe26ac666ef4286b67d1c47c72ff07370674e869d05e9cbc12'
 PARENT = '7ebffaf24844eb01e91cc3745f6c5167b67c8339'
 FORMAT_BASELINE = SHA
 BRANCH = 'refs/heads/validation/history-tail-preservation-20261028'
 TEST = 'tauri/src/coding/codex/history_sync.rs'
-TEST_HASH = '7002b5bbdd63007abb30bcdaa4f326ac6af6467cc5dca740344c4304b5bf23d2'
+TEST_HASH = 'ac323ebb46c3571f23ff9ac3c4c25b6cdde54b842b17f55bed956b4c65abbf93'
 HELPER_BLOB = '4dbf928a7206ba01ea9ad46173317c6c4c9ff5a8'
 raw = (HERE / 'resource_control.py').read_bytes()
 assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == HELPER_BLOB

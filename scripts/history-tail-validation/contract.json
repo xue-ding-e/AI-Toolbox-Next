@@ -6,10 +6,10 @@
   "baseline_tree": "a465079b58647e7cbe0f0b864d724d8cab440536",
   "path": "tauri/src/coding/codex/history_sync.rs",
   "baseline_sha256": "e81cb84153ec83c1377908481814db65b1e6f46fef86167286606c6f127f7799",
-  "candidate_sha256": "7002b5bbdd63007abb30bcdaa4f326ac6af6467cc5dca740344c4304b5bf23d2",
-  "patch_sha256": "ac7888ac23f0749ac16f24aae1136df95ed9bdc912f5dad4f6ef907df237ab85",
+  "candidate_sha256": "ac323ebb46c3571f23ff9ac3c4c25b6cdde54b842b17f55bed956b4c65abbf93",
+  "patch_sha256": "c240be710eb8f3fe26ac666ef4286b67d1c47c72ff07370674e869d05e9cbc12",
   "candidate_commit": null,
-  "candidate_tree": "d8836377a79bc898f13d8b5acb30850b26e11278",
+  "candidate_tree": "7d9327ca04df93f6f1ef1a8491a7be6ebaa05f32",
   "publication_blocker": "Parent review of sealed executable control and heavy-slot approval",
   "lib_suite": {
     "filter": "coding::codex::history_sync::tests::",
@@ -50,7 +50,7 @@
     "must_restore_source_before_final_snapshot": true,
     "must_not_publish_mutated_code": true
   },
-  "candidate_blob": "d35074b9f6db894a596912bd0095797a5f6954d9",
+  "candidate_blob": "a8d343eb1fd32bcaeba6298b694fb20e2fd89861",
   "source_mode": "explicit baseline600 + sealed test-only overlay; no candidate commit yet",
   "compile": {
     "argv": [
