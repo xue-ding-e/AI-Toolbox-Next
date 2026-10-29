@@ -18,7 +18,7 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { BarChart2, Share2 } from 'lucide-react';
+import { BarChart2, FileJson, Share2 } from 'lucide-react';
 import type {
   CodexCatalogModel,
   CodexOfficialAccount,
@@ -660,6 +660,20 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
           )
         }
         onRefresh={onOfficialAccountRefresh ? withOfficialAccount(onOfficialAccountRefresh) : undefined}
+        // Opening this entry only selects the account. Credentials are generated
+        // by the existing explicit preview/copy buttons, never by row rendering.
+        renderExtraActions={onOfficialAccountViewDetails ? (account) => (
+          <Button
+            type="link"
+            size="small"
+            icon={<FileJson size={14} />}
+            aria-label="auth.json"
+            onClick={() => withOfficialAccount(onOfficialAccountViewDetails)(account)}
+            style={{ paddingInline: 0, height: 'auto', fontSize: 12 }}
+          >
+            auth.json
+          </Button>
+        ) : undefined}
         onViewDetails={
           onOfficialAccountViewDetails ? withOfficialAccount(onOfficialAccountViewDetails) : undefined
         }

@@ -29,6 +29,8 @@ import { createCodexPageInvoke } from '../../shared/providerList/fixtures/codexP
 // `Cannot access 'CodexPage' before initialization`.
 import '@/app/routes';
 import CodexPage from '@/features/coding/codex/pages/CodexPage';
+import KeepAliveOutlet from '@/components/layout/KeepAliveOutlet';
+import { PAGE_ROUTES } from '@/app/routeConfig';
 import gatewayProfiles from '../../../../../../tauri/resources/gateway_provider_profiles.json';
 import '@/App.css';
 
@@ -216,6 +218,16 @@ const pendingAccountLists = [];
 let deferAccountList = false;
 const baseInvoke = createCodexPageInvoke(state);
 const invoke = async (command, args) => {
+  if (parameters.has('authExport') && command === 'export_codex_official_account_auth_json') {
+    state.requests.push({ command, args: structuredClone(args) });
+    const account = state.officialAccounts.find(item => item.id === args.accountId && item.providerId === args.providerId);
+    if (!account) throw new Error('Synthetic account not found');
+    const payload = JSON.stringify({ tokens: { access_token: 'synthetic-' + account.id, refresh_token: 'synthetic-refresh' } });
+    if (args.copyToClipboard) { state.authCopies = [...(state.authCopies || []), payload]; return null; }
+    if (state.deferAuth) return new Promise(resolve => { state.resolveAuth = () => resolve(payload); });
+    return payload;
+  }
+
   if (parameters.has('credits') && command === 'list_codex_official_accounts' && deferAccountList) {
     deferAccountList = false;
     const snapshot = await baseInvoke(command, args);
@@ -600,7 +612,7 @@ createRoot(document.getElementById('root')).render(
             scrolls `main`, so any check that drives the provider list needs
             this wrapper or it would assert against a page that cannot scroll. */}
         <main style={{ height: '100%', overflowY: 'auto' }}>
-          <CodexPage />
+          {parameters.has('authExport') ? <KeepAliveOutlet routes={PAGE_ROUTES} /> : <CodexPage />}
         </main>
       </MemoryRouter>
     </App>

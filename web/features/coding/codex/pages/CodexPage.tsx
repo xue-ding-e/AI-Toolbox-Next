@@ -3037,6 +3037,22 @@ const CodexPage: React.FC = () => {
               <Descriptions.Item label={t('codex.provider.officialAccountLabel')}>
                 {officialAccountDetails.account.email || officialAccountDetails.account.name}
               </Descriptions.Item>
+              {isActive && !loading && (
+                <Descriptions.Item label="auth.json">
+                  <CodexAuthExport
+                    key={JSON.stringify([
+                      officialAccountLoadGeneration.current,
+                      officialAccountDetails.provider.id,
+                      officialAccountDetails.account.id,
+                      officialAccountDetails.account.accountId,
+                      officialAccountDetails.account.email,
+                      officialAccountDetails.account.tokenExpiresAt,
+                    ])}
+                    providerId={officialAccountDetails.provider.id}
+                    accountId={officialAccountDetails.account.id}
+                  />
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label={t('codex.provider.mode')}>
                 {officialAccountDetails.account.id === CODEX_LOCAL_PROVIDER_ID
                   ? t('codex.provider.officialAccountLocalTag')
@@ -3104,22 +3120,6 @@ const CodexPage: React.FC = () => {
                   ),
                 )}
               </Descriptions.Item>
-              {isActive && !loading && (
-                <Descriptions.Item label="auth.json">
-                  <CodexAuthExport
-                    key={JSON.stringify([
-                      officialAccountLoadGeneration.current,
-                      officialAccountDetails.provider.id,
-                      officialAccountDetails.account.id,
-                      officialAccountDetails.account.accountId,
-                      officialAccountDetails.account.email,
-                      officialAccountDetails.account.tokenExpiresAt,
-                    ])}
-                    providerId={officialAccountDetails.provider.id}
-                    accountId={officialAccountDetails.account.id}
-                  />
-                </Descriptions.Item>
-              )}
               {officialAccountDetails.account.lastError && (
                 <Descriptions.Item label={t('codex.provider.officialAccountLastErrorLabel')}>
                   <Text type="danger">

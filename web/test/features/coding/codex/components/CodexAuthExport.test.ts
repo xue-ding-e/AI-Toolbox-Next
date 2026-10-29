@@ -145,3 +145,44 @@ test('real page export mount clears on inactivity/reload and keys each account/r
   assert.notEqual(key({ ...details, account: { ...details.account, id: 'other' } }), original);
   assert.notEqual(key({ ...details, account: { ...details.account, accountId: 'other' } }), original);
 });
+
+test('account row exposes auth.json without reading secrets and resolves the selected account by ID', () => {
+  const card = readFileSync(new URL('../../../../../features/coding/codex/components/CodexProviderCard.tsx', import.meta.url), 'utf8');
+  const ast = ts.createSourceFile('card.tsx', card, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let slot: ts.JsxAttribute | undefined;
+  const declarations: string[] = [];
+  function visit(node: ts.Node) {
+    if (ts.isJsxAttribute(node) && node.name.getText(ast) === 'renderExtraActions') slot = node;
+    if (ts.isVariableDeclaration(node) && ['officialAccountById', 'withOfficialAccount'].includes(node.name.getText(ast))) declarations.push(`const ${node.getText(ast)};`);
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(slot?.initializer && ts.isJsxExpression(slot.initializer), 'auth.json must be discoverable on each account row');
+  const expression = slot.initializer.expression!;
+  const provider = { id: 'provider-a' };
+  const accounts = [{ id: 'account-a' }, { id: 'account-b' }];
+  const calls: unknown[][] = [];
+  const code = ts.transpileModule(`${declarations.join('\n')} (${expression.getText(ast)});`, { compilerOptions: { jsx: ts.JsxEmit.React } }).outputText;
+  const render = vm.runInNewContext(code, {
+    React: { createElement: (type: unknown, props: any, ...children: unknown[]) => ({ type, props, children }) },
+    Button: 'Button', FileJson: 'FileJson', provider, officialAccounts: accounts,
+    onOfficialAccountViewDetails: (...args: unknown[]) => calls.push(args),
+  });
+  const button = render({ id: 'account-b' });
+  assert.equal(calls.length, 0, 'rendering cannot export credentials');
+  assert.ok(button.children.includes('auth.json'));
+  assert.equal(button.props['aria-label'], 'auth.json');
+  button.props.onClick();
+  assert.deepEqual(calls, [[provider, accounts[1]]]);
+  render({ id: 'missing' }).props.onClick();
+  assert.equal(calls.length, 1, 'stale rows cannot select another account');
+});
+
+
+test('account identity is followed by export controls before quota and token metadata', () => {
+  const page = readFileSync(new URL('../../../../../features/coding/codex/pages/CodexPage.tsx', import.meta.url), 'utf8');
+  const modal = page.slice(page.indexOf('open={Boolean(officialAccountDetails)}'));
+  assert.ok(modal.indexOf('officialAccountDetails.account.email') < modal.indexOf('<CodexAuthExport'));
+  assert.ok(modal.indexOf('<CodexAuthExport') < modal.indexOf('officialAccountDetails.account.planType'));
+  assert.ok(modal.indexOf('<CodexAuthExport') < modal.indexOf('officialAccountAccessToken'));
+});
