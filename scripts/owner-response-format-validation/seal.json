@@ -1,0 +1,6 @@
+{
+  "scripts/owner-response-format-validation/validate.py": "a8b3794a4e4f458b07a9ab131bf59dee228ecbfd99132997bb0900e1d4e94df0",
+  "scripts/owner-response-format-validation/candidate.patch": "7573822dbe6fdb73d07397a33182b2050b1b1dd19316710224dc5b0dad6a62b7",
+  "scripts/owner-response-format-validation/supervisor.py": "bc48ae5497f44cbdd97d73bce1a67c36e970c3dd13995336ce992de6c750b62c",
+  ".github/workflows/maintenance-validation.yml": "aedde01f427ab05714e45984d7ed25eef29406238fd7f9ad33f17fb538e4a009"
+}
