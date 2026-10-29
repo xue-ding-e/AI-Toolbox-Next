@@ -1,0 +1,79 @@
+--- a/crates/ai-toolbox-automation/tests/owner_console.rs
++++ b/crates/ai-toolbox-automation/tests/owner_console.rs
+@@ -641,6 +641,76 @@
+     fixture.finish();
+ }
+ 
++// Exercise the daemon-status response, not just the preceding HelloAck.
++// Replies are synthetic; success establishes lease reporting only, not DB readiness.
++#[test]
++fn actual_console_status_response_binding_and_redaction_after_valid_hello() {
++    let fixture = Fixture::new();
++    let watch = DatabaseWatch::new(&fixture);
++    runtime().block_on(async {
++        let _owner = fixture.owner();
++        for fault in ["none", "protocol", "profile", "correlation", "epoch", "lease", "untrusted-field"] {
++            let listener = UnixListener::bind(fixture.socket()).unwrap();
++            let task = tokio::spawn(async move {
++                tokio::time::timeout(CHILD_LIMIT, async {
++                    let (mut stream, _) = listener.accept().await.unwrap();
++                    let hello = read_frame(&mut stream).await;
++                    let epoch = [0u8; 16];
++                    write_frame(&mut stream, &json!({
++                        "protocol_major": PROTOCOL_MAJOR, "request_id": hello["request_id"],
++                        "profile": hello["profile"], "owner_epoch": epoch
++                    })).await;
++                    let request = read_frame(&mut stream).await;
++                    assert_eq!(request["operation"], json!("owner_status"));
++                    assert_eq!(request["request_id"], hello["request_id"]);
++                    assert_eq!(request["profile"], hello["profile"]);
++                    assert_eq!(request["owner_epoch"], json!(epoch));
++                    let mut response = json!({
++                        "protocol_major": PROTOCOL_MAJOR, "request_id": request["request_id"],
++                        "profile": request["profile"], "owner_epoch": epoch,
++                        "status": {"profile_lease_held": true}
++                    });
++                    match fault {
++                        "none" => {},
++                        "protocol" => response["protocol_major"] = json!(PROTOCOL_MAJOR + 1),
++                        "profile" => response["profile"]["inode"] = json!(request["profile"]["inode"].as_u64().unwrap() ^ 1),
++                        "correlation" => response["request_id"] = json!(request["request_id"].as_u64().unwrap() + 1),
++                        "epoch" => response["owner_epoch"][0] = json!(1),
++                        "lease" => response["status"]["profile_lease_held"] = json!(false),
++                        "untrusted-field" => response["status"]["untrusted"] = json!("synthetic-never-echo-status"),
++                        _ => unreachable!(),
++                    }
++                    write_frame(&mut stream, &response).await;
++                    // Same bounded no-reconnect observation used by adjacent console tests.
++                    assert!(tokio::time::timeout(Duration::from_millis(150), listener.accept()).await.is_err());
++                }).await.unwrap();
++            });
++            let output = fixture.run(&fixture.status_args("json")).await;
++            tokio::time::timeout(CHILD_LIMIT, task).await.unwrap().unwrap();
++            let value = if fault == "none" {
++                json_result(&output, 0, None)
++            } else {
++                let code = if matches!(fault, "profile" | "epoch") {
++                    "OWNER_IDENTITY_REJECTED"
++                } else { "OWNER_PROTOCOL_REJECTED" };
++                json_result(&output, 6, Some(code))
++            };
++            assert_eq!(value["operation"], "daemon.status");
++            if fault != "none" {
++                assert_eq!(value["error"]["retryable"], false);
++                assert_eq!(value["error"]["stage"], "connect");
++            }
++            if fault == "none" {
++                assert_eq!(value["data"], json!({"profile_lease_held": true}));
++            }
++            assert!(!std::str::from_utf8(&output.stdout).unwrap().contains("synthetic-never-echo-status"));
++            watch.assert_untouched();
++            fs::remove_file(fixture.socket()).unwrap();
++        }
++    });
++    fixture.finish();
++}
++
+ // The context fixtures exercise the actual console and typed transport, not a
+ // production service. Their replies cannot establish real DB/file application.
+ const CONTEXT_ID: &str = "context_request_1";
