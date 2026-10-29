@@ -421,13 +421,254 @@ fn url_decode(value: &str) -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
+/// OAuth request errors may contain credentials in URLs and arbitrary nested
+/// messages. Emit only typed facts: never format the request, error, or sources.
+fn oauth_send_failure_message(
+    error: &(dyn std::error::Error + 'static),
+    proxy_mode: crate::http_client::ProxyMode,
+    flags: (bool, bool, bool, bool),
+) -> String {
+    let proxy_mode = match proxy_mode {
+        crate::http_client::ProxyMode::Direct => "direct",
+        crate::http_client::ProxyMode::Custom => "custom",
+        crate::http_client::ProxyMode::System => "system",
+    };
+    let (is_timeout, is_connect, is_request, is_builder) = flags;
+    let mut io_kind = "unknown";
+    let mut os_code = None;
+    let mut tls = "unknown";
+    let mut current = Some(error);
+    // A bounded traversal also handles a malformed cyclic source chain.
+    for _ in 0..8 {
+        let Some(source) = current else { break };
+        let io = source.downcast_ref::<std::io::Error>();
+        if let Some(io) = io {
+            if io_kind == "unknown" || io_kind == "other" {
+                io_kind = match io.kind() {
+                    std::io::ErrorKind::TimedOut => "timed_out",
+                    std::io::ErrorKind::ConnectionRefused => "connection_refused",
+                    std::io::ErrorKind::ConnectionReset => "connection_reset",
+                    std::io::ErrorKind::ConnectionAborted => "connection_aborted",
+                    std::io::ErrorKind::NotConnected => "not_connected",
+                    std::io::ErrorKind::PermissionDenied => "permission_denied",
+                    std::io::ErrorKind::AddrNotAvailable => "addr_not_available",
+                    std::io::ErrorKind::AddrInUse => "addr_in_use",
+                    std::io::ErrorKind::UnexpectedEof => "unexpected_eof",
+                    std::io::ErrorKind::InvalidData => "invalid_data",
+                    _ => "other",
+                };
+            }
+            // A wrapper's Other/None must not hide a concrete nested OS code.
+            if os_code.is_none() {
+                os_code = io.raw_os_error();
+            }
+        }
+        if tls == "unknown" {
+            if let Some(tls_error) = source.downcast_ref::<rustls::Error>() {
+                tls = match tls_error {
+                    rustls::Error::InvalidCertificate(_) => "invalid_certificate",
+                    _ => "tls_error",
+                };
+            }
+        }
+        // io::Error::source can skip the boxed error itself. Inspect that typed
+        // inner value first; it still consumes one of the same eight visits.
+        current = io
+            .and_then(|io| io.get_ref())
+            .map(|inner| inner as &(dyn std::error::Error + 'static))
+            .or_else(|| source.source());
+    }
+    let os_code = os_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        "Failed to exchange authorization code: transport failure \
+         [stage=token_exchange; timeout_s=20; proxy_mode={proxy_mode}; \
+         is_timeout={is_timeout}; is_connect={is_connect}; is_request={is_request}; \
+         is_builder={is_builder}; io_kind={io_kind}; os_code={os_code}; \
+         tls={tls}; source_chain_truncated={}]",
+        current.is_some()
+    )
+}
+
+fn oauth_send_failure(error: &reqwest::Error, proxy_mode: crate::http_client::ProxyMode) -> String {
+    let message = oauth_send_failure_message(
+        error,
+        proxy_mode,
+        (
+            error.is_timeout(),
+            error.is_connect(),
+            error.is_request(),
+            error.is_builder(),
+        ),
+    );
+    // The UI and application log receive the same allowlisted, credential-free facts.
+    log::warn!("{message}");
+    message
+}
+
+#[cfg(test)]
+mod oauth_send_diagnostic_tests {
+    use super::*;
+    use crate::http_client::ProxyMode;
+    use std::error::Error;
+    use std::fmt;
+
+    struct SecretSource {
+        source: Option<Box<dyn Error + Send + Sync>>,
+    }
+
+    impl fmt::Debug for SecretSource {
+        fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+            panic!("Never debug an OAuth cause: SECRET_DEBUG_SENTINEL")
+        }
+    }
+    impl fmt::Display for SecretSource {
+        fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+            panic!("Never display an OAuth cause: SECRET_DISPLAY_SENTINEL")
+        }
+    }
+    impl Error for SecretSource {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            self.source
+                .as_deref()
+                .map(|source| source as &(dyn Error + 'static))
+        }
+    }
+
+    fn diagnostic(error: &(dyn Error + 'static)) -> String {
+        oauth_send_failure_message(error, ProxyMode::Custom, (false, true, true, false))
+    }
+
+    #[test]
+    fn oauth_diagnostic_never_formats_unknown_error_or_source() {
+        let error = SecretSource {
+            source: Some(Box::new(SecretSource { source: None })),
+        };
+        let message = diagnostic(&error);
+        assert!(message.contains("proxy_mode=custom"));
+        assert!(message.contains("io_kind=unknown; os_code=unknown; tls=unknown"));
+        assert!(message.contains("source_chain_truncated=false"));
+        assert!(!message.contains("SECRET"));
+    }
+
+    #[test]
+    fn oauth_diagnostic_io_kind_does_not_leak_inner_message() {
+        let io = std::io::Error::new(std::io::ErrorKind::ConnectionRefused,
+            "https://user:SECRET_PASSWORD@proxy.invalid/?code=SECRET_CODE&state=SECRET_STATE pkce=SECRET_VERIFIER access_token=SECRET_TOKEN");
+        let error = SecretSource {
+            source: Some(Box::new(io)),
+        };
+        let message = diagnostic(&error);
+        assert!(message.contains("io_kind=connection_refused; os_code=unknown"));
+        for forbidden in [
+            "SECRET",
+            "proxy.invalid",
+            "https://",
+            "pkce",
+            "access_token",
+        ] {
+            assert!(!message.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn oauth_diagnostic_os_code_is_numeric_only() {
+        let message = diagnostic(&std::io::Error::from_raw_os_error(10061));
+        assert!(message.contains("os_code=10061"));
+    }
+
+    #[test]
+    fn oauth_diagnostic_tls_uses_fixed_categories_not_error_payloads() {
+        let message = diagnostic(&rustls::Error::General("SECRET_TLS_SENTINEL".to_string()));
+        assert!(message.contains("tls=tls_error"));
+        assert!(!message.contains("SECRET"));
+        let certificate =
+            rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer);
+        assert!(diagnostic(&certificate).contains("tls=invalid_certificate"));
+    }
+
+    #[test]
+    fn oauth_diagnostic_source_traversal_is_bounded_even_for_cycles() {
+        struct Cycle(std::cell::Cell<usize>);
+        impl fmt::Debug for Cycle {
+            fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+                panic!("debug cycle")
+            }
+        }
+        impl fmt::Display for Cycle {
+            fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+                panic!("display cycle")
+            }
+        }
+        impl Error for Cycle {
+            fn source(&self) -> Option<&(dyn Error + 'static)> {
+                self.0.set(self.0.get() + 1);
+                Some(self)
+            }
+        }
+        let cycle = Cycle(std::cell::Cell::new(0));
+        assert!(diagnostic(&cycle).contains("source_chain_truncated=true"));
+        assert_eq!(cycle.0.get(), 8);
+    }
+
+    #[test]
+    fn oauth_diagnostic_inspects_tls_inside_io_wrapper() {
+        let certificate =
+            rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer);
+        let wrapper = std::io::Error::new(std::io::ErrorKind::Other, certificate);
+        let message = diagnostic(&wrapper);
+        assert!(message.contains("tls=invalid_certificate"));
+        assert!(message.contains("source_chain_truncated=false"));
+    }
+
+    #[test]
+    fn oauth_diagnostic_outer_io_without_code_preserves_nested_os_code() {
+        let inner = std::io::Error::from_raw_os_error(10061);
+        let middle = std::io::Error::new(std::io::ErrorKind::Other, inner);
+        let outer = std::io::Error::new(std::io::ErrorKind::Other, middle);
+        let message = diagnostic(&outer);
+        assert!(message.contains("os_code=10061"));
+        assert!(message.contains("source_chain_truncated=false"));
+    }
+
+    #[test]
+    fn oauth_diagnostic_modes_and_flags_are_explicit() {
+        let error = SecretSource { source: None };
+        for (mode, name) in [
+            (ProxyMode::Direct, "direct"),
+            (ProxyMode::Custom, "custom"),
+            (ProxyMode::System, "system"),
+        ] {
+            let message = oauth_send_failure_message(&error, mode, (true, false, false, true));
+            assert!(message.contains(&format!("proxy_mode={name}")));
+            assert!(message
+                .contains("is_timeout=true; is_connect=false; is_request=false; is_builder=true"));
+        }
+    }
+
+    #[test]
+    fn oauth_diagnostic_reqwest_builder_error_never_leaks_supplied_url() {
+        // Request construction only: no OAuth, DNS, socket, or retry is performed.
+        let error = reqwest::Client::new()
+            .get("http://[invalid]/?code=SECRET_CODE&token=SECRET_TOKEN")
+            .build()
+            .unwrap_err();
+        let message = oauth_send_failure(&error, ProxyMode::Direct);
+        assert!(message.contains("is_builder=true"));
+        assert!(!message.contains("SECRET"));
+        assert!(!message.contains("[invalid]"));
+    }
+}
+
 async fn exchange_authorization_code(
     db: &SqliteDbState,
     code: &str,
     redirect_uri: &str,
     code_verifier: &str,
 ) -> Result<OAuthTokenResponse, String> {
-    let client = crate::http_client::client_with_timeout(db, 20).await?;
+    let (client, proxy_mode) =
+        crate::http_client::client_with_timeout_and_proxy_mode(db, 20).await?;
 
     client
         .post(CODEX_OAUTH_TOKEN_URL)
@@ -440,7 +681,7 @@ async fn exchange_authorization_code(
         })
         .send()
         .await
-        .map_err(|error| format!("Failed to exchange authorization code: {error}"))?
+        .map_err(|error| oauth_send_failure(&error, proxy_mode))?
         .error_for_status()
         .map_err(|error| format!("OAuth token exchange failed: {error}"))?
         .json::<OAuthTokenResponse>()

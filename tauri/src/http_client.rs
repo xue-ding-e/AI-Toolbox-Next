@@ -99,8 +99,21 @@ pub async fn client_with_timeout(
     db_state: &SqliteDbState,
     timeout_secs: u64,
 ) -> Result<Client, String> {
+    client_with_timeout_and_proxy_mode(db_state, timeout_secs)
+        .await
+        .map(|(client, _)| client)
+}
+
+/// Return only the mode used by this client, never the proxy URL or credentials.
+/// Keeping construction and diagnostics on one settings snapshot avoids reporting
+/// a different mode if settings change while the request is in flight.
+pub(crate) async fn client_with_timeout_and_proxy_mode(
+    db_state: &SqliteDbState,
+    timeout_secs: u64,
+) -> Result<(Client, ProxyMode), String> {
     let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;
-    build_client(proxy_mode, &proxy_url, Some(timeout_secs), false)
+    let client = build_client(proxy_mode, &proxy_url, Some(timeout_secs), false)?;
+    Ok((client, proxy_mode))
 }
 
 /// Create an HTTP client with custom timeout and disabled automatic response decompression.

@@ -14,6 +14,8 @@
 
 ## 核心设计决策（Why）
 
+- OAuth authorization-code send 失败仅输出固定诊断字段（阶段、超时预算、同一 settings 快照的代理模式、reqwest flags、最多 8 层 typed IO/OS/TLS 分类）；禁止格式化原 error/source、URL、请求或响应凭据。`io::Error` 须先检查 `get_ref()`，避免跳过内层 TLS 或让外层 Other/None 遮掉 OS 错误码；这只是诊断增强，不重试授权码，也不等于连接问题已修复。
+
 - The usage-refresh command and its event helper share a generic `tauri::Runtime`; the production Wry handler and isolated MockRuntime admission actor call the same command body. Do not bypass admission or replace the production credential path to make the actor test compile.
 
 - Full auth.json export is read-only: preview and clipboard copy share the same guarded snapshot reader as token copy. Preserve the complete JSON Value (including unknown runtime fields); never refresh, apply, import, or reconstruct credentials from display metadata. Copy-only responses must not return secrets to the WebView. Tests use synthetic snapshots only.
