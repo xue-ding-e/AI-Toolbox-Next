@@ -1,0 +1,81 @@
+{
+  "repository": "xue-ding-e/AI-Toolbox-Next",
+  "repositoryId": "1422130502",
+  "base": "3892c5d22491efcc7185173c582c85045105516b",
+  "source": "03e6b792e4dd16cbf67949b54f837fd11f991e03",
+  "executionAuthorized": true,
+  "controlRef": "refs/heads/validation/oauth-send-diagnostics-windows-20261029",
+  "rust": "1.99.1",
+  "version": "1.2.1-next.1",
+  "files": [
+    {
+      "path": "tauri/src/coding/codex/AGENTS.md",
+      "baseSha256": "38d864a21507c61e421bd93b3911f46c64c43d8794b2577169c0c30bbae4d741",
+      "candidateSha256": "ccc2ebd991cd5c74faf8608d1c48f437d4f074bdf7a0aa88bc1d59fc088041d6",
+      "blob": "3d298fe0a6e64250c936502d437ca8ce9c749f6e"
+    },
+    {
+      "path": "tauri/src/coding/codex/official_accounts.rs",
+      "baseSha256": "1b2f4c258d6f484ac3a0ac6545af819b04ba0a3d0a6726e3ac180d41bd277f94",
+      "candidateSha256": "04a89457ee0956f452f81bc09ccf6fcf53cb9f70939ae357b8eaabdca8695250",
+      "blob": "fff319035c25b18fd570a13e6ec905757f8b21e6"
+    },
+    {
+      "path": "tauri/src/http_client.rs",
+      "baseSha256": "080c5da6c8b25f94b4ac729434f615d793c1463719023111665e05293fbddf0a",
+      "candidateSha256": "83965a967cdd692e2b34cbe9dc4f7f61a459b00b22b306bdda071cc3221a7b4e",
+      "blob": "8bb81f93d4f99c26cb442f841a32ff13f68b9b07"
+    }
+  ],
+  "tests": {
+    "oauth": [
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_never_formats_unknown_error_or_source",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_io_kind_does_not_leak_inner_message",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_os_code_is_numeric_only",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_tls_uses_fixed_categories_not_error_payloads",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_source_traversal_is_bounded_even_for_cycles",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_inspects_tls_inside_io_wrapper",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_outer_io_without_code_preserves_nested_os_code",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_modes_and_flags_are_explicit",
+      "coding::codex::official_accounts::oauth_send_diagnostic_tests::oauth_diagnostic_reqwest_builder_error_never_leaks_supplied_url"
+    ],
+    "proxy": [
+      "http_client::tests::test_normalize_proxy_url",
+      "http_client::tests::test_build_proxy_empty",
+      "http_client::tests::test_build_proxy_http",
+      "http_client::tests::test_build_proxy_socks5",
+      "http_client::tests::test_build_proxy_with_auth"
+    ]
+  },
+  "scope": "Diagnostic-only source; no OAuth exchange or external test requests; native unit and build evidence, not installation/GUI qualification",
+  "tree": "1b677629035450129f2a9b5afbe1b336f5f8af9c",
+  "formatFragments": [
+    {
+      "path": "tauri/src/coding/codex/official_accounts.rs",
+      "offset": 14471,
+      "length": 9572,
+      "sha256": "3f0b804a51ffc7dcaac1249adfa0d11a5f6db518bf25d5140485cd290eb6d4e6",
+      "beforeCheckExit": 1,
+      "afterCheckExit": 0,
+      "prefixSha256": "534c35d03bf6c394c2dd308ec3b41172cf7eccf9d3781c11d1cf05137160d3bb",
+      "suffixSha256": "0010977be1f81a9cff0f86129757574de2bd90f6b92e49dd5437b4b7e2cb105b"
+    },
+    {
+      "path": "tauri/src/http_client.rs",
+      "offset": 2650,
+      "length": 812,
+      "sha256": "847673dd207ba2c0f569deaf5a48684b7f6705333650d3e34383f3205cb97706",
+      "beforeCheckExit": 0,
+      "afterCheckExit": 0,
+      "prefixSha256": "4f48ca102e0accc0eaefb498d8e77f22907b3ef314f7ad9ea4935707718c82f9",
+      "suffixSha256": "930935cc8e4ef919cbb03e538357b4b69fb58d1c8fc1f9616efe2dae52453bca"
+    }
+  ],
+  "productPatchSha256": "8b1efc99f191f0465c03bd7815098371d5f5988168f0bcf91f07b51bbae8624c",
+  "lockedFiles": {
+    "tauri/Cargo.toml": "ed4eeb7264acaef21022d4e29a269f25122fc057d39ccfd33b3d18c85b1f5ee2",
+    "tauri/Cargo.lock": "c9c20c882c162f3eb17c7c68cca6b284b6e80815633ba2ead9faf18971a770f4",
+    "pnpm-lock.yaml": "a71feeda32c8cfee44d686dc21d5707239b8a2bb4e368c19d5c3d23c22bf6730",
+    "package.json": "c6c7ebf1c07af4ed7d73a6b7066fea083f568ccbdfb7b02aa943200f1545b9f0"
+  }
+}

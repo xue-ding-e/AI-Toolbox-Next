@@ -1,6 +1,10 @@
-name: Next Windows manual build
+name: Next OAuth diagnostic Windows candidate
 on:
   workflow_dispatch:
+    inputs:
+      expected_control_sha:
+        type: string
+        required: true
 permissions:
   contents: read
 concurrency:
@@ -8,51 +12,94 @@ concurrency:
   cancel-in-progress: false
 jobs:
   windows:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.repository_id == '1422130502' && github.ref == 'refs/heads/validation/oauth-send-diagnostics-windows-20261029'
     runs-on: windows-2022
+    # This is the total hard cap, including setup, both test sets and packaging.
     timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      EXPECTED_CONTROL_SHA: ${{ inputs.expected_control_sha }}
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 03e6b792e4dd16cbf67949b54f837fd11f991e03
+          path: product
           persist-credentials: false
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: product/package.json
+          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: dtolnay/rust-toolchain@stable
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: x86_64-pc-windows-msvc
-      - run: pnpm install --frozen-lockfile
-      - name: Verify Next-only unsigned manual distribution
-        shell: pwsh
+          components: rustfmt
+      - name: Exact source, fragment formatting and result-parser controls
+        timeout-minutes: 5
+        run: |
+          node --test control/.github/validation/oauth-diagnostics/test-results.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Parser controls failed' }
+          python -B control/.github/validation/oauth-diagnostics/verify-source.test.py
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked identity gate controls failed' }
+          python -B control/.github/validation/oauth-diagnostics/verify-source.py control/.github/validation/oauth-diagnostics product "$env:RUNNER_TEMP/oauth-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Exact source or format check failed' }
+      - name: Install locked frontend dependencies
+        timeout-minutes: 10
+        working-directory: product
+        run: |
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency install failed' }
+      - name: Actual original Tauri library nine diagnostics and five proxy construction tests
+        timeout-minutes: 45
+        run: '& control/.github/validation/oauth-diagnostics/run-tests.ps1 -Product product -Evidence "$env:RUNNER_TEMP/oauth-evidence"'
+      - name: Build unsigned manual-only Next NSIS candidate
+        timeout-minutes: 60
+        working-directory: product
         run: |
           $config = Get-Content tauri/tauri.conf.json -Raw | ConvertFrom-Json
           if ($config.identifier -ne 'com.xue-ding-e.ai-toolbox-next') { throw 'Unexpected installer identity' }
-          if ($config.bundle.createUpdaterArtifacts -ne $false) { throw 'Updater artifacts must remain disabled' }
-          if ($config.plugins.updater) { throw 'Manual build must not have an updater channel' }
-          if ($config.plugins.'deep-link'.desktop.schemes -contains 'aitoolbox') { throw 'Must not claim upstream URL protocol' }
-      # Artifact-only. Root release acceptance separately requires sealed Linux tests
-      # for this exact github.sha; this workflow alone never authorizes publication.
-      # No signing secret, release action, package-manager update, or Rust target cache.
-      - run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
-      - name: Prepare versioned Windows installer and checksum
-        shell: pwsh
+          if ($config.bundle.createUpdaterArtifacts -ne $false -or $config.plugins.updater) { throw 'Updater must remain disabled' }
+          if ($config.plugins.'deep-link'.desktop.schemes -contains 'aitoolbox') { throw 'Must not claim upstream protocol' }
+          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Native candidate build failed' }
+      - name: Verify unchanged source and seal candidate bytes
+        timeout-minutes: 5
         run: |
-          $ErrorActionPreference = 'Stop'
-          $version = (Get-Content tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          $installers = @(Get-ChildItem tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
-          if ($installers.Count -ne 1) { throw 'Expected exactly one NSIS installer' }
+          python -B control/.github/validation/oauth-diagnostics/verify-source.py control/.github/validation/oauth-diagnostics product "$env:RUNNER_TEMP/oauth-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Source changed during tests/build' }
+          $m=Get-Content control/.github/validation/oauth-diagnostics/manifest.json -Raw | ConvertFrom-Json
+          $installers=@(Get-ChildItem product/tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
+          if($installers.Count -ne 1) { throw 'Expected exactly one installer' }
           New-Item -ItemType Directory release-assets | Out-Null
-          $name = "AI-Toolbox-Next_${version}_windows-x64-setup.exe"
-          Copy-Item $installers[0].FullName "release-assets/$name"
-          $hash = (Get-FileHash "release-assets/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $name="AI-Toolbox-Next_$($m.version)_$($m.source.Substring(0,12))_windows-x64-setup.exe"
+          Copy-Item $installers[0].FullName (Join-Path release-assets $name)
+          $hash=(Get-FileHash (Join-Path release-assets $name) -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $name" | Set-Content release-assets/SHA256SUMS -Encoding ascii
-          @{ version = $version; source_commit = $env:GITHUB_SHA; repository = $env:GITHUB_REPOSITORY; signed = $false; update_mode = 'manual' } | ConvertTo-Json | Set-Content release-assets/build-provenance.json -Encoding utf8
+          @{version=$m.version;source_commit=$m.source;source_tree=$m.tree;control_commit=$env:GITHUB_SHA;repository=$m.repository;signed=$false;update_mode='manual';native_tests='9 diagnostic + 5 proxy construction';installation_verified=$false;gui_verified=$false;oauth_connectivity_fixed=$false} | ConvertTo-Json | Set-Content release-assets/build-provenance.json -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
-          name: next-windows-x64-candidate-${{ github.sha }}
+          name: next-windows-diagnostic-candidate-03e6b792e4dd16cbf67949b54f837fd11f991e03
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 14
+      - name: Preserve bounded synthetic validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oauth-diagnostic-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/oauth-evidence/*
+          if-no-files-found: warn
           retention-days: 14
