@@ -948,6 +948,95 @@ fn actual_console_read_disconnect_is_not_a_write_outcome() {
     fixture.finish();
 }
 
+// Keep an authenticated read request pending until the real console exits.
+// This exercises the response deadline, not a stalled Hello or a write outcome.
+#[test]
+fn actual_console_read_context_response_timeout_is_bounded_without_retry() {
+    use std::future::{poll_fn, Future};
+    use std::task::Poll;
+
+    let fixture = Fixture::new();
+    let watch = DatabaseWatch::new(&fixture);
+    runtime().block_on(async {
+        for command in ["inspect", "request-status"] {
+            let owner = fixture.owner();
+            let listener = UnixListener::bind(fixture.socket()).unwrap();
+            let (exited_tx, exited_rx) = tokio::sync::oneshot::channel();
+            let peer = tokio::spawn(async move {
+                tokio::time::timeout(CHILD_LIMIT, async {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let hello = read_frame(&mut stream).await;
+                    let epoch = [0u8; 16];
+                    write_frame(
+                        &mut stream,
+                        &json!({
+                            "protocol_major": PROTOCOL_MAJOR,
+                            "request_id": hello["request_id"],
+                            "profile": hello["profile"], "owner_epoch": epoch
+                        }),
+                    )
+                    .await;
+                    // Read the actual request after a valid HelloAck; no sleep
+                    // is used to infer that the handshake has completed.
+                    let request = read_frame(&mut stream).await;
+                    assert_eq!(request["protocol_major"], PROTOCOL_MAJOR);
+                    assert_eq!(request["request_id"], hello["request_id"]);
+                    assert_eq!(request["profile"], hello["profile"]);
+                    assert_eq!(request["owner_epoch"], json!(epoch));
+                    let expected = match command {
+                        "inspect" => json!("context_inspect"),
+                        _ => json!({"context_request_status": {"request_id": CONTEXT_ID}}),
+                    };
+                    assert_eq!(request["operation"], expected);
+                    owner.ensure_current().unwrap();
+                    // Retain the pending stream without replying or disconnecting.
+                    // Any second connection before exit is a forbidden retry.
+                    let mut exited = std::pin::pin!(exited_rx);
+                    let mut reconnect = std::pin::pin!(listener.accept());
+                    poll_fn(|cx| {
+                        if let Poll::Ready(_) = reconnect.as_mut().poll(cx) {
+                            panic!("read timeout reconnected to owner");
+                        }
+                        exited.as_mut().poll(cx)
+                    })
+                    .await
+                    .unwrap();
+                    owner.ensure_current().unwrap();
+                    assert!(
+                        tokio::time::timeout(Duration::from_millis(150), listener.accept())
+                            .await
+                            .is_err()
+                    );
+                    drop(stream);
+                })
+                .await
+                .expect("authenticated read exceeded the fixture deadline");
+            });
+            // run enforces the independent 13-second process/cleanup bound;
+            // production context_exchange enforces its five-second I/O bound.
+            let output = fixture.run(&context_args(&fixture, command, "json")).await;
+            exited_tx.send(()).unwrap();
+            tokio::time::timeout(CHILD_LIMIT, peer)
+                .await
+                .unwrap()
+                .unwrap();
+            let operation = match command {
+                "inspect" => "codex.context.inspect",
+                _ => "codex.context.request_status",
+            };
+            let value = context_result(&output, operation, 7, Some("OWNER_TIMEOUT"));
+            assert!(value["data"].is_null());
+            assert_eq!(value["error"]["stage"], "connect");
+            assert_eq!(value["error"]["retryable"], false);
+            watch.assert_untouched();
+            // The peer retained the real owner until the console exited; the
+            // fixture's child runner separately checked the lease inode.
+            fs::remove_file(fixture.socket()).unwrap();
+        }
+    });
+    fixture.finish();
+}
+
 #[test]
 fn actual_console_context_presend_failures_do_not_bootstrap_or_claim_unknown_effects() {
     let fixture = Fixture::new();
