@@ -1,4 +1,4 @@
-//! Headless contract foundation, not a business service implementation.
+//! Headless contract foundation with one shared path-normalization service.
 //!
 //! Schema version 1 is independent of desktop/package versions. Breaking wire
 //! changes require a new schema version; consumers must reject unknown versions.
@@ -10,6 +10,8 @@ use std::fmt::Write;
 use std::path::PathBuf;
 
 pub mod cli;
+pub mod mcp;
+pub const MAX_PATH_BYTES: usize = ai_toolbox_paths::PROTOCOL_INPUT_LIMIT;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -48,7 +50,9 @@ not establish current runtime state, client reload or backend context capacity.\
 Status does not prove DB readiness or complete writer admission. No daemon is started.\n\
 Context syntax is a Linux local client, not a claim that an owner enables writes.\n\
 ContextSet is reserved and returns NOT_SUPPORTED before path or connection I/O.\n\
-PID, start time, full daemon lifecycle, MCP and the P0 workflow remain incomplete.\n";
+backup normalize-path --path <path> normalizes a supplied path without target file I/O.\n\
+mcp serve exposes only this path service over stdio (MCP 2025-11-25).\n\
+PID, start time, full daemon lifecycle and the P0 workflow remain incomplete.\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
@@ -56,6 +60,7 @@ pub enum Operation {
     Version,
     Capabilities,
     CodexStatus,
+    BackupNormalizePath,
     DaemonStatus,
     ContextInspect,
     ContextSet,
@@ -63,11 +68,12 @@ pub enum Operation {
 }
 
 impl Operation {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Help,
         Self::Version,
         Self::Capabilities,
         Self::CodexStatus,
+        Self::BackupNormalizePath,
         Self::DaemonStatus,
         Self::ContextInspect,
         Self::ContextSet,
@@ -80,6 +86,7 @@ impl Operation {
             Self::Version => "automation.version",
             Self::Capabilities => "automation.capabilities",
             Self::CodexStatus => "codex.status",
+            Self::BackupNormalizePath => "backup.normalize_path",
             Self::DaemonStatus => "daemon.status",
             Self::ContextInspect => "codex.context.inspect",
             Self::ContextSet => "codex.context.set",
@@ -93,6 +100,7 @@ impl Operation {
             Self::Version => "--version",
             Self::Capabilities => "capabilities",
             Self::CodexStatus => "codex status",
+            Self::BackupNormalizePath => "backup normalize-path --path <path>",
             Self::DaemonStatus => "daemon status",
             Self::ContextInspect => "codex context inspect",
             Self::ContextSet => "codex context set",
@@ -120,6 +128,7 @@ pub enum Command {
     Version,
     Capabilities,
     CodexStatus,
+    BackupNormalizePath(BackupPathInput),
     DaemonStatus(OwnerStatusInput),
     ContextInspect(OwnerStatusInput),
     ContextSet(ContextSetInput),
@@ -133,11 +142,22 @@ impl Command {
             Self::Version => Operation::Version,
             Self::Capabilities => Operation::Capabilities,
             Self::CodexStatus => Operation::CodexStatus,
+            Self::BackupNormalizePath(_) => Operation::BackupNormalizePath,
             Self::DaemonStatus(_) => Operation::DaemonStatus,
             Self::ContextInspect(_) => Operation::ContextInspect,
             Self::ContextSet(_) => Operation::ContextSet,
             Self::ContextRequestStatus(_) => Operation::ContextRequestStatus,
         }
+    }
+}
+
+/// Adapter input bound, not a second path validator or safety policy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackupPathInput(String);
+impl BackupPathInput {
+    pub fn new(path: String) -> Result<Self, OperationError> {
+        ai_toolbox_paths::validate_backup_path_input(&path).map_err(|_| OperationError::invalid_input())?;
+        Ok(Self(path))
     }
 }
 
@@ -283,6 +303,7 @@ pub enum Data {
     Help,
     Version,
     Capabilities,
+    BackupPath(String),
     OwnerStatus(OwnerStatusData),
     #[cfg(target_os = "linux")]
     ContextInspection(ai_toolbox_management::transport::ContextInspection),
@@ -333,6 +354,11 @@ pub fn execute(command: Command) -> Envelope {
             retryable: false,
             message: "Codex business services are not connected in this foundation.",
         }),
+        Command::BackupNormalizePath(input) => ai_toolbox_paths::normalize_backup_path_request(&input.0)
+            .map(Data::BackupPath).map_err(|error| OperationError {
+                code: ErrorCode::InvalidInput, stage: Stage::Dispatch, retryable: false,
+                message: error.message(),
+            }),
         Command::DaemonStatus(input) => owner_status(input).map(Data::OwnerStatus),
         command @ (Command::ContextInspect(_) | Command::ContextSet(_) | Command::ContextRequestStatus(_)) => {
             match context_dispatch(command) {
@@ -576,7 +602,7 @@ impl Envelope {
             ),
             Ok(Data::Capabilities) => {
                 let mut result = String::from(
-                    "Automation foundation only. Business coverage: none. MCP: not implemented.\n",
+                    "Automation foundation. Business coverage: partial (backup path normalization). MCP: stdio 2025-11-25.\n",
                 );
                 for operation in Operation::ALL {
                     let _ = writeln!(
@@ -595,6 +621,7 @@ impl Envelope {
                 let _ = writeln!(result, "Context read client supported: {}. ContextSet is reserved and sends no request. Owner readiness: not checked. Owner write enablement: not established. Local syntax does not enable ContextSet on an owner.", cfg!(target_os = "linux"));
                 result
             }
+            Ok(Data::BackupPath(path)) => format!("{path}\n"),
             Ok(Data::OwnerStatus(status)) => format!(
                 "profile_lease_held: {}\nThis does not establish database readiness or complete writer admission.\n",
                 status.profile_lease_held
@@ -624,7 +651,8 @@ impl Data {
                 let operations = Operation::ALL.map(|operation| {
                     let context = matches!(operation, Operation::ContextInspect | Operation::ContextSet | Operation::ContextRequestStatus);
                     let input = if context { "explicit_owner_paths_and_closed_context_arguments" }
-                        else if operation == Operation::DaemonStatus { "explicit_absolute_profile_and_private_endpoint_dir" } else { "none" };
+                        else if operation == Operation::DaemonStatus { "explicit_absolute_profile_and_private_endpoint_dir" }
+                        else if operation == Operation::BackupNormalizePath { "explicit_path_max_32768_bytes" } else { "none" };
                     let extra = if context {
                         format!(",\"local_client_supported\":{},\"owner_readiness\":\"not_checked\",\"owner_write_enablement\":\"not_established\",\"platforms\":[\"linux\"]", cfg!(target_os = "linux") && operation != Operation::ContextSet)
                     } else if operation == Operation::DaemonStatus {
@@ -634,8 +662,9 @@ impl Data {
                         json_string(operation.id()), json_string(operation.command()), operation.supported(),
                         false, json_string(input))
                 }).join(",");
-                format!("{{\"stage\":\"foundation\",\"business_coverage\":\"none\",\"mcp_supported\":false,\"operations\":[{operations}]}}")
+                format!("{{\"stage\":\"foundation\",\"business_coverage\":\"partial\",\"mcp_supported\":true,\"mcp_protocol_version\":\"2025-11-25\",\"mcp_tools\":[\"backup_normalize_path\"],\"operations\":[{operations}]}}")
             }
+            Self::BackupPath(path) => format!("{{\"path\":{}}}", json_string(path)),
             Self::OwnerStatus(status) => format!("{{\"profile_lease_held\":{}}}", status.profile_lease_held),
             #[cfg(target_os = "linux")]
             Self::ContextInspection(value) => format!("{{\"scope\":\"merged_master_overrides\",\"provider_id\":{},\"revision\":{},\"model_context_window\":{},\"model_auto_compact_token_limit\":{}}}",

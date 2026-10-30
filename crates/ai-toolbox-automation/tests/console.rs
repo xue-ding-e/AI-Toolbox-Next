@@ -192,18 +192,19 @@ fn reserved_business_operation_fails_explicitly_without_state_changes() {
 }
 
 #[test]
-fn discovery_does_not_claim_business_or_mcp_support() {
+fn discovery_limits_business_and_mcp_support_to_shared_path_service() {
     let sandbox = Sandbox::new();
     let output = sandbox.run(&args(&["--format", "json", "capabilities"]));
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stderr.is_empty());
     let text = String::from_utf8(output.stdout).unwrap();
     let expected = concat!(
-        r#"{"schema_version":1,"operation":"automation.capabilities","request_id":null,"ok":true,"data":{"stage":"foundation","business_coverage":"none","mcp_supported":false,"operations":["#,
+        r#"{"schema_version":1,"operation":"automation.capabilities","request_id":null,"ok":true,"data":{"stage":"foundation","business_coverage":"partial","mcp_supported":true,"mcp_protocol_version":"2025-11-25","mcp_tools":["backup_normalize_path"],"operations":["#,
         r#"{"operation_id":"automation.help","command":"--help","supported":true,"side_effects":false,"input":"none"},"#,
         r#"{"operation_id":"automation.version","command":"--version","supported":true,"side_effects":false,"input":"none"},"#,
         r#"{"operation_id":"automation.capabilities","command":"capabilities","supported":true,"side_effects":false,"input":"none"},"#,
         r#"{"operation_id":"codex.status","command":"codex status","supported":false,"side_effects":false,"input":"none"},"#,
+        r#"{"operation_id":"backup.normalize_path","command":"backup normalize-path --path <path>","supported":true,"side_effects":false,"input":"explicit_path_max_32768_bytes"},"#,
     );
     let expected = format!("{expected}{{\"operation_id\":\"daemon.status\",\"command\":\"daemon status\",\"supported\":{},\"side_effects\":false,\"input\":\"explicit_absolute_profile_and_private_endpoint_dir\",\"status_scope\":\"profile_lease_only\",\"daemon_lifecycle_complete\":false,\"platforms\":[\"linux\"]}}]}},\"warnings\":[],\"error\":null}}\n", cfg!(target_os = "linux"));
     // Preserve the pre-existing operation contracts exactly. Context additions
@@ -211,7 +212,7 @@ fn discovery_does_not_claim_business_or_mcp_support() {
     let mut expected: serde_json::Value = serde_json::from_str(&expected).unwrap();
     let value: serde_json::Value = serde_json::from_str(&text).unwrap();
     let operations = value["data"]["operations"].as_array().unwrap();
-    assert_eq!(operations.len(), 8);
+    assert_eq!(operations.len(), 9);
     for (operation_id, command, side_effects) in [
         ("codex.context.inspect", "codex context inspect", false),
         ("codex.context.set", "codex context set", false),

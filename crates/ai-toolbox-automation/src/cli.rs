@@ -1,5 +1,5 @@
 //! Pure argument adapter. Even parsing failures do not initialize application state.
-use crate::{execute, Command, ContextRequestStatusInput, ContextSetInput, Envelope, OperationError, OwnerStatusInput};
+use crate::{BackupPathInput, execute, Command, ContextRequestStatusInput, ContextSetInput, Envelope, OperationError, OwnerStatusInput};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -52,7 +52,7 @@ fn parse(args: &[OsString], format: &mut Format) -> Result<Command, OperationErr
         let argument = args[index];
         if matches!(argument, "--format" | "--profile" | "--endpoint-dir" | "--request-id"
             | "--expected-provider-id" | "--expected-revision" | "--target"
-            | "--model-context-window" | "--model-auto-compact-token-limit") {
+            | "--model-context-window" | "--model-auto-compact-token-limit" | "--path") {
             index += 1;
             let value = *args.get(index).ok_or_else(OperationError::invalid_input)?;
             if options.insert(argument, value).is_some() {
@@ -77,6 +77,11 @@ fn parse(args: &[OsString], format: &mut Format) -> Result<Command, OperationErr
         ["--version" | "-V"] if options.is_empty() => return Ok(Command::Version),
         ["capabilities"] if options.is_empty() => return Ok(Command::Capabilities),
         ["codex", "status"] if options.is_empty() => return Ok(Command::CodexStatus),
+        ["backup", "normalize-path"] => {
+            let path = required(&mut options, "--path")?;
+            if !options.is_empty() { return Err(OperationError::invalid_input()); }
+            return Ok(Command::BackupNormalizePath(BackupPathInput::new(path.to_owned())?));
+        }
         ["daemon", "status"] | ["codex", "context", "inspect" | "set" | "request-status"] => {}
         _ => return Err(OperationError::invalid_input()),
     }
