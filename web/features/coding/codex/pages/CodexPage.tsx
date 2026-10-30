@@ -476,6 +476,15 @@ const CodexPage: React.FC = () => {
     account: CodexOfficialAccount;
   } | null>(null);
 
+  const officialAccountDetailsTrigger = React.useRef<HTMLElement | null>(null);
+  React.useEffect(() => {
+    if (!officialAccountDetails) {
+      const trigger = officialAccountDetailsTrigger.current;
+      officialAccountDetailsTrigger.current = null;
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    }
+  }, [officialAccountDetails]);
+
   // Modal states
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<CodexProvider | null>(null);
@@ -1121,6 +1130,10 @@ const CodexPage: React.FC = () => {
     provider: CodexProvider,
     account: CodexOfficialAccount,
   ) => {
+    if (!officialAccountDetails) {
+      officialAccountDetailsTrigger.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement : null;
+    }
     setOfficialAccountDetails({ provider, account });
   };
 
@@ -3022,6 +3035,8 @@ const CodexPage: React.FC = () => {
             }}
           />
         </SidebarSettingsModal>
+        {/* Unmount the sensitive dialog itself: AntD freezes closed children. */}
+        {officialAccountDetails && (
         <Modal
           open={Boolean(officialAccountDetails)}
           title={t('codex.provider.officialAccountDetailsTitle')}
@@ -3130,6 +3145,7 @@ const CodexPage: React.FC = () => {
             </Descriptions>
           )}
         </Modal>
+        )}
         <CodexDeviceAuthModal
           authSession={codexDeviceAuthSession}
           onClose={() => setCodexDeviceAuthSession(null)}
