@@ -186,3 +186,17 @@ test('account identity is followed by export controls before quota and token met
   assert.ok(modal.indexOf('<CodexAuthExport') < modal.indexOf('officialAccountDetails.account.planType'));
   assert.ok(modal.indexOf('<CodexAuthExport') < modal.indexOf('officialAccountAccessToken'));
 });
+
+test('browser auth entry locates the official channel by stable provider ID, not its hidden record name', () => {
+  const checks = readFileSync(new URL('../codexAuthEntryBrowserChecks.mjs', import.meta.url), 'utf8');
+  assert.ok(checks.includes('cardCenter("provider-c")'));
+  assert.ok(!checks.includes('cardCenter("Official Codex")'));
+});
+
+test('browser copy waits for completed preview rather than merely observing IPC start', () => {
+  const checks = readFileSync(new URL('../codexAuthEntryBrowserChecks.mjs', import.meta.url), 'utf8');
+  const ready = checks.indexOf('some(b=>b.textContent.includes("复制 auth.json") && !b.disabled)');
+  const click = checks.indexOf('find(b=>b.textContent.includes("复制 auth.json")).click()');
+  assert.ok(ready >= 0 && click > ready);
+  assert.ok(checks.includes('i < 200'), 'readiness polling remains bounded');
+});

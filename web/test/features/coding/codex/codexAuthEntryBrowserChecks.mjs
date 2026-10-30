@@ -18,7 +18,12 @@ export async function verifyCodexAuthEntry({ send, evaluate, baseUrl }) {
   for (const theme of ['light', 'dark']) {
     await send('Page.navigate', { url: `${baseUrl}/?viewMode=card&authExport=1&theme=${theme}` });
     await until('window.codexCardViewFixture?.renderedOrder().length === 4');
-    const center = await evaluate('codexCardViewFixture.cardCenter("Official Codex")');
+    await check(theme + ' official route renders the expected provider IDs',
+      'codexCardViewFixture.renderedOrder().slice().sort()',
+      ['provider-a', 'provider-b', 'provider-c', 'provider-d']);
+    // Official channels render the translated "official account" title, not
+    // their stored provider name. Address the same stable ID in every locale.
+    const center = await evaluate('codexCardViewFixture.cardCenter("provider-c")');
     for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, ...center, button: 'left', clickCount: 1 });
     await until('document.querySelectorAll("button[aria-label=\\"auth.json\\"]").length === 2');
     await evaluate('document.querySelectorAll("button[aria-label=\\"auth.json\\"]")[1].focus()');
@@ -28,6 +33,7 @@ export async function verifyCodexAuthEntry({ send, evaluate, baseUrl }) {
     await evaluate('[...document.querySelectorAll(".ant-modal-content button")].find(b=>b.textContent.includes("生成并预览")).click()');
     await until('codexCardViewFixture.state.requests.some(r => r.command === "export_codex_official_account_auth_json")');
     await check(theme + ' preview selects second account', 'codexCardViewFixture.state.requests.filter(r => r.command === "export_codex_official_account_auth_json").at(-1).args', { providerId: 'provider-c', accountId: 'account-2', copyToClipboard: false });
+    await until('[...document.querySelectorAll(".ant-modal-content button")].some(b=>b.textContent.includes("复制 auth.json") && !b.disabled)');
     await evaluate('[...document.querySelectorAll(".ant-modal-content button")].find(b=>b.textContent.includes("复制 auth.json")).click()');
     await until('codexCardViewFixture.state.authCopies?.length === 1');
     await check(theme + ' explicit copy uses same account', 'JSON.parse(codexCardViewFixture.state.authCopies[0]).tokens.access_token', 'synthetic-account-2');
