@@ -1,58 +1,110 @@
-name: Next Windows manual build
+name: Next Windows tested build
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'tauri/**'
+      - 'crates/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '*config*'
+      - 'index.html'
+      - '.github/workflows/windows-manual-build.yml'
+      - '.github/validation/windows-package/**'
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
+  # Share the existing heavy-validation lane; never cancel another validation.
   group: ai-toolbox-maintenance-validation
   cancel-in-progress: false
 jobs:
   windows:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.repository_id == '1422130502' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/windows-auto-package-20261029'))
     runs-on: windows-2022
     timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      NODE_OPTIONS: --max-old-space-size=4096
+      VITE_BUILD_SHA: ${{ github.sha }}
+      AI_TOOLBOX_DATA_DIR: ${{ runner.temp }}/synthetic-build-data
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: dtolnay/rust-toolchain@stable
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: x86_64-pc-windows-msvc
-      - run: pnpm install --frozen-lockfile
-      - name: Verify Next-only unsigned manual distribution
-        shell: pwsh
+      - name: Install locked frontend dependencies
+        timeout-minutes: 10
         run: |
-          $config = Get-Content tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          if ($config.identifier -ne 'com.xue-ding-e.ai-toolbox-next') { throw 'Unexpected installer identity' }
-          if ($config.bundle.createUpdaterArtifacts -ne $false) { throw 'Updater artifacts must remain disabled' }
-          if ($config.plugins.updater) { throw 'Manual build must not have an updater channel' }
-          if ($config.plugins.'deep-link'.desktop.schemes -contains 'aitoolbox') { throw 'Must not claim upstream URL protocol' }
-      # Artifact-only. Root release acceptance separately requires sealed Linux tests
-      # for this exact github.sha; this workflow alone never authorizes publication.
-      # No signing secret, release action, package-manager update, or Rust target cache.
-      - run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
-      - name: Prepare versioned Windows installer and checksum
-        shell: pwsh
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency install failed' }
+      - name: Source and packaging controls
+        timeout-minutes: 5
         run: |
-          $ErrorActionPreference = 'Stop'
-          $version = (Get-Content tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          $installers = @(Get-ChildItem tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
-          if ($installers.Count -ne 1) { throw 'Expected exactly one NSIS installer' }
-          New-Item -ItemType Directory release-assets | Out-Null
-          $name = "AI-Toolbox-Next_${version}_windows-x64-setup.exe"
-          Copy-Item $installers[0].FullName "release-assets/$name"
-          $hash = (Get-FileHash "release-assets/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $name" | Set-Content release-assets/SHA256SUMS -Encoding ascii
-          @{ version = $version; source_commit = $env:GITHUB_SHA; repository = $env:GITHUB_REPOSITORY; signed = $false; update_mode = 'manual' } | ConvertTo-Json | Set-Content release-assets/build-provenance.json -Encoding utf8
+          node --test .github/validation/windows-package/package.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging controls failed' }
+          node .github/validation/windows-package/package.mjs verify
+          if ($LASTEXITCODE -ne 0) { throw 'Source identity check failed' }
+      - name: Frontend type check
+        timeout-minutes: 10
+        run: |
+          pnpm exec tsc --noEmit
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend type check failed' }
+      - name: Frontend unit and layout regression gates
+        timeout-minutes: 15
+        run: |
+          pnpm test
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend regression gate failed' }
+      - name: Real-route synthetic auth export browser regression
+        timeout-minutes: 15
+        run: |
+          $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+          if ($ram -lt 6GB) { throw 'Browser build requires at least 6 GiB host memory' }
+          node scripts/verify-codex-auth-entry.mjs --output "$env:RUNNER_TEMP/auth-browser-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Auth export browser regression failed' }
+      - name: Native account export and OAuth regression gates
+        timeout-minutes: 45
+        run: '& .github/validation/windows-package/test-native.ps1'
+      # Artifact-only: no signing secret, Release/tag, updater channel or Rust cache.
+      # Passing these gates does not establish installation or real-account OAuth.
+      - name: Build unsigned Next NSIS installer
+        timeout-minutes: 60
+        run: |
+          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Native installer build failed' }
+      - name: Seal exact-source installer and checksums
+        timeout-minutes: 5
+        run: |
+          node .github/validation/windows-package/package.mjs seal
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact provenance gate failed' }
       - uses: actions/upload-artifact@v4
         with:
-          name: next-windows-x64-candidate-${{ github.sha }}
+          name: next-windows-x64-${{ github.sha }}-${{ github.run_attempt }}
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 14
+      - name: Preserve synthetic test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-windows-test-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/auth-browser-evidence/**/results.json
+            ${{ runner.temp }}/native-tests-*.log
+          if-no-files-found: warn
           retention-days: 14

@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatBuildVersion } from '../utils/buildVersion';
 import { App, Typography, Button, Select, Space, message, Modal, Table, Switch, Input, Row, Col, Card, Divider } from 'antd';
 import { FolderOpen } from 'lucide-react';
 import {
@@ -969,7 +970,7 @@ const GeneralSettingsPage: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text>{t('settings.about.version')}:</Text>
-                <Text strong>{appVersion || '-'}</Text>
+                <Text strong title={import.meta.env.VITE_BUILD_SHA}>{formatBuildVersion(appVersion, import.meta.env.VITE_BUILD_SHA)}</Text>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text>{t('settings.about.autoCheckUpdate')}</Text>
