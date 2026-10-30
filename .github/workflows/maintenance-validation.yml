@@ -648,12 +648,12 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      SOURCE_SHA: 9e8c1c19996623974b8038e3dfa234f884585c51
+      SOURCE_SHA: 256d71ada3570172db89c14747c824afb8eff353
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 9e8c1c19996623974b8038e3dfa234f884585c51
+          ref: 256d71ada3570172db89c14747c824afb8eff353
           fetch-depth: 0
           persist-credentials: false
       - name: Verify immutable candidate and linear history
@@ -667,7 +667,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          package-manager-cache: false
       - name: Install locked frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: TypeScript check
