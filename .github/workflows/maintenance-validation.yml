@@ -642,19 +642,12 @@ jobs:
         run: |
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
 
-  shared-path-locks-and-crates:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/shared-path-locks-20261030'
+  shared-path-format-recovery:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/shared-path-format-20261030'
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     env:
       SOURCE_SHA: 25352432da7d2b59d8957bf31166dfc83e869be7
-      CARGO_BUILD_JOBS: '1'
-      CARGO_INCREMENTAL: '0'
-      CARGO_PROFILE_DEV_DEBUG: '0'
-      CARGO_PROFILE_TEST_DEBUG: '0'
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-      CARGO_NET_RETRY: '1'
-      CARGO_HTTP_TIMEOUT: '60'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -663,123 +656,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Pin source and registry-only dependency policy
+      - name: Generate formatting-only recovery patch without compiling
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test -z "$(git status --porcelain)"
-          mkdir -p "$RUNNER_TEMP/path-evidence"
-          echo "CARGO_HOME=$RUNNER_TEMP/path-cargo" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/path-target" >> "$GITHUB_ENV"
-          printf '%s\n' "control=$GITHUB_SHA" "product=$SOURCE_SHA" "source_tree=$(git rev-parse HEAD^{tree})" > "$RUNNER_TEMP/path-evidence/identity.txt"
-          rustc --version | tee "$RUNNER_TEMP/path-evidence/toolchain.txt"
-          cargo --version | tee -a "$RUNNER_TEMP/path-evidence/toolchain.txt"
-          python3 - <<'PY'
-          import pathlib, tomllib
-          assert not list(pathlib.Path('.').glob('**/.cargo/config*')), 'Repository registry override requires review'
-          for p in pathlib.Path('.').rglob('Cargo.toml'):
-              data = tomllib.loads(p.read_text())
-              def check(value):
-                  if isinstance(value, dict):
-                      assert 'git' not in value and 'registry' not in value, (p, 'non-default registry source')
-                      for v in value.values(): check(v)
-                  elif isinstance(value, list):
-                      for v in value: check(v)
-              check(data)
-          PY
-      - name: Resolve three lockfiles conservatively without compiling desktop
-        id: locks
-        timeout-minutes: 12
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo update --help > "$RUNNER_TEMP/path-evidence/cargo-update-help.txt"
-          for crate in crates/ai-toolbox-paths crates/ai-toolbox-automation tauri; do
-            if [ "$crate" = crates/ai-toolbox-paths ]; then
-              test ! -e "$crate/Cargo.lock"
-              command=(cargo generate-lockfile)
-            else
-              test -f "$crate/Cargo.lock"
-              command=(cargo update --workspace)
-            fi
-            timeout 240s "${command[@]}" --manifest-path "$crate/Cargo.toml" 2>&1 | tee "$RUNNER_TEMP/path-evidence/$(basename "$crate")-lock.log"
-            mkdir -p "$RUNNER_TEMP/path-evidence/$crate"
-            cp "$crate/Cargo.lock" "$RUNNER_TEMP/path-evidence/$crate/Cargo.lock"
+          mkdir -p "$RUNNER_TEMP/format-evidence"
+          printf '%s\n' "control=$GITHUB_SHA" "product=$SOURCE_SHA" "source_tree=$(git rev-parse HEAD^{tree})" > "$RUNNER_TEMP/format-evidence/identity.txt"
+          rustfmt --version | tee "$RUNNER_TEMP/format-evidence/rustfmt.txt"
+          cargo fmt --manifest-path crates/ai-toolbox-paths/Cargo.toml
+          cargo fmt --manifest-path crates/ai-toolbox-automation/Cargo.toml
+          rustfmt --edition 2021 --config skip_children=true tauri/src/coding/path_expand.rs tauri/src/settings/backup/utils.rs tauri/src/settings/commands.rs
+          cargo fmt --manifest-path crates/ai-toolbox-paths/Cargo.toml -- --check
+          cargo fmt --manifest-path crates/ai-toolbox-automation/Cargo.toml -- --check
+          rustfmt --check --edition 2021 --config skip_children=true tauri/src/coding/path_expand.rs tauri/src/settings/backup/utils.rs tauri/src/settings/commands.rs
+          git diff --binary > "$RUNNER_TEMP/format-evidence/format.patch"
+          git diff --stat > "$RUNNER_TEMP/format-evidence/format.stat"
+          git diff --name-only | while read -r file; do
+            case "$file" in crates/ai-toolbox-paths/src/lib.rs|crates/ai-toolbox-automation/src/cli.rs|crates/ai-toolbox-automation/src/lib.rs|crates/ai-toolbox-automation/src/main.rs|crates/ai-toolbox-automation/src/mcp.rs|crates/ai-toolbox-automation/tests/console.rs|crates/ai-toolbox-automation/tests/path_protocol.rs|tauri/src/coding/path_expand.rs|tauri/src/settings/backup/utils.rs|tauri/src/settings/commands.rs) ;; *) echo "Unexpected formatter scope: $file"; exit 1;; esac
           done
-      - name: Save generated locks, full patch and exact generated tree
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for crate in crates/ai-toolbox-paths crates/ai-toolbox-automation tauri; do
-            mkdir -p "$RUNNER_TEMP/path-evidence/$crate"
-            cp "$crate/Cargo.lock" "$RUNNER_TEMP/path-evidence/$crate/Cargo.lock"
-          done
-          git add -- crates/ai-toolbox-paths/Cargo.lock crates/ai-toolbox-automation/Cargo.lock tauri/Cargo.lock
-          git diff --cached --binary > "$RUNNER_TEMP/path-evidence/generated-locks.patch"
-          git diff --cached --stat > "$RUNNER_TEMP/path-evidence/generated-locks.stat"
-          printf 'generated_tree=%s\n' "$(git write-tree)" >> "$RUNNER_TEMP/path-evidence/identity.txt"
-          sha256sum crates/ai-toolbox-paths/Cargo.lock crates/ai-toolbox-automation/Cargo.lock tauri/Cargo.lock > "$RUNNER_TEMP/path-evidence/lock-sha256.txt"
-          # This generated tree is evidence, not an approved or committed product.
-      - name: Reject changes to existing registry package identities
-        id: preservation
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PYGUARD' 2>&1 | tee "$RUNNER_TEMP/path-evidence/lock-preservation.txt"
-          import pathlib, subprocess, tomllib
-          for path in ('crates/ai-toolbox-automation/Cargo.lock', 'tauri/Cargo.lock'):
-              before = tomllib.loads(subprocess.check_output(['git', 'show', 'HEAD:' + path], text=True))
-              after = tomllib.loads(pathlib.Path(path).read_text())
-              def registry_ids(data):
-                  return {(p['name'], p['version'], p['source'], p.get('checksum')) for p in data['package'] if p.get('source', '').startswith('registry+')}
-              removed = registry_ids(before) - registry_ids(after)
-              assert not removed, (path, 'Existing registry identities changed; review, do not auto-upgrade', sorted(removed))
-              print(path, 'existing registry versions/checksums preserved')
-          PYGUARD
-      - name: Check formatting of the two independent crates
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' && steps.preservation.outcome == 'success' }}
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --manifest-path crates/ai-toolbox-paths/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/path-evidence/paths-fmt.log"
-          cargo fmt --manifest-path crates/ai-toolbox-automation/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/path-evidence/automation-fmt.log"
-      - name: Test shared paths with the generated lock
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' && steps.preservation.outcome == 'success' }}
-        timeout-minutes: 8
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path crates/ai-toolbox-paths/Cargo.toml --jobs 1 2>&1 | tee "$RUNNER_TEMP/path-evidence/paths-tests.log"
-      - name: Test automation and five real-process regressions serially
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' && steps.preservation.outcome == 'success' }}
-        timeout-minutes: 18
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path crates/ai-toolbox-automation/Cargo.toml --jobs 1 -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/path-evidence/automation-tests.log"
-          cargo test --locked --manifest-path crates/ai-toolbox-automation/Cargo.toml --test path_protocol --jobs 1 -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/path-evidence/path-process-tests.log"
-          grep -F 'test result: ok. 5 passed; 0 failed;' "$RUNNER_TEMP/path-evidence/path-process-tests.log"
-      - name: Verify only the recorded lock tree changed
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          git diff --exit-code
           test -z "$(git ls-files --others --exclude-standard)"
-          sha256sum --check "$RUNNER_TEMP/path-evidence/lock-sha256.txt"
-          test "$(git write-tree)" = "$(sed -n 's/^generated_tree=//p' "$RUNNER_TEMP/path-evidence/identity.txt")"
+          git add -- crates/ai-toolbox-paths crates/ai-toolbox-automation tauri/src/coding/path_expand.rs tauri/src/settings/backup/utils.rs tauri/src/settings/commands.rs
+          printf 'formatted_tree=%s\n' "$(git write-tree)" >> "$RUNNER_TEMP/format-evidence/identity.txt"
+          sha256sum "$RUNNER_TEMP/format-evidence/format.patch" > "$RUNNER_TEMP/format-evidence/patch-sha256.txt"
+          # Recovery evidence only: this is not final locked-source acceptance.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shared-path-locks-and-crates-${{ github.run_id }}
-          path: ${{ runner.temp }}/path-evidence
+          name: shared-path-format-${{ github.run_id }}
+          path: ${{ runner.temp }}/format-evidence
           if-no-files-found: error
           retention-days: 14
