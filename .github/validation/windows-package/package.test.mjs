@@ -23,6 +23,10 @@ test('workflow retains least privilege and ordered exact-source gates', () => {
   const workflow = readFileSync(new URL('../../workflows/windows-manual-build.yml', import.meta.url), 'utf8');
   assert.match(workflow, /branches: \[main\]/);
   assert.match(workflow, /contents: read/);
+  const jobEnv = workflow.slice(workflow.indexOf('    env:'), workflow.indexOf('    steps:'));
+  assert.doesNotMatch(jobEnv, /runner\./, 'runner context is unavailable in job-level env');
+  assert.match(workflow, /AI_TOOLBOX_DATA_DIR=\$data/);
+  assert.match(workflow, /\$env:GITHUB_ENV/);
   assert.match(workflow, /ref: \$\{\{ github.sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
   assert.doesNotMatch(workflow, /pull_request_target|secrets\.|contents: write|actions: write|workflow_run:/);

@@ -34,12 +34,15 @@ jobs:
       CARGO_TERM_COLOR: never
       NODE_OPTIONS: --max-old-space-size=4096
       VITE_BUILD_SHA: ${{ github.sha }}
-      AI_TOOLBOX_DATA_DIR: ${{ runner.temp }}/synthetic-build-data
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Isolate synthetic application data
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'synthetic-build-data'
+          "AI_TOOLBOX_DATA_DIR=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
