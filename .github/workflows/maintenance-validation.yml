@@ -641,3 +641,67 @@ jobs:
       - name: Run migration and neighboring preferences tests serially
         run: |
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
+
+  backup-path-feedback-acceptance:
+    # Control ref is not product source. Never publish or run desktop/Rust builds.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/backup-path-feedback-20261030'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      SOURCE_SHA: 9e8c1c19996623974b8038e3dfa234f884585c51
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9e8c1c19996623974b8038e3dfa234f884585c51
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable candidate and linear history
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-list --count --merges HEAD)" = 0
+          mkdir -p "$RUNNER_TEMP/backup-path-evidence"
+          printf 'control=%s\nproduct=%s\ntree=%s\n' "$GITHUB_SHA" "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" | tee "$RUNNER_TEMP/backup-path-evidence/source.log"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: TypeScript check
+        run: |
+          set -o pipefail
+          pnpm exec tsc --noEmit 2>&1 | tee "$RUNNER_TEMP/backup-path-evidence/tsc.log"
+      - name: Exact path and production-closure regressions
+        run: |
+          set -euo pipefail
+          node --import ./scripts/register-node-ts-extension-loader.mjs --test --test-reporter=tap web/test/features/settings/utils/normalizeBackupEntryPath.test.ts web/test/features/settings/utils/backupCustomEntrySave.test.ts | tee "$RUNNER_TEMP/backup-path-evidence/path-tests.tap"
+          grep -Fx '# tests 12' "$RUNNER_TEMP/backup-path-evidence/path-tests.tap"
+          grep -Fx '# pass 12' "$RUNNER_TEMP/backup-path-evidence/path-tests.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/backup-path-evidence/path-tests.tap"
+      - name: Full frontend regression suite
+        run: |
+          set -o pipefail
+          pnpm run test:web 2>&1 | tee "$RUNNER_TEMP/backup-path-evidence/frontend-tests.log"
+      - name: Real backup settings modal with synthetic services
+        run: |
+          set -o pipefail
+          node scripts/verify-backup-settings.mjs --output "$RUNNER_TEMP/backup-path-evidence" 2>&1 | tee "$RUNNER_TEMP/backup-path-evidence/browser.log"
+      - name: Frontend production build
+        run: |
+          set -o pipefail
+          pnpm build 2>&1 | tee "$RUNNER_TEMP/backup-path-evidence/build.log"
+      - name: Verify candidate and lockfiles remain unchanged
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backup-path-feedback-evidence
+          path: ${{ runner.temp }}/backup-path-evidence
+          if-no-files-found: error
+          retention-days: 7
