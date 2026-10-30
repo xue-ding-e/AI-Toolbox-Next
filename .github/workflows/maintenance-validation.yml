@@ -642,75 +642,176 @@ jobs:
         run: |
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
 
-  shared-path-final-acceptance:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/shared-path-final-20261030'
+  shared-path-native-linux:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/shared-path-native-20261030'
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    env:
+    timeout-minutes: 80
+    env: &id001
       SOURCE_SHA: df1a5a136b5b129d567445cfdb4f49bae068876d
       CARGO_BUILD_JOBS: '1'
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: never
       CARGO_NET_RETRY: '1'
       CARGO_HTTP_TIMEOUT: '60'
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: df1a5a136b5b129d567445cfdb4f49bae068876d
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.99.1
-        with:
-          components: rustfmt
-      - name: Record exact committed source and locks
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test -z "$(git status --porcelain)"
-          mkdir -p "$RUNNER_TEMP/final-evidence"
-          echo "CARGO_HOME=$RUNNER_TEMP/final-cargo" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/final-target" >> "$GITHUB_ENV"
-          printf '%s\n' "control=$GITHUB_SHA" "product=$SOURCE_SHA" "tree=$(git rev-parse HEAD^{tree})" > "$RUNNER_TEMP/final-evidence/identity.txt"
-          rustc --version | tee "$RUNNER_TEMP/final-evidence/toolchain.txt"
-          cargo --version | tee -a "$RUNNER_TEMP/final-evidence/toolchain.txt"
-          rustfmt --version | tee -a "$RUNNER_TEMP/final-evidence/toolchain.txt"
-          sha256sum crates/ai-toolbox-paths/Cargo.lock crates/ai-toolbox-automation/Cargo.lock tauri/Cargo.lock > "$RUNNER_TEMP/final-evidence/locks.sha256"
-      - name: Check formatting of all candidate Rust files
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --manifest-path crates/ai-toolbox-paths/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/final-evidence/paths-fmt.log"
-          cargo fmt --manifest-path crates/ai-toolbox-automation/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/final-evidence/automation-fmt.log"
-          rustfmt --check --edition 2021 --config skip_children=true tauri/src/coding/path_expand.rs tauri/src/settings/backup/utils.rs tauri/src/settings/commands.rs 2>&1 | tee "$RUNNER_TEMP/final-evidence/desktop-files-fmt.log"
-      - name: Locked shared paths tests
-        timeout-minutes: 6
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path crates/ai-toolbox-paths/Cargo.toml --jobs 1 -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/final-evidence/paths-tests.log"
-      - name: Locked automation and protocol process tests
-        timeout-minutes: 18
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path crates/ai-toolbox-automation/Cargo.toml --jobs 1 -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/final-evidence/automation-tests.log"
-          cargo test --locked --manifest-path crates/ai-toolbox-automation/Cargo.toml --test path_protocol --jobs 1 -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/final-evidence/path-process-tests.log"
-          grep -F 'test result: ok. 5 passed; 0 failed;' "$RUNNER_TEMP/final-evidence/path-process-tests.log"
-      - name: Verify source and all locks stayed unchanged
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test -z "$(git status --porcelain)"
-          sha256sum --check "$RUNNER_TEMP/final-evidence/locks.sha256"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shared-path-final-${{ github.run_id }}
-          path: ${{ runner.temp }}/final-evidence
-          if-no-files-found: error
-          retention-days: 14
+    - &id002
+      uses: actions/checkout@v4
+      with:
+        ref: df1a5a136b5b129d567445cfdb4f49bae068876d
+        persist-credentials: false
+    - &id003
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - &id004
+      uses: dtolnay/rust-toolchain@1.99.1
+    - name: Record source and synthetic native environment
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        mkdir -p "$RUNNER_TEMP/native-evidence" "$RUNNER_TEMP/native-home" "$RUNNER_TEMP/native-config" "$RUNNER_TEMP/native-local"
+        printf '%s\n' "control=$GITHUB_SHA" "product=$SOURCE_SHA" "tree=$(git rev-parse HEAD^{tree})" > "$RUNNER_TEMP/native-evidence/identity.txt"
+        rustc --version | tee "$RUNNER_TEMP/native-evidence/toolchain.txt"
+        cargo --version | tee -a "$RUNNER_TEMP/native-evidence/toolchain.txt"
+        df -h | tee "$RUNNER_TEMP/native-evidence/disk.txt"
+        free -m | tee "$RUNNER_TEMP/native-evidence/memory.txt"
+        echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+        echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
+        echo "CARGO_TARGET_DIR=$RUNNER_TEMP/native-target" >> "$GITHUB_ENV"
+        for name in HOME USERPROFILE; do echo "$name=$RUNNER_TEMP/native-home" >> "$GITHUB_ENV"; done
+        for name in APPDATA XDG_CONFIG_HOME; do echo "$name=$RUNNER_TEMP/native-config" >> "$GITHUB_ENV"; done
+        for name in LOCALAPPDATA AI_TOOLBOX_DATA_DIR AI_TOOLBOX_CACHE_DIR XDG_DATA_HOME XDG_CACHE_HOME CODEX_HOME; do echo "$name=$RUNNER_TEMP/native-local/$name" >> "$GITHUB_ENV"; done
+        sha256sum crates/ai-toolbox-paths/Cargo.lock crates/ai-toolbox-automation/Cargo.lock tauri/Cargo.lock > "$RUNNER_TEMP/native-evidence/locks.sha256"
+    - name: Install existing Linux native prerequisites
+      timeout-minutes: 10
+      run: |-
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+    - name: Compile and run exactly three desktop path regressions
+      timeout-minutes: 65
+      run: |
+        set -euo pipefail
+        cargo test --locked --manifest-path tauri/Cargo.toml --lib settings::commands::backup_path_request_tests:: -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/native-evidence/desktop-0.log"
+        node .github/validation/windows-package/check-native.mjs "$RUNNER_TEMP/native-evidence/desktop-0.log" 0 settings::commands::backup_path_request_tests:: 2
+        cargo test --locked --manifest-path tauri/Cargo.toml --lib settings::backup::utils::tests::normalize_backup_storage_path_preserves_supported_prefixes -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/native-evidence/desktop-1.log"
+        node .github/validation/windows-package/check-native.mjs "$RUNNER_TEMP/native-evidence/desktop-1.log" 0 settings::backup::utils::tests::normalize_backup_storage_path_preserves_supported_prefixes 1
+        grep -Fx "test settings::commands::backup_path_request_tests::desktop_path_command_shares_decoded_utf8_input_boundary ... ok" "$RUNNER_TEMP/native-evidence/desktop-"*.log
+        grep -Fx "test settings::commands::backup_path_request_tests::desktop_path_command_keeps_empty_and_portable_paths ... ok" "$RUNNER_TEMP/native-evidence/desktop-"*.log
+        grep -Fx "test settings::backup::utils::tests::normalize_backup_storage_path_preserves_supported_prefixes ... ok" "$RUNNER_TEMP/native-evidence/desktop-"*.log
+    - name: Verify source and locks unchanged
+      if: ${{ !cancelled() }}
+      run: |-
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        test -z "$(git status --porcelain)"
+        sha256sum --check "$RUNNER_TEMP/native-evidence/locks.sha256"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: shared-path-native-linux-${{ github.run_id }}
+        path: ${{ runner.temp }}/native-evidence
+        if-no-files-found: error
+        retention-days: 14
+  shared-path-native-windows:
+    needs: shared-path-native-linux
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/shared-path-native-20261030'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env: *id001
+    steps:
+    - *id002
+    - *id003
+    - *id004
+    - name: Record source and synthetic Windows environment
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if ((git rev-parse HEAD) -ne $env:SOURCE_SHA) { throw 'Source mismatch' }
+        $evidence = Join-Path $env:RUNNER_TEMP 'native-evidence'
+        New-Item -ItemType Directory -Force $evidence | Out-Null
+        "control=$env:GITHUB_SHA", "product=$env:SOURCE_SHA", "tree=$(git rev-parse 'HEAD^{tree}')" | Set-Content "$evidence/identity.txt"
+        rustc --version | Set-Content "$evidence/toolchain.txt"
+        cargo --version | Add-Content "$evidence/toolchain.txt"
+        Get-PSDrive -PSProvider FileSystem | Out-File "$evidence/disk.txt"
+        Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Out-File "$evidence/memory.txt"
+        "KNOWN_PROFILE=$([Environment]::GetFolderPath('UserProfile'))", "KNOWN_CONFIG=$([Environment]::GetFolderPath('ApplicationData'))" | Add-Content $env:GITHUB_ENV
+        $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+        $rustupHome = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE '.rustup' }
+        "CARGO_HOME=$cargoHome", "RUSTUP_HOME=$rustupHome", "CARGO_TARGET_DIR=$env:RUNNER_TEMP/native-target" | Add-Content $env:GITHUB_ENV
+        foreach ($pair in @(@('HOME','home'),@('USERPROFILE','home'),@('APPDATA','config'),@('LOCALAPPDATA','local'),@('AI_TOOLBOX_DATA_DIR','data'),@('AI_TOOLBOX_CACHE_DIR','cache'),@('CODEX_HOME','codex'))) {
+          $dir = Join-Path $env:RUNNER_TEMP ('native-' + $pair[1])
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          "$($pair[0])=$dir" | Add-Content $env:GITHUB_ENV
+        }
+        $locks = @('crates/ai-toolbox-paths/Cargo.lock','crates/ai-toolbox-automation/Cargo.lock','tauri/Cargo.lock')
+        $locks | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash)  $_" } | Set-Content "$evidence/locks.sha256"
+    - name: Actual Windows shared crate suites
+      timeout-minutes: 15
+      run: |
+        $ErrorActionPreference = 'Stop'
+        foreach ($crate in @('ai-toolbox-paths','ai-toolbox-automation')) {
+          cargo test --locked --manifest-path "crates/$crate/Cargo.toml" --jobs 1 -- --test-threads=1 2>&1 | Tee-Object "$env:RUNNER_TEMP/native-evidence/$crate-tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows crate tests failed' }
+        }
+        if (-not (Select-String -SimpleMatch 'test result: ok. 5 passed; 0 failed;' "$env:RUNNER_TEMP/native-evidence/ai-toolbox-paths-tests.log")) { throw 'Shared path tests missing' }
+        # path_protocol.rs is Linux-only: zero Windows tests are not protocol acceptance.
+    - name: Actual Windows CLI and MCP smoke with bounded children
+      timeout-minutes: 2
+      run: "$ErrorActionPreference = 'Stop'\n@'\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\n\
+        const { spawnSync } = require('node:child_process');\nconst root = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'path-smoke-'));\nconst normalize = value\
+        \ => value.replaceAll('\\\\', '/').replace(/\\/$/, '');\nfor (const known of [process.env.KNOWN_PROFILE, process.env.KNOWN_CONFIG]) {\n  assert(known, 'Known-folder\
+        \ preflight must resolve');\n  assert(!normalize(root).toLowerCase().startsWith(normalize(known).toLowerCase() + '/'), 'Synthetic root must be outside real\
+        \ known folders');\n}\nconst env = {};\nfor (const name of ['SystemRoot', 'WINDIR']) if (process.env[name]) env[name] = process.env[name];\nfor (const [key,\
+        \ folder] of Object.entries({ HOME:'home', USERPROFILE:'home', APPDATA:'config', LOCALAPPDATA:'local', TEMP:'temp', TMP:'temp', AI_TOOLBOX_DATA_DIR:'data',\
+        \ AI_TOOLBOX_CACHE_DIR:'cache', CODEX_HOME:'codex', CLAUDE_CONFIG_DIR:'claude' })) {\n  env[key] = path.join(root, folder);\n  if (!fs.existsSync(env[key]))\
+        \ fs.mkdirSync(env[key]);\n}\nconst expectedDirectories = fs.readdirSync(root).sort();\nconst exe = path.join(process.env.CARGO_TARGET_DIR, 'debug', 'ai-toolbox-cli.exe');\n\
+        function run(args, input = '') {\n  const child = spawnSync(exe, args, { cwd:root, env, input, encoding:'utf8', timeout:5000, killSignal:'SIGKILL', maxBuffer:65536,\
+        \ windowsHide:true });\n  assert.ifError(child.error);\n  assert.equal(child.signal, null);\n  assert.equal(child.stderr, '');\n  assert.equal(child.status,\
+        \ 0);\n  return child.stdout.trim().split(/\\r?\\n/).map(line => JSON.parse(line));\n}\nfunction session(input) {\n  return [{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'native-fixture',version:'1'}}},\n\
+        \    {jsonrpc:'2.0',method:'notifications/initialized'},\n    {jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'backup_normalize_path',arguments:{path:input}}}].map(x=>JSON.stringify(x)+'\\\
+        n').join('');\n}\nfor (const [input, expected] of [['$HOME/fixture', normalize(env.HOME)+'/fixture'], ['${APPDATA}/fixture',normalize(env.APPDATA)+'/fixture'],['%appdata%\\\
+        \\fixture','%APPDATA%/fixture'],['relative/../\u4E2D\u6587','relative/../\u4E2D\u6587']]) {\n  const cli=run(['--format','json','backup','normalize-path','--path',input]);\n\
+        \  assert.equal(cli.length,1); assert.equal(cli[0].ok,true); assert.equal(cli[0].operation,'backup.normalize_path'); assert.equal(cli[0].data.path,expected);\n\
+        \  const mcp=run(['mcp','serve'],session(input));\n  assert.equal(mcp.length,2); assert.equal(mcp[0].id,1); assert.equal(mcp[0].result.protocolVersion,'2025-11-25');\n\
+        \  assert.equal(mcp[1].id,2); assert.equal(mcp[1].result.isError,false); assert.deepEqual(mcp[1].result.structuredContent,cli[0].data);\n}\nconst nul=run(['mcp','serve'],session('fixture\\\
+        0path'));\nassert.equal(nul.length,2); assert.equal(nul[1].id,2); assert.equal(nul[1].error.code,-32602); assert.equal(nul[1].result,undefined);\nassert.deepEqual(fs.readdirSync(root).sort(),\
+        \ expectedDirectories, 'No unexpected state entries');\nfor (const entry of fs.readdirSync(root,{withFileTypes:true})) {\n  assert(entry.isDirectory()); assert.equal(fs.readdirSync(path.join(root,entry.name)).length,0,'No\
+        \ application state writes');\n}\nfor (const entry of expectedDirectories) fs.rmdirSync(path.join(root,entry));\nfs.rmdirSync(root);\nconsole.log('Windows actual\
+        \ CLI/MCP: 4 positive equivalence cases and 1 MCP NUL rejection passed.');\n'@ | Set-Content -Encoding utf8 \"$env:RUNNER_TEMP/native-smoke.cjs\"\nnode \"$env:RUNNER_TEMP/native-smoke.cjs\"\
+        \ 2>&1 | Tee-Object \"$env:RUNNER_TEMP/native-evidence/windows-protocol-smoke.log\"\nif ($LASTEXITCODE -ne 0) { throw 'Windows actual protocol smoke failed'\
+        \ }\n"
+    - name: Compile and run exactly three Windows desktop regressions
+      timeout-minutes: 65
+      run: |
+        $ErrorActionPreference = 'Stop'
+        cargo test --locked --manifest-path tauri/Cargo.toml --lib settings::commands::backup_path_request_tests:: -- --test-threads=1 2>&1 | Tee-Object "$env:RUNNER_TEMP/native-evidence/desktop-0.log"
+        $exit = $LASTEXITCODE
+        node .github/validation/windows-package/check-native.mjs "$env:RUNNER_TEMP/native-evidence/desktop-0.log" $exit settings::commands::backup_path_request_tests:: 2
+        if ($exit -ne 0 -or $LASTEXITCODE -ne 0) { throw 'Native test identities or result mismatch' }
+        cargo test --locked --manifest-path tauri/Cargo.toml --lib settings::backup::utils::tests::normalize_backup_storage_path_preserves_supported_prefixes -- --test-threads=1 2>&1 | Tee-Object "$env:RUNNER_TEMP/native-evidence/desktop-1.log"
+        $exit = $LASTEXITCODE
+        node .github/validation/windows-package/check-native.mjs "$env:RUNNER_TEMP/native-evidence/desktop-1.log" $exit settings::backup::utils::tests::normalize_backup_storage_path_preserves_supported_prefixes 1
+        if ($exit -ne 0 -or $LASTEXITCODE -ne 0) { throw 'Native test identities or result mismatch' }
+        if (-not (Select-String -SimpleMatch 'test settings::commands::backup_path_request_tests::desktop_path_command_shares_decoded_utf8_input_boundary ... ok' "$env:RUNNER_TEMP/native-evidence/desktop-*.log")) { throw 'Exact desktop test missing' }
+        if (-not (Select-String -SimpleMatch 'test settings::commands::backup_path_request_tests::desktop_path_command_keeps_empty_and_portable_paths ... ok' "$env:RUNNER_TEMP/native-evidence/desktop-*.log")) { throw 'Exact desktop test missing' }
+        if (-not (Select-String -SimpleMatch 'test settings::backup::utils::tests::normalize_backup_storage_path_preserves_supported_prefixes ... ok' "$env:RUNNER_TEMP/native-evidence/desktop-*.log")) { throw 'Exact desktop test missing' }
+    - name: Verify source and locks unchanged
+      if: ${{ !cancelled() }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if ((git rev-parse HEAD) -ne $env:SOURCE_SHA -or (git status --porcelain)) { throw 'Source changed' }
+        foreach ($line in Get-Content "$env:RUNNER_TEMP/native-evidence/locks.sha256") {
+          $parts = $line -split '  ',2
+          if ((Get-FileHash $parts[1] -Algorithm SHA256).Hash -ne $parts[0]) { throw 'Lock changed' }
+        }
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: shared-path-native-windows-${{ github.run_id }}
+        path: ${{ runner.temp }}/native-evidence
+        if-no-files-found: error
+        retention-days: 14
