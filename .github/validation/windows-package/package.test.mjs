@@ -30,6 +30,9 @@ test('workflow retains least privilege and ordered exact-source gates', () => {
   assert.match(workflow, /ref: \$\{\{ github.sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
   assert.doesNotMatch(workflow, /pull_request_target|secrets\.|contents: write|actions: write|workflow_run:/);
+  assert.match(workflow, /Frontend full regression suite \(unit and browser\)\n        timeout-minutes: 35/);
+  assert.match(workflow, /    timeout-minutes: 120/);
+  assert(workflow.indexOf('node scripts/verify-codex-auth-entry.mjs') < workflow.indexOf('pnpm test'));
   assert(workflow.indexOf('pnpm test') < workflow.indexOf('pnpm tauri build'));
   assert(workflow.indexOf('node scripts/verify-codex-auth-entry.mjs') < workflow.indexOf('pnpm tauri build'));
   assert(workflow.indexOf('test-native.ps1') < workflow.indexOf('pnpm tauri build'));

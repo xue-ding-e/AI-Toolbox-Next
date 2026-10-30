@@ -68,11 +68,6 @@ jobs:
         run: |
           pnpm exec tsc --noEmit
           if ($LASTEXITCODE -ne 0) { throw 'Frontend type check failed' }
-      - name: Frontend unit and layout regression gates
-        timeout-minutes: 15
-        run: |
-          pnpm test
-          if ($LASTEXITCODE -ne 0) { throw 'Frontend regression gate failed' }
       - name: Real-route synthetic auth export browser regression
         timeout-minutes: 15
         run: |
@@ -80,6 +75,12 @@ jobs:
           if ($ram -lt 6GB) { throw 'Browser build requires at least 6 GiB host memory' }
           node scripts/verify-codex-auth-entry.mjs --output "$env:RUNNER_TEMP/auth-browser-evidence"
           if ($LASTEXITCODE -ne 0) { throw 'Auth export browser regression failed' }
+      # pnpm test includes serial browser builds; 15 minutes truncated passing suites.
+      - name: Frontend full regression suite (unit and browser)
+        timeout-minutes: 35
+        run: |
+          pnpm test
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend regression gate failed' }
       - name: Native account export and OAuth regression gates
         timeout-minutes: 45
         run: '& .github/validation/windows-package/test-native.ps1'
