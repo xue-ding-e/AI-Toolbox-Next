@@ -44,6 +44,7 @@ import {
   findRustRegexIncompatibility,
   type RustRegexIssue,
 } from '../utils/rustRegexCompat';
+import { normalizeBackupEntryPath } from '../utils/normalizeBackupEntryPath';
 import ScrollFadeHint from './ScrollFadeHint';
 import styles from './BackupSettingsModal.module.less';
 
@@ -432,19 +433,9 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     }
   };
 
-  const normalizeCustomEntryPath = async (path: string): Promise<string> => {
-    const trimmedPath = path.trim();
-    if (!trimmedPath) {
-      return '';
-    }
-
-    try {
-      return await normalizeBackupCustomEntryPath(trimmedPath);
-    } catch (error) {
-      console.error('Failed to normalize custom backup path:', error);
-      return trimmedPath;
-    }
-  };
+  const normalizeCustomEntryPath = (path: string): Promise<string> => (
+    normalizeBackupEntryPath(path, normalizeBackupCustomEntryPath)
+  );
 
   const handleOpenCustomEntryModal = (entry?: BackupCustomEntry) => {
     const nextEntryType = entry?.entry_type ?? 'file';
@@ -474,8 +465,9 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
           sourcePath: await normalizeCustomEntryPath(selected),
         });
       }
-    } catch {
-      // User cancelled
+    } catch (error) {
+      // Dialog cancellation returns null; actual picker/service failures need feedback.
+      message.error(describeBackendError(error));
     }
   };
 
@@ -509,8 +501,12 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         return entries.map((entry) => entry.id === editingCustomEntry.id ? nextEntry : entry);
       });
       setCustomEntryModalOpen(false);
-    } catch {
-      // Validation failed
+    } catch (error) {
+      // Validation failures already have field-level feedback from the form.
+      if (error && typeof error === 'object' && 'errorFields' in error) {
+        return;
+      }
+      message.error(`${t('settings.backupSettings.saveFailed')}: ${describeBackendError(error)}`);
     }
   };
 

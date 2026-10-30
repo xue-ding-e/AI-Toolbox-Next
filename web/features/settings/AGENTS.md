@@ -36,6 +36,9 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- 自定义备份路径的 `normalizeBackupEntryPath` 对非空路径只调用共享后端一次；后端拒绝必须原样向上传播，禁止回退到原路径并继续保存。空可选路径保持本地空字符串。轻量回归：`node --test web/test/features/settings/utils/normalizeBackupEntryPath.test.ts`；这不代表原生 GUI、实际备份或完整 CLI/MCP 验收。
+- 自定义条目保存时，路径拒绝必须保留条目/打开的草稿并通过既有 `message.error` 与 `describeBackendError` 展示具体错误；只有表单 `errorFields` 交给字段提示。`backupCustomEntrySave.test.ts` 用 AST 提取真实保存闭包，覆盖 source/restore 拒绝与成功/校验分支，不代替 DOM 或原生验收。
+- 自定义条目文件选择器的取消由 `null` 表示，不可把所有异常视为取消；选择器或路径 service 拒绝须展示既有错误提示，不覆盖当前路径。上述闭包回归同时覆盖取消、两类拒绝和成功选入。
 - 备份设置三渠道（local/webdav/repository）保存走统一入口 `saveBackupSettingsUnified` → 后端 `save_backup_settings`（只 patch 备份字段 + 同事务更新 `settings:backup_repository`）。不要改回两次全量 `save_settings` 或把仓库 Token 放进 AppSettings payload；保存失败要展示后端错误、保留草稿并禁用重复提交。
 - `BackupSettingsModal` 保存时 `validateFields()` 只返回当前挂载的表单项：webdav/repository 的 Form.Item 按渠道条件渲染，缺渠道的值必须从 `form.getFieldsValue(true)`（打开时 setFieldsValue 过的保留值）取，再兜底到打开时加载的 store 值（`loadedRepositoryConfig`）；直接用 `validateFields()` 返回值会得到 undefined 导致崩溃或静默清空已存连接。保存后的 store 同步走 `settingsStoreUtils.ts::backupSettingsStatePatch`——**新增保存字段时必须同时补这个 patch**（曾漏掉 autoBackup 三参数导致弹窗重开读旧值、再保存覆盖新值）。
 - 仓库草稿仅在选择仓库渠道保存时提交为修改；本地/WebDAV 保存使用已加载连接，后端也必须保留自己的当前仓库记录，忽略隐藏的半填或过期草稿。仓库加载完成前禁用保存与编辑，加载失败不允许用默认空草稿清空旧连接；关闭弹窗后忽略未完成加载的返回。已配置仓库的空 directory 表示根目录，不能用 truthy 默认值替换。
