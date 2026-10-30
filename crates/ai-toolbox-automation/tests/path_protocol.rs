@@ -17,7 +17,10 @@ impl Fixture {
         let root = std::env::temp_dir().join(format!(
             "ai-path-protocol-{}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir(&root).unwrap();
@@ -48,12 +51,15 @@ impl Fixture {
             .stdin(Stdio::from(File::open(&stdin).unwrap()))
             .stdout(Stdio::from(File::create(&stdout).unwrap()))
             .stderr(Stdio::from(File::create(&stderr).unwrap()))
-            .spawn().unwrap();
+            .spawn()
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
-                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
                 outcome => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -64,18 +70,29 @@ impl Fixture {
         assert_eq!(fs::metadata(&stderr).unwrap().len(), 0);
         assert!(fs::metadata(&stdout).unwrap().len() < 256 * 1024);
         let output = fs::read_to_string(&stdout).unwrap();
-        let responses = output.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-        let mut names: Vec<_> = fs::read_dir(&self.0).unwrap()
-            .map(|entry| entry.unwrap().file_name()).collect();
+        let responses = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let mut names: Vec<_> = fs::read_dir(&self.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
         names.sort();
-        assert_eq!(names, vec!["stderr", "stdin", "stdout"], "console created application state");
+        assert_eq!(
+            names,
+            vec!["stderr", "stdin", "stdout"],
+            "console created application state"
+        );
         (status, responses)
     }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
         // Delete only harness-owned files; retain unexpected state for diagnosis.
-        for name in ["stdin", "stdout", "stderr"] { let _ = fs::remove_file(self.0.join(name)); }
+        for name in ["stdin", "stdout", "stderr"] {
+            let _ = fs::remove_file(self.0.join(name));
+        }
         let _ = fs::remove_dir(&self.0);
     }
 }
@@ -88,7 +105,10 @@ fn session(path: &str) -> String {
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
             "name":"backup_normalize_path","arguments":{"path":path}}}),
     ];
-    requests.iter().map(|request| format!("{request}\n")).collect()
+    requests
+        .iter()
+        .map(|request| format!("{request}\n"))
+        .collect()
 }
 
 #[test]
@@ -100,7 +120,17 @@ fn actual_cli_and_mcp_share_host_expansion_and_portable_results() {
         ("relative/../中文", "relative/../中文"),
         ("$UNKNOWN/file", "$UNKNOWN/file"),
     ] {
-        let (cli_status, cli) = fixture.run(&["--format", "json", "backup", "normalize-path", "--path", input], "");
+        let (cli_status, cli) = fixture.run(
+            &[
+                "--format",
+                "json",
+                "backup",
+                "normalize-path",
+                "--path",
+                input,
+            ],
+            "",
+        );
         assert!(cli_status.success());
         assert_eq!(cli.len(), 1);
         assert_eq!(cli[0]["ok"], true);
@@ -118,12 +148,25 @@ fn actual_cli_and_mcp_share_host_expansion_and_portable_results() {
 fn oversized_adapter_input_fails_without_target_state_or_successful_path() {
     let fixture = Fixture::new();
     let input = "x".repeat(ai_toolbox_automation::MAX_PATH_BYTES + 1);
-    let (status, cli) = fixture.run(&["--format", "json", "backup", "normalize-path", "--path", &input], "");
+    let (status, cli) = fixture.run(
+        &[
+            "--format",
+            "json",
+            "backup",
+            "normalize-path",
+            "--path",
+            &input,
+        ],
+        "",
+    );
     assert_eq!(status.code(), Some(2));
     assert_eq!(cli[0]["ok"], false);
     assert_eq!(cli[0]["data"], Value::Null);
     let (status, mcp) = fixture.run(&["mcp", "serve"], &session(&input));
-    assert!(status.success(), "a protocol error does not terminate the server");
+    assert!(
+        status.success(),
+        "a protocol error does not terminate the server"
+    );
     assert_eq!(mcp[1]["error"]["code"], -32602);
     assert_eq!(mcp[1]["result"], Value::Null);
 }
@@ -131,13 +174,25 @@ fn oversized_adapter_input_fails_without_target_state_or_successful_path() {
 #[test]
 fn decoded_unicode_and_backslash_boundaries_agree_despite_larger_json_frames() {
     let fixture = Fixture::new();
-    for input in ["é".repeat(ai_toolbox_automation::MAX_PATH_BYTES / 2),
-        "\\".repeat(ai_toolbox_automation::MAX_PATH_BYTES)] {
+    for input in [
+        "é".repeat(ai_toolbox_automation::MAX_PATH_BYTES / 2),
+        "\\".repeat(ai_toolbox_automation::MAX_PATH_BYTES),
+    ] {
         assert_eq!(input.len(), ai_toolbox_automation::MAX_PATH_BYTES);
         let frame = session(&input).replace('é', "\\u00e9");
         assert!(frame.len() > ai_toolbox_automation::MAX_PATH_BYTES);
         assert!(frame.len() < ai_toolbox_automation::mcp::MAX_MESSAGE_BYTES);
-        let (status, cli) = fixture.run(&["--format", "json", "backup", "normalize-path", "--path", &input], "");
+        let (status, cli) = fixture.run(
+            &[
+                "--format",
+                "json",
+                "backup",
+                "normalize-path",
+                "--path",
+                &input,
+            ],
+            "",
+        );
         assert!(status.success());
         let (status, mcp) = fixture.run(&["mcp", "serve"], &frame);
         assert!(status.success());
@@ -145,10 +200,23 @@ fn decoded_unicode_and_backslash_boundaries_agree_despite_larger_json_frames() {
         assert_eq!(mcp[1]["result"]["structuredContent"], cli[0]["data"]);
     }
     let too_large = "é".repeat(ai_toolbox_automation::MAX_PATH_BYTES / 2 + 1);
-    let (status, cli) = fixture.run(&["--format", "json", "backup", "normalize-path", "--path", &too_large], "");
+    let (status, cli) = fixture.run(
+        &[
+            "--format",
+            "json",
+            "backup",
+            "normalize-path",
+            "--path",
+            &too_large,
+        ],
+        "",
+    );
     assert_eq!(status.code(), Some(2));
     assert_eq!(cli[0]["ok"], false);
-    let (_, mcp) = fixture.run(&["mcp", "serve"], &session(&too_large).replace('é', "\\u00e9"));
+    let (_, mcp) = fixture.run(
+        &["mcp", "serve"],
+        &session(&too_large).replace('é', "\\u00e9"),
+    );
     assert_eq!(mcp[1]["error"]["code"], -32602);
 }
 
@@ -158,7 +226,18 @@ fn actual_service_expansion_rejection_is_not_reported_as_a_path() {
     let home = fixture.0.join("h".repeat(512));
     let input = "$HOME/".repeat(5000);
     assert!(input.len() < ai_toolbox_automation::MAX_PATH_BYTES);
-    let (status, cli) = fixture.run_with_home(&["--format", "json", "backup", "normalize-path", "--path", &input], "", home.clone());
+    let (status, cli) = fixture.run_with_home(
+        &[
+            "--format",
+            "json",
+            "backup",
+            "normalize-path",
+            "--path",
+            &input,
+        ],
+        "",
+        home.clone(),
+    );
     assert_eq!(status.code(), Some(2));
     assert_eq!(cli[0]["ok"], false);
     assert_eq!(cli[0]["data"], Value::Null);
@@ -167,15 +246,27 @@ fn actual_service_expansion_rejection_is_not_reported_as_a_path() {
     assert!(status.success());
     assert_eq!(mcp[1]["result"]["isError"], true);
     assert_eq!(mcp[1]["result"]["structuredContent"], Value::Null);
-    assert_eq!(mcp[1]["result"]["content"][0]["text"], cli[0]["error"]["message"]);
+    assert_eq!(
+        mcp[1]["result"]["content"][0]["text"],
+        cli[0]["error"]["message"]
+    );
 }
 
 #[test]
 fn nul_is_rejected_by_cli_parser_and_actual_mcp_before_path_service() {
     // OS argv cannot carry NUL. Exercise the real parser in-process instead
     // of pretending a spawned CLI received an impossible native argument.
-    let args: Vec<_> = ["--format", "json", "backup", "normalize-path", "--path", "fixture\0path"]
-        .iter().map(std::ffi::OsString::from).collect();
+    let args: Vec<_> = [
+        "--format",
+        "json",
+        "backup",
+        "normalize-path",
+        "--path",
+        "fixture\0path",
+    ]
+    .iter()
+    .map(std::ffi::OsString::from)
+    .collect();
     let response = ai_toolbox_automation::cli::run(&args);
     assert_eq!(response.envelope.exit_code(), 2);
     assert!(response.envelope.result.is_err());

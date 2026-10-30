@@ -1036,10 +1036,7 @@ pub async fn get_dsh_profile_patch_path_from_db_async(
         "profiles/{profile}/{}",
         crate::coding::dsh::constants::DSH_MCP_FILE
     );
-    Ok(config_dir
-        .join(&relative)
-        .exists()
-        .then_some(relative))
+    Ok(config_dir.join(&relative).exists().then_some(relative))
 }
 
 /// Resolve the dsh `.credentials.yaml` path if it exists on disk.
@@ -1219,7 +1216,10 @@ pub async fn list_backup_file_filter_path_options(
             let credentials_dir = host_path.join(kimi::constants::KIMI_CREDENTIALS_DIR);
             let mut relative_paths = Vec::new();
             if credentials_dir.is_dir() {
-                for entry in WalkDir::new(&credentials_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+                for entry in WalkDir::new(&credentials_dir)
+                    .into_iter()
+                    .filter_entry(backup_walk_entry_allowed)
+                {
                     let Ok(entry) = entry else {
                         continue;
                     };
@@ -1258,7 +1258,10 @@ pub async fn list_backup_file_filter_path_options(
         push_backup_filter_option(&mut options, &mut seen, "geminicli", "oauth_creds.json");
     }
     if let Some(tmp_dir) = get_gemini_cli_tmp_dir_from_db(db).await? {
-        for entry in WalkDir::new(&tmp_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+        for entry in WalkDir::new(&tmp_dir)
+            .into_iter()
+            .filter_entry(backup_walk_entry_allowed)
+        {
             let entry = entry.map_err(|e| format!("Failed to read Gemini CLI tmp entry: {}", e))?;
             let path = entry.path();
             if !path.is_file() || should_skip_system_file(path) {
@@ -1313,9 +1316,11 @@ pub async fn list_backup_file_filter_path_options(
         );
     }
     if let Some(skills_dir) = get_zcode_skills_dir_from_db(db).await? {
-        for entry in WalkDir::new(&skills_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
-            let entry =
-                entry.map_err(|e| format!("Failed to read ZCode skills entry: {}", e))?;
+        for entry in WalkDir::new(&skills_dir)
+            .into_iter()
+            .filter_entry(backup_walk_entry_allowed)
+        {
+            let entry = entry.map_err(|e| format!("Failed to read ZCode skills entry: {}", e))?;
             let path = entry.path();
             if !path.is_file() || should_skip_system_file(path) {
                 continue;
@@ -1335,7 +1340,10 @@ pub async fn list_backup_file_filter_path_options(
         }
     }
     if let Some(tmp_dir) = get_antigravity_tmp_dir_from_db(db).await? {
-        for entry in WalkDir::new(&tmp_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+        for entry in WalkDir::new(&tmp_dir)
+            .into_iter()
+            .filter_entry(backup_walk_entry_allowed)
+        {
             let entry =
                 entry.map_err(|e| format!("Failed to read Antigravity tmp entry: {}", e))?;
             let path = entry.path();
@@ -1451,7 +1459,10 @@ pub async fn list_backup_file_filter_path_options(
             );
         }
         if config_library_path.exists() {
-            for entry in WalkDir::new(&config_library_path).into_iter().filter_entry(backup_walk_entry_allowed) {
+            for entry in WalkDir::new(&config_library_path)
+                .into_iter()
+                .filter_entry(backup_walk_entry_allowed)
+            {
                 let entry = entry
                     .map_err(|e| format!("Failed to read Claude Desktop config library: {}", e))?;
                 let path = entry.path();
@@ -2147,7 +2158,10 @@ pub(crate) fn reject_coordination_output_path(path: &Path) -> Result<(), String>
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => return Err(format!("Failed to inspect restore path: {error}")),
                 }
-                match existing.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                match existing
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
                     Some(parent) => existing = parent,
                     None => return Ok(()),
                 }
@@ -2591,11 +2605,29 @@ fn copy_zip_entry_to_path<R: Read + std::io::Seek>(
 // Only these exact entries are consumed as root overrides by restore.rs.
 // Arbitrarily named root-dir.txt payloads remain ordinary, potentially binary data.
 fn is_external_root_override_entry(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("external-configs/") else { return false; };
-    let Some(tool) = rest.strip_suffix("/root-dir.txt") else { return false; };
-    matches!(tool, "opencode" | "claude" | "codex" | "grok" | "kimi" |
-        "openclaw" | "geminicli" | "antigravity" | "zcode" | "pi" |
-        "oh_my_pi" | "hermes" | "dsh" | "omo_native")
+    let Some(rest) = name.strip_prefix("external-configs/") else {
+        return false;
+    };
+    let Some(tool) = rest.strip_suffix("/root-dir.txt") else {
+        return false;
+    };
+    matches!(
+        tool,
+        "opencode"
+            | "claude"
+            | "codex"
+            | "grok"
+            | "kimi"
+            | "openclaw"
+            | "geminicli"
+            | "antigravity"
+            | "zcode"
+            | "pi"
+            | "oh_my_pi"
+            | "hermes"
+            | "dsh"
+            | "omo_native"
+    )
 }
 
 /// Read-only validation must precede DB restore, staging, mkdir and extraction.
@@ -2606,7 +2638,8 @@ pub(crate) fn preflight_backup_coordination_paths<R: Read + Seek>(
     let mut manifest_content = None;
     let mut names = Vec::new();
     for index in 0..archive.len() {
-        let mut file = archive.by_index(index)
+        let mut file = archive
+            .by_index(index)
             .map_err(|e| format!("Failed to inspect backup entry: {e}"))?;
         let name = normalize_restore_entry_name(file.name());
         reject_coordination_path(&name)?;
@@ -2634,7 +2667,10 @@ pub(crate) fn preflight_backup_coordination_paths<R: Read + Seek>(
         let manifest: CustomBackupManifest = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse custom backup manifest: {e}"))?;
         if manifest.version != 1 {
-            return Err(format!("Unsupported custom backup manifest version: {}", manifest.version));
+            return Err(format!(
+                "Unsupported custom backup manifest version: {}",
+                manifest.version
+            ));
         }
         for entry in manifest.entries {
             let target = resolve_backup_storage_path(&entry.restore_path)?;
@@ -2805,7 +2841,10 @@ pub fn add_image_assets_to_zip<W: Write + std::io::Seek>(
     zip.add_directory("image-studio/assets/", options)
         .map_err(|e| format!("Failed to add image assets directory: {}", e))?;
 
-    for entry in WalkDir::new(&image_assets_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+    for entry in WalkDir::new(&image_assets_dir)
+        .into_iter()
+        .filter_entry(backup_walk_entry_allowed)
+    {
         let entry = entry.map_err(|e| format!("Failed to read image asset entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -2849,7 +2888,10 @@ pub fn add_directory_contents_to_zip<W: Write + std::io::Seek>(
     zip.add_directory(format!("{}/", normalized_prefix), options)
         .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
 
-    for entry in WalkDir::new(source_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+    for entry in WalkDir::new(source_dir)
+        .into_iter()
+        .filter_entry(backup_walk_entry_allowed)
+    {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -2915,7 +2957,10 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
     let mut has_files = false;
 
     // Add database files under db/ prefix
-    for entry in WalkDir::new(db_path).into_iter().filter_entry(backup_walk_entry_allowed) {
+    for entry in WalkDir::new(db_path)
+        .into_iter()
+        .filter_entry(backup_walk_entry_allowed)
+    {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -3082,7 +3127,10 @@ fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
     zip.add_directory(format!("{}/", normalized_zip_prefix), options)
         .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
 
-    for entry in WalkDir::new(source_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+    for entry in WalkDir::new(source_dir)
+        .into_iter()
+        .filter_entry(backup_walk_entry_allowed)
+    {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
         let relative_path = path
@@ -4080,7 +4128,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         zip.add_directory("skills/", options)
             .map_err(|e| format!("Failed to add skills directory: {}", e))?;
 
-        for entry in WalkDir::new(&skills_dir).into_iter().filter_entry(backup_walk_entry_allowed) {
+        for entry in WalkDir::new(&skills_dir)
+            .into_iter()
+            .filter_entry(backup_walk_entry_allowed)
+        {
             let entry = entry.map_err(|e| format!("Failed to read skills entry: {}", e))?;
             let path = entry.path();
             let relative_path = path
@@ -4190,12 +4241,11 @@ mod tests {
         is_filesystem_root_directory, is_optional_backup_cli_tool, normalize_backup_custom_entry,
         normalize_backup_storage_path, normalize_restore_entry_name,
         opencode_v2_marker_backup_entry, parse_post_restore_resync_wsl_modules,
-        record_restored_external_config_wsl_module,
-        resolve_external_config_restore_output_path, restore_custom_backup_entries,
-        should_exclude_from_backup, should_filter_external_config_entry,
-        should_reapply_applied_runtime, should_skip_external_config_on_restore,
-        should_use_backup_root_overrides, should_use_root_override_for_tool,
-        CUSTOM_BACKUP_MANIFEST_PATH, SQLITE_BACKUP_ZIP_PATH,
+        record_restored_external_config_wsl_module, resolve_external_config_restore_output_path,
+        restore_custom_backup_entries, should_exclude_from_backup,
+        should_filter_external_config_entry, should_reapply_applied_runtime,
+        should_skip_external_config_on_restore, should_use_backup_root_overrides,
+        should_use_root_override_for_tool, CUSTOM_BACKUP_MANIFEST_PATH, SQLITE_BACKUP_ZIP_PATH,
     };
     // Used by unix-only permission hardening tests.
     #[cfg(unix)]
@@ -4214,30 +4264,60 @@ mod tests {
     #[test]
     fn coordination_source_pruning_keeps_ordinary_dotfiles_and_near_matches() {
         let source = tempfile::tempdir().unwrap();
-        for name in [".env", ".mcp.json", ".ai-toolbox-owner-note.sock", ".ai-toolbox-runtime.lock.backup"] {
+        for name in [
+            ".env",
+            ".mcp.json",
+            ".ai-toolbox-owner-note.sock",
+            ".ai-toolbox-runtime.lock.backup",
+        ] {
             fs::write(source.path().join(name), b"ordinary").unwrap();
         }
         fs::write(source.path().join(".ai-toolbox-owner.lock"), b"private").unwrap();
         let nested = source.path().join(".ai-toolbox-runtime.lock");
         fs::create_dir(&nested).unwrap();
         fs::write(nested.join("never-copy"), b"private").unwrap();
-        fs::write(source.path().join(".ai-toolbox-owner-0000000000000001-0000000000000002.sock"), b"private").unwrap();
+        fs::write(
+            source
+                .path()
+                .join(".ai-toolbox-owner-0000000000000001-0000000000000002.sock"),
+            b"private",
+        )
+        .unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink("missing", source.path().join("nested-link")).unwrap();
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-        super::add_directory_contents_to_zip(&mut zip, source.path(), "fixture", SimpleFileOptions::default()).unwrap();
+        super::add_directory_contents_to_zip(
+            &mut zip,
+            source.path(),
+            "fixture",
+            SimpleFileOptions::default(),
+        )
+        .unwrap();
         let bytes = zip.finish().unwrap().into_inner();
         let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
-        let names: Vec<_> = (0..archive.len()).map(|index| archive.by_index(index).unwrap().name().to_string()).collect();
-        assert!(names.iter().all(|name| !ai_toolbox_management::coordination::contains_coordination_component(name)));
-        for name in [".env", ".mcp.json", ".ai-toolbox-owner-note.sock", ".ai-toolbox-runtime.lock.backup"] {
+        let names: Vec<_> = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_string())
+            .collect();
+        assert!(names.iter().all(|name| {
+            !ai_toolbox_management::coordination::contains_coordination_component(name)
+        }));
+        for name in [
+            ".env",
+            ".mcp.json",
+            ".ai-toolbox-owner-note.sock",
+            ".ai-toolbox-runtime.lock.backup",
+        ] {
             assert!(names.contains(&format!("fixture/{name}")));
         }
     }
 
     #[test]
     fn forged_archive_and_custom_target_are_rejected_before_any_write() {
-        for reserved in [".ai-toolbox-owner.lock", ".ai-toolbox-runtime.lock", ".ai-toolbox-owner-0000000000000001-0000000000000002.sock"] {
+        for reserved in [
+            ".ai-toolbox-owner.lock",
+            ".ai-toolbox-runtime.lock",
+            ".ai-toolbox-owner-0000000000000001-0000000000000002.sock",
+        ] {
             let target = tempfile::tempdir().unwrap();
             let lock = target.path().join(reserved);
             fs::write(&lock, b"unchanged coordination").unwrap();
@@ -4246,20 +4326,45 @@ mod tests {
                 "id": "forged", "name": "fixture", "entry_type": "file",
                 "source_path": "synthetic", "restore_path": lock.to_string_lossy(),
                 "payload_path": "custom-backup/payload/ordinary"
-            }]}).to_string();
+            }]})
+            .to_string();
             let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-            add_text_to_zip(&mut zip, CUSTOM_BACKUP_MANIFEST_PATH, &manifest, SimpleFileOptions::default()).unwrap();
-            add_text_to_zip(&mut zip, "custom-backup/payload/ordinary", "replacement", SimpleFileOptions::default()).unwrap();
-            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
-            assert_eq!(restore_custom_backup_entries(&mut archive).unwrap_err(), "OWNER_COORDINATION_PATH_RESERVED");
+            add_text_to_zip(
+                &mut zip,
+                CUSTOM_BACKUP_MANIFEST_PATH,
+                &manifest,
+                SimpleFileOptions::default(),
+            )
+            .unwrap();
+            add_text_to_zip(
+                &mut zip,
+                "custom-backup/payload/ordinary",
+                "replacement",
+                SimpleFileOptions::default(),
+            )
+            .unwrap();
+            let mut archive =
+                ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            assert_eq!(
+                restore_custom_backup_entries(&mut archive).unwrap_err(),
+                "OWNER_COORDINATION_PATH_RESERVED"
+            );
             assert_eq!(fs::read(&lock).unwrap(), b"unchanged coordination");
-            #[cfg(unix)] {
+            #[cfg(unix)]
+            {
                 use std::os::unix::fs::MetadataExt;
                 assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
             }
             let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-            add_text_to_zip(&mut zip, &format!("db\\{reserved}\\payload"), "forged", SimpleFileOptions::default()).unwrap();
-            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            add_text_to_zip(
+                &mut zip,
+                &format!("db\\{reserved}\\payload"),
+                "forged",
+                SimpleFileOptions::default(),
+            )
+            .unwrap();
+            let mut archive =
+                ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
             assert!(super::preflight_backup_coordination_paths(&mut archive).is_err());
         }
     }
@@ -4273,31 +4378,60 @@ mod tests {
         let bytes = b"\xff\x00 ordinary .ai-toolbox-owner.lock data";
         fs::write(&source, bytes).unwrap();
         let entries = vec![BackupCustomEntry {
-            id: "binary-root-name".into(), name: "Synthetic binary".into(),
+            id: "binary-root-name".into(),
+            name: "Synthetic binary".into(),
             source_path: source.to_string_lossy().into_owned(),
             restore_path: Some(target.to_string_lossy().into_owned()),
-            entry_type: BackupCustomEntryType::File, enabled: true,
+            entry_type: BackupCustomEntryType::File,
+            enabled: true,
             exclude_patterns: Vec::new(),
         }];
         let mut archive = ZipArchive::new(Cursor::new(build_zip(&entries))).unwrap();
         restore_custom_backup_entries(&mut archive).unwrap();
         assert_eq!(fs::read(&target).unwrap(), bytes);
-        for name in ["skills/ordinary/root-dir.txt", "external-configs/codex/nested/root-dir.txt",
-                     "external-configs/unknown/root-dir.txt", "external-configs/claude_desktop/root-dir.txt"] {
+        for name in [
+            "skills/ordinary/root-dir.txt",
+            "external-configs/codex/nested/root-dir.txt",
+            "external-configs/unknown/root-dir.txt",
+            "external-configs/claude_desktop/root-dir.txt",
+        ] {
             let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
             zip.start_file(name, SimpleFileOptions::default()).unwrap();
             zip.write_all(bytes).unwrap();
-            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            let mut archive =
+                ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
             super::preflight_backup_coordination_paths(&mut archive).unwrap();
         }
-        for tool in ["opencode", "claude", "codex", "grok", "kimi", "openclaw", "geminicli",
-                     "antigravity", "zcode", "pi", "oh_my_pi", "hermes", "dsh", "omo_native"] {
+        for tool in [
+            "opencode",
+            "claude",
+            "codex",
+            "grok",
+            "kimi",
+            "openclaw",
+            "geminicli",
+            "antigravity",
+            "zcode",
+            "pi",
+            "oh_my_pi",
+            "hermes",
+            "dsh",
+            "omo_native",
+        ] {
             let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-            add_text_to_zip(&mut zip, &format!("external-configs/{tool}/root-dir.txt"),
-                "/synthetic/.ai-toolbox-owner.lock", SimpleFileOptions::default()).unwrap();
-            let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
-            assert_eq!(super::preflight_backup_coordination_paths(&mut archive).unwrap_err(),
-                "OWNER_COORDINATION_PATH_RESERVED");
+            add_text_to_zip(
+                &mut zip,
+                &format!("external-configs/{tool}/root-dir.txt"),
+                "/synthetic/.ai-toolbox-owner.lock",
+                SimpleFileOptions::default(),
+            )
+            .unwrap();
+            let mut archive =
+                ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+            assert_eq!(
+                super::preflight_backup_coordination_paths(&mut archive).unwrap_err(),
+                "OWNER_COORDINATION_PATH_RESERVED"
+            );
         }
     }
 
@@ -4318,7 +4452,8 @@ mod tests {
                     "id": "forged", "name": "fixture", "entry_type": "file",
                     "source_path": "synthetic", "restore_path": lock.to_string_lossy(),
                     "payload_path": "custom-backup/payload/ordinary"
-                }]}).to_string();
+                }]})
+                .to_string();
                 let benign = serde_json::json!({"version": 1, "entries": []}).to_string();
                 let contents = if malicious_first {
                     [&malicious, &benign]
@@ -4329,22 +4464,34 @@ mod tests {
                 for (name, content) in names.into_iter().zip(contents) {
                     add_text_to_zip(&mut zip, name, content, SimpleFileOptions::default()).unwrap();
                 }
-                let mut archive = ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
+                let mut archive =
+                    ZipArchive::new(Cursor::new(zip.finish().unwrap().into_inner())).unwrap();
                 assert_eq!(archive.len(), 2);
                 for (index, expected) in names.into_iter().enumerate() {
                     assert_eq!(archive.by_index(index).unwrap().name(), expected);
                 }
-                assert_eq!(super::find_zip_entry_by_normalized_name(&mut archive, CUSTOM_BACKUP_MANIFEST_PATH), Some(names[0].to_string()));
+                assert_eq!(
+                    super::find_zip_entry_by_normalized_name(
+                        &mut archive,
+                        CUSTOM_BACKUP_MANIFEST_PATH
+                    ),
+                    Some(names[0].to_string())
+                );
                 // The production restore invokes this preflight before SQLite
                 // restore; this local sink proves that rejection short-circuits.
-                let result = super::preflight_backup_coordination_paths(&mut archive)
-                    .and_then(|()| fs::write(&database, b"must not restore")
-                        .map_err(|error| error.to_string()));
+                let result =
+                    super::preflight_backup_coordination_paths(&mut archive).and_then(|()| {
+                        fs::write(&database, b"must not restore").map_err(|error| error.to_string())
+                    });
                 assert_eq!(result.unwrap_err(), "OWNER_CUSTOM_MANIFEST_AMBIGUOUS");
-                assert_eq!(restore_custom_backup_entries(&mut archive).unwrap_err(), "OWNER_CUSTOM_MANIFEST_AMBIGUOUS");
+                assert_eq!(
+                    restore_custom_backup_entries(&mut archive).unwrap_err(),
+                    "OWNER_CUSTOM_MANIFEST_AMBIGUOUS"
+                );
                 assert_eq!(fs::read(&database).unwrap(), b"unchanged database");
                 assert_eq!(fs::read(&lock).unwrap(), b"unchanged coordination");
-                #[cfg(unix)] {
+                #[cfg(unix)]
+                {
                     use std::os::unix::fs::MetadataExt;
                     assert_eq!(before.ino(), fs::metadata(&lock).unwrap().ino());
                 }
@@ -4848,7 +4995,10 @@ mod tests {
             }];
             let excluded = should_filter_external_config_entry(&rules, "opencode", config_name);
             assert!(excluded, "real path normalization must match {config_name}");
-            assert_eq!(opencode_v2_marker_backup_entry(&config_path, excluded), None);
+            assert_eq!(
+                opencode_v2_marker_backup_entry(&config_path, excluded),
+                None
+            );
             assert!(!should_filter_external_config_entry(
                 &rules,
                 "opencode",
@@ -4943,8 +5093,7 @@ mod tests {
         let source = tempfile::tempdir().expect("source");
         let config = source.path().join("opencode.jsonc");
         fs::write(&config, r#"{"providers":{}}"#).expect("config");
-        fs::write(source.path().join("openvode_v1.jsonc"), "original v1 bytes")
-            .expect("marker");
+        fs::write(source.path().join("openvode_v1.jsonc"), "original v1 bytes").expect("marker");
         let marker_rule = vec![BackupFileFilterRule {
             tool: "opencode".to_string(),
             file_path: "~/.config/opencode/openvode_v1.jsonc".to_string(),
@@ -4969,8 +5118,12 @@ mod tests {
             .expect("apply actual writer filter");
         }
         let mut archive = ZipArchive::new(zip.finish().expect("finish zip")).expect("archive");
-        assert!(archive.by_name("external-configs/opencode/opencode.jsonc").is_ok());
-        assert!(archive.by_name("external-configs/opencode/openvode_v1.jsonc").is_err());
+        assert!(archive
+            .by_name("external-configs/opencode/opencode.jsonc")
+            .is_ok());
+        assert!(archive
+            .by_name("external-configs/opencode/openvode_v1.jsonc")
+            .is_err());
     }
 
     #[test]
@@ -5094,11 +5247,7 @@ mod tests {
             "zcode",
             "v2/provider_config.json"
         ));
-        assert!(!should_exclude_from_backup(
-            &rules,
-            "zcode",
-            "AGENTS.md"
-        ));
+        assert!(!should_exclude_from_backup(&rules, "zcode", "AGENTS.md"));
     }
 
     #[test]
@@ -6008,7 +6157,8 @@ mod tests {
 
         const CHILD_ROOT: &str = "AI_TOOLBOX_RESTORE_ROLLBACK_TEST_ROOT";
         const CHILD_TOKEN: &str = "AI_TOOLBOX_RESTORE_ROLLBACK_TEST_TOKEN";
-        let child = std::env::args().any(|arg| arg == "--exact") && std::env::var(CHILD_TOKEN).is_ok();
+        let child =
+            std::env::args().any(|arg| arg == "--exact") && std::env::var(CHILD_TOKEN).is_ok();
         // A normal suite invocation never trusts an inherited root variable.
         if !child {
             let root = tempfile::Builder::new()
@@ -6041,7 +6191,9 @@ mod tests {
                 let stop_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                 loop {
                     match process.try_wait() {
-                        Ok(Some(status)) => return (true, format!("kill={killed:?}; exited={status}")),
+                        Ok(Some(status)) => {
+                            return (true, format!("kill={killed:?}; exited={status}"))
+                        }
                         Ok(None) if std::time::Instant::now() < stop_deadline => {
                             std::thread::sleep(std::time::Duration::from_millis(50))
                         }
@@ -6112,7 +6264,8 @@ mod tests {
             );
             return Ok(());
         }
-        let raw_root = PathBuf::from(std::env::var_os(CHILD_ROOT).ok_or("missing owned child root")?);
+        let raw_root =
+            PathBuf::from(std::env::var_os(CHILD_ROOT).ok_or("missing owned child root")?);
         assert!(!std::fs::symlink_metadata(&raw_root)
             .map_err(|e| e.to_string())?
             .file_type()

@@ -112,7 +112,10 @@ impl Operation {
     /// Context owner readiness is deliberately not inferred by discovery.
     pub fn supported(self) -> bool {
         match self {
-            Self::CodexStatus | Self::ContextInspect | Self::ContextSet | Self::ContextRequestStatus => false,
+            Self::CodexStatus
+            | Self::ContextInspect
+            | Self::ContextSet
+            | Self::ContextRequestStatus => false,
             Self::DaemonStatus => cfg!(target_os = "linux"),
             _ => true,
         }
@@ -156,7 +159,8 @@ impl Command {
 pub struct BackupPathInput(String);
 impl BackupPathInput {
     pub fn new(path: String) -> Result<Self, OperationError> {
-        ai_toolbox_paths::validate_backup_path_input(&path).map_err(|_| OperationError::invalid_input())?;
+        ai_toolbox_paths::validate_backup_path_input(&path)
+            .map_err(|_| OperationError::invalid_input())?;
         Ok(Self(path))
     }
 }
@@ -172,7 +176,10 @@ impl OwnerStatusInput {
         if !profile.is_absolute() || !endpoint_dir.is_absolute() {
             return Err(OperationError::invalid_input());
         }
-        Ok(Self { profile, endpoint_dir })
+        Ok(Self {
+            profile,
+            endpoint_dir,
+        })
     }
 }
 
@@ -186,8 +193,13 @@ pub struct ContextSetInput {
 
 #[cfg(target_os = "linux")]
 impl ContextSetInput {
-    pub fn new(owner: OwnerStatusInput, request: ai_toolbox_management::transport::ContextSetRequest) -> Result<Self, OperationError> {
-        request.validate().map_err(|_| OperationError::invalid_input())?;
+    pub fn new(
+        owner: OwnerStatusInput,
+        request: ai_toolbox_management::transport::ContextSetRequest,
+    ) -> Result<Self, OperationError> {
+        request
+            .validate()
+            .map_err(|_| OperationError::invalid_input())?;
         Ok(Self { owner, request })
     }
 }
@@ -201,8 +213,11 @@ pub struct ContextRequestStatusInput {
 impl ContextRequestStatusInput {
     pub fn new(owner: OwnerStatusInput, request_id: String) -> Result<Self, OperationError> {
         #[cfg(target_os = "linux")]
-        ai_toolbox_management::transport::ContextRequestStatusRequest { request_id: request_id.clone() }
-            .validate().map_err(|_| OperationError::invalid_input())?;
+        ai_toolbox_management::transport::ContextRequestStatusRequest {
+            request_id: request_id.clone(),
+        }
+        .validate()
+        .map_err(|_| OperationError::invalid_input())?;
         Ok(Self { owner, request_id })
     }
 }
@@ -354,18 +369,26 @@ pub fn execute(command: Command) -> Envelope {
             retryable: false,
             message: "Codex business services are not connected in this foundation.",
         }),
-        Command::BackupNormalizePath(input) => ai_toolbox_paths::normalize_backup_path_request(&input.0)
-            .map(Data::BackupPath).map_err(|error| OperationError {
-                code: ErrorCode::InvalidInput, stage: Stage::Dispatch, retryable: false,
-                message: error.message(),
-            }),
-        Command::DaemonStatus(input) => owner_status(input).map(Data::OwnerStatus),
-        command @ (Command::ContextInspect(_) | Command::ContextSet(_) | Command::ContextRequestStatus(_)) => {
-            match context_dispatch(command) {
-                Ok(data) => Ok(data),
-                Err((error, metadata)) => { partial = metadata; Err(error) }
-            }
+        Command::BackupNormalizePath(input) => {
+            ai_toolbox_paths::normalize_backup_path_request(&input.0)
+                .map(Data::BackupPath)
+                .map_err(|error| OperationError {
+                    code: ErrorCode::InvalidInput,
+                    stage: Stage::Dispatch,
+                    retryable: false,
+                    message: error.message(),
+                })
         }
+        Command::DaemonStatus(input) => owner_status(input).map(Data::OwnerStatus),
+        command @ (Command::ContextInspect(_)
+        | Command::ContextSet(_)
+        | Command::ContextRequestStatus(_)) => match context_dispatch(command) {
+            Ok(data) => Ok(data),
+            Err((error, metadata)) => {
+                partial = metadata;
+                Err(error)
+            }
+        },
     };
     Envelope {
         operation: Some(operation),
@@ -404,12 +427,22 @@ fn owner_status(input: OwnerStatusInput) -> Result<OwnerStatusData, OperationErr
             .await
             .map_err(owner_error)?;
         let status = client.owner_status().await.map_err(owner_error)?;
-        Ok(OwnerStatusData { profile_lease_held: status.profile_lease_held })
+        Ok(OwnerStatusData {
+            profile_lease_held: status.profile_lease_held,
+        })
     })
 }
 
 #[cfg(target_os = "linux")]
-fn existing_owner_paths(input: OwnerStatusInput) -> Result<(ai_toolbox_management::owner::ProfileIdentity, ai_toolbox_management::owner::RuntimeDirectory), OperationError> {
+fn existing_owner_paths(
+    input: OwnerStatusInput,
+) -> Result<
+    (
+        ai_toolbox_management::owner::ProfileIdentity,
+        ai_toolbox_management::owner::RuntimeDirectory,
+    ),
+    OperationError,
+> {
     use ai_toolbox_management::owner::{ProfileIdentity, RuntimeDirectory};
     // These existing-only helpers retain and recheck physical directory identity.
     // Do not substitute owner acquisition, storage initialization, or a fallback.
@@ -442,27 +475,55 @@ fn client_failure() -> OperationError {
 fn owner_error(error: ai_toolbox_management::Error) -> OperationError {
     use ai_toolbox_management::Error;
     let (code, retryable, message) = match error {
-        Error::OwnerUnavailable => (ErrorCode::OwnerUnavailable, true, "The existing owner endpoint is unavailable; no owner was started."),
-        Error::ProtocolMismatch | Error::InvalidMessage | Error::FrameTooLarge => (ErrorCode::OwnerProtocolRejected, false, "The owner protocol response was incompatible or invalid."),
-        Error::PeerRejected | Error::StaleOwner | Error::IdentityChanged | Error::EndpointConflict
-            | Error::InvalidProfile | Error::UnsafeDirectory => (ErrorCode::OwnerIdentityRejected, false, "The owner, profile, or endpoint identity could not be verified."),
-        Error::TimedOut => (ErrorCode::OwnerTimeout, true, "The local owner-status request timed out."),
+        Error::OwnerUnavailable => (
+            ErrorCode::OwnerUnavailable,
+            true,
+            "The existing owner endpoint is unavailable; no owner was started.",
+        ),
+        Error::ProtocolMismatch | Error::InvalidMessage | Error::FrameTooLarge => (
+            ErrorCode::OwnerProtocolRejected,
+            false,
+            "The owner protocol response was incompatible or invalid.",
+        ),
+        Error::PeerRejected
+        | Error::StaleOwner
+        | Error::IdentityChanged
+        | Error::EndpointConflict
+        | Error::InvalidProfile
+        | Error::UnsafeDirectory => (
+            ErrorCode::OwnerIdentityRejected,
+            false,
+            "The owner, profile, or endpoint identity could not be verified.",
+        ),
+        Error::TimedOut => (
+            ErrorCode::OwnerTimeout,
+            true,
+            "The local owner-status request timed out.",
+        ),
         // Never format raw I/O or protocol errors into public diagnostics.
         _ => return client_failure(),
     };
-    OperationError { code, stage: Stage::Connect, retryable, message }
+    OperationError {
+        code,
+        stage: Stage::Connect,
+        retryable,
+        message,
+    }
 }
 
 type ContextDispatch = Result<Data, (OperationError, Option<Data>)>;
 
 #[cfg(not(target_os = "linux"))]
 fn context_dispatch(_command: Command) -> ContextDispatch {
-    Err((OperationError {
-        code: ErrorCode::NotSupported,
-        stage: Stage::Dispatch,
-        retryable: false,
-        message: "The local context client is supported only on Linux; no owner was contacted.",
-    }, None))
+    Err((
+        OperationError {
+            code: ErrorCode::NotSupported,
+            stage: Stage::Dispatch,
+            retryable: false,
+            message: "The local context client is supported only on Linux; no owner was contacted.",
+        },
+        None,
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -484,21 +545,40 @@ fn context_dispatch(command: Command) -> ContextDispatch {
     let (profile, endpoint) = existing_owner_paths(paths).map_err(|error| (error, None))?;
     // Only the synchronous console owns this runtime. No database or service
     // owner is initialized; one connection performs one explicit operation.
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
-        .map_err(|_| (OperationError {
-            message: "The local context owner client could not start; no operation was sent.",
-            ..client_failure()
-        }, None))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| {
+            (
+                OperationError {
+                    message:
+                        "The local context owner client could not start; no operation was sent.",
+                    ..client_failure()
+                },
+                None,
+            )
+        })?;
     runtime.block_on(async {
-        let client = OwnerClient::connect(&profile, &endpoint, 1).await
+        let client = OwnerClient::connect(&profile, &endpoint, 1)
+            .await
             .map_err(|error| (context_owner_error(error), None))?;
         match operation {
-            OwnerOperation::ContextInspect => client.context_inspect().await
-                .map(Data::ContextInspection).map_err(context_client_error),
-            OwnerOperation::ContextSet(_) => unreachable!("ContextSet is rejected before path or connection I/O"),
-            OwnerOperation::ContextRequestStatus(request) => client.context_request_status(request.request_id).await
-                .map_err(context_client_error).and_then(context_outcome),
-            OwnerOperation::OwnerStatus | OwnerOperation::OwnerCapabilities => unreachable!("closed context command dispatch"),
+            OwnerOperation::ContextInspect => client
+                .context_inspect()
+                .await
+                .map(Data::ContextInspection)
+                .map_err(context_client_error),
+            OwnerOperation::ContextSet(_) => {
+                unreachable!("ContextSet is rejected before path or connection I/O")
+            }
+            OwnerOperation::ContextRequestStatus(request) => client
+                .context_request_status(request.request_id)
+                .await
+                .map_err(context_client_error)
+                .and_then(context_outcome),
+            OwnerOperation::OwnerStatus | OwnerOperation::OwnerCapabilities => {
+                unreachable!("closed context command dispatch")
+            }
         }
     })
 }
@@ -510,15 +590,21 @@ fn context_owner_error(error: ai_toolbox_management::Error) -> OperationError {
     // from a generic consumer. The caller must explicitly choose its next action.
     error.retryable = false;
     error.message = match error.code {
-        ErrorCode::OwnerTimeout => "The context owner connection timed out before a confirmed response.",
-        ErrorCode::OwnerClientFailed => "The local context owner client failed; no write outcome is asserted.",
+        ErrorCode::OwnerTimeout => {
+            "The context owner connection timed out before a confirmed response."
+        }
+        ErrorCode::OwnerClientFailed => {
+            "The local context owner client failed; no write outcome is asserted."
+        }
         _ => error.message,
     };
     error
 }
 
 #[cfg(target_os = "linux")]
-fn context_client_error(error: ai_toolbox_management::transport::ContextClientError) -> (OperationError, Option<Data>) {
+fn context_client_error(
+    error: ai_toolbox_management::transport::ContextClientError,
+) -> (OperationError, Option<Data>) {
     use ai_toolbox_management::transport::{ContextClientError, ContextErrorCode};
     match error {
         ContextClientError::Owner(error) => (context_owner_error(error), None),
@@ -575,7 +661,10 @@ impl Envelope {
         let (data, error) = match &self.result {
             Ok(data) => (data.to_json(), "null".into()),
             Err(error) => (
-                self.partial.as_ref().map(Data::to_json).unwrap_or_else(|| "null".into()),
+                self.partial
+                    .as_ref()
+                    .map(Data::to_json)
+                    .unwrap_or_else(|| "null".into()),
                 format!(
                     "{{\"code\":{},\"stage\":{},\"retryable\":{},\"message\":{}}}",
                     json_string(error.code.as_str()),
@@ -587,10 +676,21 @@ impl Envelope {
         };
         // Discovery/status retain null. A validated context ID identifies the
         // requested operation but is not a claim that the owner committed it.
-        let request_id = self.request_id.as_deref().map(json_string).unwrap_or_else(|| "null".into());
-        let warnings = if matches!(self.operation, Some(Operation::ContextInspect | Operation::ContextSet | Operation::ContextRequestStatus)) {
+        let request_id = self
+            .request_id
+            .as_deref()
+            .map(json_string)
+            .unwrap_or_else(|| "null".into());
+        let warnings = if matches!(
+            self.operation,
+            Some(
+                Operation::ContextInspect | Operation::ContextSet | Operation::ContextRequestStatus
+            )
+        ) {
             "[\"Context inspection describes merged master overrides, not model defaults or active client state. Recorded verification is historical, not proof of current runtime state or client reload.\"]"
-        } else { "[]" };
+        } else {
+            "[]"
+        };
         format!("{{\"schema_version\":{SCHEMA_VERSION},\"operation\":{operation},\"request_id\":{request_id},\"ok\":{},\"data\":{data},\"warnings\":{warnings},\"error\":{error}}}", self.result.is_ok())
     }
 
@@ -679,31 +779,44 @@ impl Data {
 
 #[cfg(target_os = "linux")]
 fn optional_number(value: Option<u64>) -> String {
-    value.map(|number| number.to_string()).unwrap_or_else(|| "null".into())
+    value
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "null".into())
 }
 
 #[cfg(target_os = "linux")]
 fn context_override_json(value: &ai_toolbox_management::transport::ContextOverride) -> String {
     use ai_toolbox_management::transport::ContextSource;
     let source = match value.source {
-        ContextSource::Common => "common", ContextSource::Provider => "provider", ContextSource::Unspecified => "unspecified",
+        ContextSource::Common => "common",
+        ContextSource::Provider => "provider",
+        ContextSource::Unspecified => "unspecified",
     };
-    format!("{{\"effective\":{},\"source\":{}}}", optional_number(value.effective), json_string(source))
+    format!(
+        "{{\"effective\":{},\"source\":{}}}",
+        optional_number(value.effective),
+        json_string(source)
+    )
 }
 
 #[cfg(target_os = "linux")]
 fn context_phase_name(phase: ai_toolbox_management::transport::ContextPhase) -> &'static str {
     use ai_toolbox_management::transport::ContextPhase;
     match phase {
-        ContextPhase::SavedOnly => "saved_only", ContextPhase::ProjectionStarted => "projection_started",
-        ContextPhase::ProjectedUnverified => "projected_unverified", ContextPhase::Verified => "verified",
+        ContextPhase::SavedOnly => "saved_only",
+        ContextPhase::ProjectionStarted => "projection_started",
+        ContextPhase::ProjectedUnverified => "projected_unverified",
+        ContextPhase::Verified => "verified",
         ContextPhase::ProjectionUncertain => "projection_uncertain",
     }
 }
 
 #[cfg(target_os = "linux")]
 fn context_outcome_json(value: &ai_toolbox_management::transport::ContextOutcome) -> String {
-    let failure = value.failure.map(|failure| json_string(context_failure_name(failure))).unwrap_or_else(|| "null".into());
+    let failure = value
+        .failure
+        .map(|failure| json_string(context_failure_name(failure)))
+        .unwrap_or_else(|| "null".into());
     format!("{{\"request_id\":{},\"provider_id\":{},\"phase\":{},\"failure\":{failure},\"replay\":{},\"model_context_window\":{},\"model_auto_compact_token_limit\":{},\"verification_scope\":\"config_file_at_operation_time\"}}",
         json_string(&value.request_id), json_string(&value.provider_id), json_string(context_phase_name(value.phase)), value.replay,
         optional_number(value.model_context_window), optional_number(value.model_auto_compact_token_limit))
@@ -715,7 +828,8 @@ fn context_failure_name(failure: ai_toolbox_management::transport::ContextFailur
     match failure {
         ContextFailure::ProjectionPreflightFailed => "projection_preflight_failed",
         ContextFailure::ProjectionOutcomeUnknown => "projection_outcome_unknown",
-        ContextFailure::ReadbackFailed => "readback_failed", ContextFailure::ReadbackMismatch => "readback_mismatch",
+        ContextFailure::ReadbackFailed => "readback_failed",
+        ContextFailure::ReadbackMismatch => "readback_mismatch",
     }
 }
 
@@ -723,13 +837,20 @@ fn context_failure_name(failure: ai_toolbox_management::transport::ContextFailur
 fn context_error_name(code: ai_toolbox_management::transport::ContextErrorCode) -> &'static str {
     use ai_toolbox_management::transport::ContextErrorCode;
     match code {
-        ContextErrorCode::Unsupported => "unsupported", ContextErrorCode::InvalidRequest => "invalid_request",
-        ContextErrorCode::RequestNotFound => "request_not_found", ContextErrorCode::Ownership => "ownership",
-        ContextErrorCode::Storage => "storage", ContextErrorCode::InvalidMaster => "invalid_master",
-        ContextErrorCode::ProviderChanged => "provider_changed", ContextErrorCode::RevisionConflict => "revision_conflict",
-        ContextErrorCode::RuntimeUnsupported => "runtime_unsupported", ContextErrorCode::FileUnavailable => "file_unavailable",
-        ContextErrorCode::JournalConflict => "journal_conflict", ContextErrorCode::JournalInvalid => "journal_invalid",
-        ContextErrorCode::PersistenceUncertain => "persistence_uncertain", ContextErrorCode::PhasePersistence => "phase_persistence",
+        ContextErrorCode::Unsupported => "unsupported",
+        ContextErrorCode::InvalidRequest => "invalid_request",
+        ContextErrorCode::RequestNotFound => "request_not_found",
+        ContextErrorCode::Ownership => "ownership",
+        ContextErrorCode::Storage => "storage",
+        ContextErrorCode::InvalidMaster => "invalid_master",
+        ContextErrorCode::ProviderChanged => "provider_changed",
+        ContextErrorCode::RevisionConflict => "revision_conflict",
+        ContextErrorCode::RuntimeUnsupported => "runtime_unsupported",
+        ContextErrorCode::FileUnavailable => "file_unavailable",
+        ContextErrorCode::JournalConflict => "journal_conflict",
+        ContextErrorCode::JournalInvalid => "journal_invalid",
+        ContextErrorCode::PersistenceUncertain => "persistence_uncertain",
+        ContextErrorCode::PhasePersistence => "phase_persistence",
         ContextErrorCode::Interrupted => "interrupted",
     }
 }
@@ -790,7 +911,12 @@ mod tests {
 
     #[test]
     fn static_declared_support_matches_dispatch() {
-        for command in [Command::Help, Command::Version, Command::Capabilities, Command::CodexStatus] {
+        for command in [
+            Command::Help,
+            Command::Version,
+            Command::Capabilities,
+            Command::CodexStatus,
+        ] {
             let operation = command.operation();
             let envelope = execute(command);
             assert_eq!(operation.supported(), envelope.result.is_ok());

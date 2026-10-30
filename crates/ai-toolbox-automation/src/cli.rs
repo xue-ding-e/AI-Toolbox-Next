@@ -1,5 +1,8 @@
 //! Pure argument adapter. Even parsing failures do not initialize application state.
-use crate::{BackupPathInput, execute, Command, ContextRequestStatusInput, ContextSetInput, Envelope, OperationError, OwnerStatusInput};
+use crate::{
+    execute, BackupPathInput, Command, ContextRequestStatusInput, ContextSetInput, Envelope,
+    OperationError, OwnerStatusInput,
+};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -22,12 +25,18 @@ pub fn run(args: &[OsString]) -> Response {
     let json_requested = args
         .windows(2)
         .any(|pair| pair[0] == "--format" && pair[1] == "json");
-    let mut format = if json_requested { Format::Json } else { Format::Text };
+    let mut format = if json_requested {
+        Format::Json
+    } else {
+        Format::Text
+    };
     let parsed = parse(args, &mut format);
     let envelope = match parsed {
         Ok(operation) => execute(operation),
         Err(error) => {
-            if json_requested { format = Format::Json; }
+            if json_requested {
+                format = Format::Json;
+            }
             Envelope {
                 operation: None,
                 request_id: None,
@@ -43,16 +52,29 @@ pub fn run(args: &[OsString]) -> Response {
 // sole typed validators before inspecting any path. Other platforms fail with
 // NOT_SUPPORTED instead of loading a transport or duplicating business rules.
 fn parse(args: &[OsString], format: &mut Format) -> Result<Command, OperationError> {
-    let args = args.iter().map(|arg| arg.to_str()).collect::<Option<Vec<_>>>()
+    let args = args
+        .iter()
+        .map(|arg| arg.to_str())
+        .collect::<Option<Vec<_>>>()
         .ok_or_else(OperationError::invalid_input)?;
     let mut command = Vec::new();
     let mut options = std::collections::BTreeMap::new();
     let mut index = 0;
     while index < args.len() {
         let argument = args[index];
-        if matches!(argument, "--format" | "--profile" | "--endpoint-dir" | "--request-id"
-            | "--expected-provider-id" | "--expected-revision" | "--target"
-            | "--model-context-window" | "--model-auto-compact-token-limit" | "--path") {
+        if matches!(
+            argument,
+            "--format"
+                | "--profile"
+                | "--endpoint-dir"
+                | "--request-id"
+                | "--expected-provider-id"
+                | "--expected-revision"
+                | "--target"
+                | "--model-context-window"
+                | "--model-auto-compact-token-limit"
+                | "--path"
+        ) {
             index += 1;
             let value = *args.get(index).ok_or_else(OperationError::invalid_input)?;
             if options.insert(argument, value).is_some() {
@@ -79,8 +101,12 @@ fn parse(args: &[OsString], format: &mut Format) -> Result<Command, OperationErr
         ["codex", "status"] if options.is_empty() => return Ok(Command::CodexStatus),
         ["backup", "normalize-path"] => {
             let path = required(&mut options, "--path")?;
-            if !options.is_empty() { return Err(OperationError::invalid_input()); }
-            return Ok(Command::BackupNormalizePath(BackupPathInput::new(path.to_owned())?));
+            if !options.is_empty() {
+                return Err(OperationError::invalid_input());
+            }
+            return Ok(Command::BackupNormalizePath(BackupPathInput::new(
+                path.to_owned(),
+            )?));
         }
         ["daemon", "status"] | ["codex", "context", "inspect" | "set" | "request-status"] => {}
         _ => return Err(OperationError::invalid_input()),
@@ -105,21 +131,34 @@ fn parse(args: &[OsString], format: &mut Format) -> Result<Command, OperationErr
                 return Err(OperationError::invalid_input());
             }
             let model_context_window = number(options.remove("--model-context-window"))?;
-            let model_auto_compact_token_limit = number(options.remove("--model-auto-compact-token-limit"))?;
+            let model_auto_compact_token_limit =
+                number(options.remove("--model-auto-compact-token-limit"))?;
             if model_context_window.is_none() && model_auto_compact_token_limit.is_none() {
                 return Err(OperationError::invalid_input());
             }
             #[cfg(target_os = "linux")]
             {
-                use ai_toolbox_management::transport::{ContextPatch, ContextSetRequest, ContextTarget};
-                Command::ContextSet(ContextSetInput::new(owner, ContextSetRequest {
-                    schema_version: 1,
-                    request_id,
-                    expected_provider_id,
-                    expected_revision,
-                    target: if target == "common" { ContextTarget::Common } else { ContextTarget::Provider },
-                    patch: ContextPatch { model_context_window, model_auto_compact_token_limit },
-                })?)
+                use ai_toolbox_management::transport::{
+                    ContextPatch, ContextSetRequest, ContextTarget,
+                };
+                Command::ContextSet(ContextSetInput::new(
+                    owner,
+                    ContextSetRequest {
+                        schema_version: 1,
+                        request_id,
+                        expected_provider_id,
+                        expected_revision,
+                        target: if target == "common" {
+                            ContextTarget::Common
+                        } else {
+                            ContextTarget::Provider
+                        },
+                        patch: ContextPatch {
+                            model_context_window,
+                            model_auto_compact_token_limit,
+                        },
+                    },
+                )?)
             }
             #[cfg(not(target_os = "linux"))]
             {
@@ -130,21 +169,30 @@ fn parse(args: &[OsString], format: &mut Format) -> Result<Command, OperationErr
         }
         _ => return Err(OperationError::invalid_input()),
     };
-    if !options.is_empty() { return Err(OperationError::invalid_input()); }
+    if !options.is_empty() {
+        return Err(OperationError::invalid_input());
+    }
     Ok(parsed)
 }
 
-fn required<'a>(options: &mut std::collections::BTreeMap<&str, &'a str>, key: &str) -> Result<&'a str, OperationError> {
-    options.remove(key).ok_or_else(OperationError::invalid_input)
+fn required<'a>(
+    options: &mut std::collections::BTreeMap<&str, &'a str>,
+    key: &str,
+) -> Result<&'a str, OperationError> {
+    options
+        .remove(key)
+        .ok_or_else(OperationError::invalid_input)
 }
 
 fn number(value: Option<&str>) -> Result<Option<u64>, OperationError> {
-    value.map(|value| {
-        // Decimal syntax only; range and paired-value semantics belong to the
-        // transport validator, not a second CLI-specific business validator.
-        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(OperationError::invalid_input());
-        }
-        value.parse().map_err(|_| OperationError::invalid_input())
-    }).transpose()
+    value
+        .map(|value| {
+            // Decimal syntax only; range and paired-value semantics belong to the
+            // transport validator, not a second CLI-specific business validator.
+            if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(OperationError::invalid_input());
+            }
+            value.parse().map_err(|_| OperationError::invalid_input())
+        })
+        .transpose()
 }

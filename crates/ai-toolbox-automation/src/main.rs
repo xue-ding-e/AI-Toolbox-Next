@@ -7,7 +7,11 @@ fn main() -> ExitCode {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     // Exact separate transport entry: no --format or extra operands accepted.
     if args.len() == 2 && args[0] == "mcp" && args[1] == "serve" {
-        return match ai_toolbox_automation::mcp::serve(io::stdin().lock(), io::stdout().lock(), ai_toolbox_paths::normalize_backup_path_request) {
+        return match ai_toolbox_automation::mcp::serve(
+            io::stdin().lock(),
+            io::stdout().lock(),
+            ai_toolbox_paths::normalize_backup_path_request,
+        ) {
             Ok(()) => ExitCode::SUCCESS,
             Err(_) => ExitCode::from(74),
         };
