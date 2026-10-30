@@ -691,14 +691,22 @@ jobs:
                       for v in value: check(v)
               check(data)
           PY
-      - name: Generate three real lockfiles without compiling desktop
+      - name: Resolve three lockfiles conservatively without compiling desktop
         id: locks
         timeout-minutes: 12
         shell: bash
         run: |
           set -euo pipefail
+          cargo update --help > "$RUNNER_TEMP/path-evidence/cargo-update-help.txt"
           for crate in crates/ai-toolbox-paths crates/ai-toolbox-automation tauri; do
-            timeout 240s cargo generate-lockfile --manifest-path "$crate/Cargo.toml" 2>&1 | tee "$RUNNER_TEMP/path-evidence/$(basename "$crate")-lock.log"
+            if [ "$crate" = crates/ai-toolbox-paths ]; then
+              test ! -e "$crate/Cargo.lock"
+              command=(cargo generate-lockfile)
+            else
+              test -f "$crate/Cargo.lock"
+              command=(cargo update --workspace)
+            fi
+            timeout 240s "${command[@]}" --manifest-path "$crate/Cargo.toml" 2>&1 | tee "$RUNNER_TEMP/path-evidence/$(basename "$crate")-lock.log"
             mkdir -p "$RUNNER_TEMP/path-evidence/$crate"
             cp "$crate/Cargo.lock" "$RUNNER_TEMP/path-evidence/$crate/Cargo.lock"
           done
@@ -717,8 +725,25 @@ jobs:
           printf 'generated_tree=%s\n' "$(git write-tree)" >> "$RUNNER_TEMP/path-evidence/identity.txt"
           sha256sum crates/ai-toolbox-paths/Cargo.lock crates/ai-toolbox-automation/Cargo.lock tauri/Cargo.lock > "$RUNNER_TEMP/path-evidence/lock-sha256.txt"
           # This generated tree is evidence, not an approved or committed product.
-      - name: Check formatting of the two independent crates
+      - name: Reject changes to existing registry package identities
+        id: preservation
         if: ${{ !cancelled() && steps.locks.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYGUARD' 2>&1 | tee "$RUNNER_TEMP/path-evidence/lock-preservation.txt"
+          import pathlib, subprocess, tomllib
+          for path in ('crates/ai-toolbox-automation/Cargo.lock', 'tauri/Cargo.lock'):
+              before = tomllib.loads(subprocess.check_output(['git', 'show', 'HEAD:' + path], text=True))
+              after = tomllib.loads(pathlib.Path(path).read_text())
+              def registry_ids(data):
+                  return {(p['name'], p['version'], p['source'], p.get('checksum')) for p in data['package'] if p.get('source', '').startswith('registry+')}
+              removed = registry_ids(before) - registry_ids(after)
+              assert not removed, (path, 'Existing registry identities changed; review, do not auto-upgrade', sorted(removed))
+              print(path, 'existing registry versions/checksums preserved')
+          PYGUARD
+      - name: Check formatting of the two independent crates
+        if: ${{ !cancelled() && steps.locks.outcome == 'success' && steps.preservation.outcome == 'success' }}
         timeout-minutes: 2
         shell: bash
         run: |
@@ -726,14 +751,14 @@ jobs:
           cargo fmt --manifest-path crates/ai-toolbox-paths/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/path-evidence/paths-fmt.log"
           cargo fmt --manifest-path crates/ai-toolbox-automation/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/path-evidence/automation-fmt.log"
       - name: Test shared paths with the generated lock
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.locks.outcome == 'success' && steps.preservation.outcome == 'success' }}
         timeout-minutes: 8
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked --manifest-path crates/ai-toolbox-paths/Cargo.toml --jobs 1 2>&1 | tee "$RUNNER_TEMP/path-evidence/paths-tests.log"
       - name: Test automation and five real-process regressions serially
-        if: ${{ !cancelled() && steps.locks.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.locks.outcome == 'success' && steps.preservation.outcome == 'success' }}
         timeout-minutes: 18
         shell: bash
         run: |
