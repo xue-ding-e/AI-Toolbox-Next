@@ -200,3 +200,21 @@ test('browser copy waits for completed preview rather than merely observing IPC 
   assert.ok(ready >= 0 && click > ready);
   assert.ok(checks.includes('i < 200'), 'readiness polling remains bounded');
 });
+
+test('browser keyboard helper sends Enter default-action text and no text for Escape', async () => {
+  const { dispatchAuthEntryKey } = await import('../codexAuthEntryBrowserChecks.mjs');
+  const calls: { method: string; packet: Record<string, unknown> }[] = [];
+  const send = async (method: string, packet: Record<string, unknown>) => { calls.push({ method, packet }); };
+  await dispatchAuthEntryKey(send, 'Enter');
+  assert.deepEqual(calls.map(call => call.packet), [
+    { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' },
+    { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
+  ]);
+  calls.length = 0;
+  await dispatchAuthEntryKey(send, 'Escape');
+  assert.deepEqual(calls.map(call => call.packet), [
+    { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+    { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+  ]);
+  assert.ok(calls.every(call => call.method === 'Input.dispatchKeyEvent'));
+});
