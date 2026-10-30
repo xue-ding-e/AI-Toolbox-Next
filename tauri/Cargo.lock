@@ -93,6 +93,7 @@ version = "1.2.1-next.1"
 dependencies = [
  "ai-toolbox-codex-config",
  "ai-toolbox-management",
+ "ai-toolbox-paths",
  "ai-toolbox-storage",
  "anyhow",
  "apple-native-keyring-store",
@@ -192,6 +193,13 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "ai-toolbox-paths"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
 ]
 
 [[package]]
