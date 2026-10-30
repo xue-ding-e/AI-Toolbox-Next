@@ -126,8 +126,30 @@ pub async fn record_provider_last_used(
 
 /// Normalize a backup custom entry path for portable storage and display.
 #[tauri::command]
-pub fn normalize_backup_custom_entry_path(path: String) -> String {
-    crate::settings::backup::utils::normalize_backup_storage_path(&path)
+pub fn normalize_backup_custom_entry_path(path: String) -> Result<String, String> {
+    ai_toolbox_paths::normalize_backup_path_request(&path)
+        .map_err(|error| error.message().to_string())
+}
+
+#[cfg(test)]
+mod backup_path_request_tests {
+    use super::normalize_backup_custom_entry_path;
+
+    #[test]
+    fn desktop_path_command_shares_decoded_utf8_input_boundary() {
+        let at_limit = format!("~/{}", "é".repeat((ai_toolbox_paths::PROTOCOL_INPUT_LIMIT - 2) / 2));
+        assert_eq!(normalize_backup_custom_entry_path(at_limit.clone()), Ok(at_limit));
+        let too_large = format!("~/{}", "é".repeat(ai_toolbox_paths::PROTOCOL_INPUT_LIMIT / 2));
+        assert!(normalize_backup_custom_entry_path(too_large).is_err());
+        assert_eq!(normalize_backup_custom_entry_path("fixture\0path".into()),
+            Err(ai_toolbox_paths::PathRequestError::InvalidInput.message().to_string()));
+    }
+
+    #[test]
+    fn desktop_path_command_keeps_empty_and_portable_paths() {
+        assert_eq!(normalize_backup_custom_entry_path("  ".into()), Ok(String::new()));
+        assert_eq!(normalize_backup_custom_entry_path("%appdata%\\fixture".into()), Ok("%APPDATA%/fixture".into()));
+    }
 }
 
 /// Probe a manual CLI path's version (live) without persisting anything.

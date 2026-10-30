@@ -79,6 +79,8 @@ sequenceDiagram
 
 ## 最小验证
 
+- 备份路径 command 使用共享 paths service 的解码后 UTF-8 字节输入限额（32 KiB），错误不回退原输入。`backup_path_request_tests` 覆盖 desktop command 边界；这只证明 command 函数与 service 接线，不代替 WebView IPC 或原生 GUI 验收。内部历史 backup wrapper 保留原语义。
+
 - `cd tauri && cargo test --lib settings --jobs 2`：覆盖 adapter 默认值与历史默认迁移、`store` 的 SQLite 往返、嵌套 patch 不覆盖其它字段、记录缺失时按需创建、`provider_list_state` 的合并与刷新语义。
 - 手工路径：改主题/语言/可见 tab → 重启后保持；清空语言回到「系统默认」并跟随系统；托盘菜单跟随 `visible_tabs`；改代理后新建请求走新代理。
 - 涉及备份域的改动跑 `cargo test --lib settings::backup --jobs 2`（见 `backup/AGENTS.md`）。

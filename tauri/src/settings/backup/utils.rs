@@ -2202,89 +2202,11 @@ struct CustomBackupManifestEntry {
     payload_path: String,
 }
 
-fn strip_base_path(candidate: &str, base: &Path) -> Option<String> {
-    let normalized_candidate = candidate.replace('\\', "/");
-    let normalized_base = base.to_string_lossy().replace('\\', "/");
-    let trimmed_base = normalized_base.trim_end_matches('/');
-
-    let (candidate_cmp, base_cmp) = if cfg!(windows) {
-        (
-            normalized_candidate.to_lowercase(),
-            trimmed_base.to_lowercase(),
-        )
-    } else {
-        (normalized_candidate.clone(), trimmed_base.to_string())
-    };
-
-    if candidate_cmp == base_cmp {
-        return Some(String::new());
-    }
-
-    let base_with_separator = format!("{}/", base_cmp);
-    if candidate_cmp.starts_with(&base_with_separator) {
-        return Some(normalized_candidate[trimmed_base.len() + 1..].to_string());
-    }
-
-    None
-}
-
-fn with_storage_prefix(prefix: &str, relative_path: &str) -> String {
-    if relative_path.is_empty() {
-        prefix.to_string()
-    } else {
-        format!("{}/{}", prefix, relative_path.trim_start_matches('/'))
-    }
-}
-
 /// Normalize user-entered backup paths for portable storage.
-///
-/// Backup custom entries prefer existing tool path conventions:
-/// `%APPDATA%/...` for config-dir-relative paths, `~/...` for home-relative
-/// paths, and absolute paths only when no supported portable base matches.
+/// Config-relative paths prefer `%APPDATA%`, then home-relative paths `~`.
+/// The shared service preserves existing internal backup normalization semantics.
 pub fn normalize_backup_storage_path(input: &str) -> String {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    let normalized_input = trimmed.replace('\\', "/");
-    let upper_input = normalized_input.to_uppercase();
-
-    if upper_input == "%APPDATA%" {
-        return "%APPDATA%".to_string();
-    }
-    if upper_input.starts_with("%APPDATA%/") {
-        return with_storage_prefix("%APPDATA%", &normalized_input[10..]);
-    }
-    if normalized_input == "~" {
-        return "~".to_string();
-    }
-    if let Some(relative_path) = normalized_input.strip_prefix("~/") {
-        return with_storage_prefix("~", relative_path);
-    }
-
-    let expanded = crate::coding::expand_local_path(trimmed)
-        .unwrap_or_else(|_| trimmed.to_string())
-        .replace('\\', "/");
-    let candidate = if expanded != normalized_input {
-        expanded.as_str()
-    } else {
-        normalized_input.as_str()
-    };
-
-    if let Some(config_dir) = dirs::config_dir() {
-        if let Some(relative_path) = strip_base_path(candidate, &config_dir) {
-            return with_storage_prefix("%APPDATA%", &relative_path);
-        }
-    }
-
-    if let Some(home_dir) = dirs::home_dir() {
-        if let Some(relative_path) = strip_base_path(candidate, &home_dir) {
-            return with_storage_prefix("~", &relative_path);
-        }
-    }
-
-    candidate.to_string()
+    ai_toolbox_paths::normalize_backup_storage_path(input)
 }
 
 pub fn normalize_backup_custom_entry(entry: &BackupCustomEntry) -> BackupCustomEntry {

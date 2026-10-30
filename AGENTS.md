@@ -35,6 +35,7 @@ This document provides essential information for AI coding agents working on thi
 
 | 模块目录 | 说明 |
 |---------|------|
+| `crates/ai-toolbox-paths/` | Shared local path context, expansion and portable backup normalization; same service for GUI/CLI/MCP without target-file or database access |
 | `crates/ai-toolbox-management/` | Linux 本地 owner 与协调保护原语；尚未接入 GUI/CLI 业务写入口，Windows 与完整 writer 门待完成 |
 | `crates/ai-toolbox-codex-config/` | Codex 现有 TOML 合并实现与纯配置计划；不负责 owner、数据库或文件投影 |
 | `crates/ai-toolbox-automation/` | 独立管理 console 入口与共享协议；未实现能力必须明确失败，不等于桌面业务覆盖 |
