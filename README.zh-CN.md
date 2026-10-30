@@ -1,3 +1,34 @@
+# AI-Toolbox-Next
+
+这是基于 [coulsontl/ai-toolbox](https://github.com/coulsontl/ai-toolbox) 的独立维护版本，保留原作者与 AGPL-3.0 许可归属，不代表上游官方。
+
+## 安装 Next 版本
+
+[查看最新自动验证的 Next 预览版](https://github.com/xue-ding-e/AI-Toolbox-Next/releases)
+
+**Windows（x64）：[下载安装程序](https://github.com/xue-ding-e/AI-Toolbox-Next/releases/download/v1.2.1-next.1-build.96cfbc495fe1/AI-Toolbox-Next_1.2.1-next.1_96cfbc495fe1_windows-x64-setup.exe)，打开下载的 `.exe` 并按向导安装。**
+
+当前预览包来自提交 [`96cfbc495fe1`](https://github.com/xue-ding-e/AI-Toolbox-Next/commit/96cfbc495fe1281ba39b0673ba796aaf8f2cf09b)，程序内版本仍为 `1.2.1-next.1`。更新方式为手动下载 [Next Releases](https://github.com/xue-ding-e/AI-Toolbox-Next/releases) 中的新安装包。
+
+- [校验和](https://github.com/xue-ding-e/AI-Toolbox-Next/releases/download/v1.2.1-next.1-build.96cfbc495fe1/SHA256SUMS) · [构建来源](https://github.com/xue-ding-e/AI-Toolbox-Next/releases/download/v1.2.1-next.1-build.96cfbc495fe1/build-provenance.json) · [CI 记录](https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/41020650501)
+- 此预览包未签名，Windows 可能显示发布者或信誉警告。请先核对来源与校验和，再自行决定是否安装；不要关闭安全保护。
+- 已通过打包与对应 CI 测试，但尚未验证真实桌面的交互式安装及原生 GUI 验收。
+- 暂无 macOS、Linux 或 Windows ARM64 的 Next 安装包。下方保留的上游下载链接和 Homebrew 命令安装的是上游版本，不是 Next。
+
+可选：在 PowerShell 核对文件：
+
+```powershell
+Get-FileHash .\AI-Toolbox-Next_1.2.1-next.1_96cfbc495fe1_windows-x64-setup.exe -Algorithm SHA256
+```
+
+预期 SHA-256：`8ed717c6f4dbe7e1a3b24d8e986d54eb5aedcc4cfab5042239dd0bb4b2e74196`。
+
+每次向 `main` 推送都会自动执行验证与构建，全部闸门通过后发布带源码标识的新预览包，无需手动点击构建。失败时保留已有公开安装包；这不代表应用内自动更新。
+
+---
+
+以下为原项目说明。
+
 # AI Toolbox
 
 <p align="center">

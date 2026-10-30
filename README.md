@@ -4,6 +4,29 @@ Independent maintenance edition of [coulsontl/ai-toolbox](https://github.com/cou
 
 See [maintenance and history notes](MAINTENANCE.md). The upstream README follows unchanged below.
 
+## Install AI-Toolbox-Next
+
+[Newest automatically validated Next previews](https://github.com/xue-ding-e/AI-Toolbox-Next/releases) · [简体中文](README.zh-CN.md)
+
+**Windows (x64): [Download the Next installer](https://github.com/xue-ding-e/AI-Toolbox-Next/releases/download/v1.2.1-next.1-build.96cfbc495fe1/AI-Toolbox-Next_1.2.1-next.1_96cfbc495fe1_windows-x64-setup.exe).** Run the downloaded `.exe` and follow the setup wizard.
+
+This is the independent Next edition, not the upstream release. The current preview was built from [`96cfbc495fe1`](https://github.com/xue-ding-e/AI-Toolbox-Next/commit/96cfbc495fe1281ba39b0673ba796aaf8f2cf09b); its embedded application version is `1.2.1-next.1`. Updates are manual: download a newer Next installer from [Next releases](https://github.com/xue-ding-e/AI-Toolbox-Next/releases).
+
+- [Checksums](https://github.com/xue-ding-e/AI-Toolbox-Next/releases/download/v1.2.1-next.1-build.96cfbc495fe1/SHA256SUMS) · [Build provenance](https://github.com/xue-ding-e/AI-Toolbox-Next/releases/download/v1.2.1-next.1-build.96cfbc495fe1/build-provenance.json) · [CI evidence](https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/41020650501)
+- Unsigned preview: Windows may display a publisher/reputation warning. Verify the source and checksum before choosing whether to install; do not disable security protections.
+- Packaging and scoped CI tests passed; interactive installation and native GUI acceptance have not been verified.
+- macOS, Linux and Windows ARM64 Next installers are not currently provided. Upstream downloads and Homebrew commands below install the upstream edition, not Next.
+
+Optional PowerShell checksum verification:
+
+```powershell
+Get-FileHash .\AI-Toolbox-Next_1.2.1-next.1_96cfbc495fe1_windows-x64-setup.exe -Algorithm SHA256
+```
+
+Expected SHA-256: `8ed717c6f4dbe7e1a3b24d8e986d54eb5aedcc4cfab5042239dd0bb4b2e74196`.
+
+Every push to `main` automatically validates, builds, and publishes a new source-stamped preview only if all gates pass. No manual build is required; failed gates leave existing public installers available. This is distribution automation, not an in-app automatic updater.
+
 ---
 
 # AI Toolbox
