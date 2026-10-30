@@ -20,9 +20,10 @@ test('native positive and fail-closed controls',()=>{
 });
 
 test('workflow retains least privilege and ordered exact-source gates', () => {
-  const workflow = readFileSync(new URL('../../workflows/windows-manual-build.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /branches: \[main\]/);
-  assert.match(workflow, /contents: read/);
+  const completeWorkflow = readFileSync(new URL('../../workflows/windows-manual-build.yml', import.meta.url), 'utf8');
+  const workflow = completeWorkflow.split('  windows:')[1].split('  publish:')[0];
+  assert.match(completeWorkflow, /branches: \[main\]/);
+  assert.match(completeWorkflow, /permissions:\n  contents: read/);
   const jobEnv = workflow.slice(workflow.indexOf('    env:'), workflow.indexOf('    steps:'));
   assert.doesNotMatch(jobEnv, /runner\./, 'runner context is unavailable in job-level env');
   assert.match(workflow, /AI_TOOLBOX_DATA_DIR=\$data/);
@@ -37,4 +38,25 @@ test('workflow retains least privilege and ordered exact-source gates', () => {
   assert(workflow.indexOf('node scripts/verify-codex-auth-entry.mjs') < workflow.indexOf('pnpm tauri build'));
   assert(workflow.indexOf('test-native.ps1') < workflow.indexOf('pnpm tauri build'));
   assert(workflow.indexOf('package.mjs seal') > workflow.indexOf('pnpm tauri build'));
+});
+
+// Publication is explicitly authorized only after both same-source validation jobs.
+test('automatic publishing remains narrowly gated and immutable', () => {
+  const workflow = readFileSync(new URL('../../workflows/windows-manual-build.yml', import.meta.url), 'utf8');
+  const publisher = workflow.split('  publish:')[1];
+  assert.match(workflow, /push:\n    branches: \[main\]\n  workflow_dispatch:/);
+  assert.match(workflow, /cancel-in-progress: false\n  queue: max/);
+  assert.match(workflow, /windows:\n    needs: linux/);
+  assert.match(publisher, /needs: \[linux, windows\]/);
+  assert.equal((workflow.match(/contents: write/g) ?? []).length, 1);
+  assert.match(publisher, /permissions:\n      contents: write/);
+  assert.doesNotMatch(workflow, /pull_request_target|secrets\.|actions: write|--clobber|release delete|--force/);
+  assert.match(publisher, /next-windows-x64-\$\{\{ github.sha \}\}-\$\{\{ github.run_attempt \}\}/);
+  assert.match(publisher, /GH_TOKEN: \$\{\{ github.token \}\}/);
+  assert.match(publisher, /source_tree/);
+  assert.match(publisher, /git\/refs/);
+  assert.match(publisher, /--verify-tag --draft --prerelease/);
+  assert.match(publisher, /assert.equal\(downloaded\[key\], initial\[key\]/);
+  assert(publisher.indexOf('release download') < publisher.indexOf('--draft=false'));
+  assert(publisher.indexOf('Release roundtrip mismatch') < publisher.indexOf('--draft=false'));
 });

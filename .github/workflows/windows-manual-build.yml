@@ -1,18 +1,7 @@
-name: Next Windows tested build
+name: Next tested Windows distribution
 on:
   push:
     branches: [main]
-    paths:
-      - 'web/**'
-      - 'tauri/**'
-      - 'crates/**'
-      - 'scripts/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '*config*'
-      - 'index.html'
-      - '.github/workflows/windows-manual-build.yml'
-      - '.github/validation/windows-package/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,9 +9,100 @@ concurrency:
   # Share the existing heavy-validation lane; never cancel another validation.
   group: ai-toolbox-maintenance-validation
   cancel-in-progress: false
+  queue: max
 jobs:
+  linux:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      # Validate and package the exact pushed product revision.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact product source and prepare synthetic test roots
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p "$RUNNER_TEMP/acceptance-evidence" "$RUNNER_TEMP/synthetic-home" "$RUNNER_TEMP/synthetic-data" "$RUNNER_TEMP/synthetic-config" "$RUNNER_TEMP/synthetic-cache"
+          printf '%s\n' "control=$GITHUB_SHA" "product=$(git rev-parse HEAD)" "tree=$(git rev-parse HEAD^{tree})" > "$RUNNER_TEMP/acceptance-evidence/source.txt"
+          echo "AI_TOOLBOX_DATA_DIR=$RUNNER_TEMP/synthetic-data" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/synthetic-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$RUNNER_TEMP/synthetic-data" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$RUNNER_TEMP/synthetic-cache" >> "$GITHUB_ENV"
+          echo "CODEX_HOME=$RUNNER_TEMP/synthetic-home/.codex" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Install Linux compile prerequisites
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record toolchains and isolate HOME for product execution
+        run: |
+          node --version | tee "$RUNNER_TEMP/acceptance-evidence/node.txt"
+          rustc --version | tee "$RUNNER_TEMP/acceptance-evidence/rust.txt"
+          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
+          echo "HOME=$RUNNER_TEMP/synthetic-home" >> "$GITHUB_ENV"
+      - name: Install locked frontend dependencies
+        timeout-minutes: 10
+        run: |
+          cargo --version
+          pnpm --version
+          pnpm install --frozen-lockfile
+      - name: Desktop Rust suite including integration and documentation tests
+        timeout-minutes: 60
+        run: |
+          set -o pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/acceptance-evidence/rust-tests.log"
+      - name: Standalone shared crates and CLI tests
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          for crate in ai-toolbox-storage ai-toolbox-management ai-toolbox-codex-config ai-toolbox-automation; do
+            cargo test --locked --manifest-path "crates/$crate/Cargo.toml" -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/acceptance-evidence/$crate-tests.log"
+          done
+      - name: TypeScript and full frontend suite
+        timeout-minutes: 40
+        run: |
+          set -o pipefail
+          pnpm exec tsc --noEmit 2>&1 | tee "$RUNNER_TEMP/acceptance-evidence/tsc.log"
+          pnpm test 2>&1 | tee "$RUNNER_TEMP/acceptance-evidence/frontend-tests.log"
+      - name: Production frontend build
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          pnpm build 2>&1 | tee "$RUNNER_TEMP/acceptance-evidence/frontend-build.log"
+      - name: Verify product source and lockfiles remain unchanged
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          echo "tracked_product_unchanged=true" >> "$RUNNER_TEMP/acceptance-evidence/source.txt"
+
+      - name: Preserve synthetic Linux validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-linux-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/acceptance-evidence/
+          if-no-files-found: error
+          retention-days: 14
   windows:
-    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.repository_id == '1422130502' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/windows-auto-package-20261029'))
+    needs: linux
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.repository_id == '1422130502' && github.ref == 'refs/heads/main'
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
@@ -59,7 +139,7 @@ jobs:
       - name: Source and packaging controls
         timeout-minutes: 5
         run: |
-          node --test .github/validation/windows-package/package.test.mjs
+          node --test .github/validation/windows-package/package.test.mjs .github/validation/windows-package/publish.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Packaging controls failed' }
           node .github/validation/windows-package/package.mjs verify
           if ($LASTEXITCODE -ne 0) { throw 'Source identity check failed' }
@@ -112,3 +192,77 @@ jobs:
             ${{ runner.temp }}/native-tests-*.log
           if-no-files-found: warn
           retention-days: 14
+  publish:
+    needs: [linux, windows]
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    # Only this post-validation job can publish; no persistent token or signing key.
+    permissions:
+      contents: write
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: next-windows-x64-${{ github.sha }}-${{ github.run_attempt }}
+          path: release-input
+      - name: Validate exact-source publication inputs
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          node --test .github/validation/windows-package/publish.test.mjs
+          test "$(node -p "JSON.parse(require('fs').readFileSync('release-input/build-provenance.json','utf8')).source_tree")" = "$(git rev-parse HEAD^{tree})"
+          VERSION=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
+          node .github/validation/windows-package/publish.mjs validate release-input "$SOURCE_SHA" "$VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/release-manifest.json"
+      - name: Publish immutable verified preview without replacing the last good release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP+'/release-manifest.json','utf8')).tag")
+          VERSION=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
+          # Never overwrite a previous tag/release or clobber its assets. A failed
+          # upload stays a draft; a retry collision fails closed for inspection.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Immutable release already exists; refusing overwrite.' >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo 'Immutable tag already exists; refusing reuse.' >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/release-notes.md" <<NOTES
+          Independent AI-Toolbox-Next unsigned Windows x64 preview.
+
+          Download the EXE, verify SHA256SUMS, and run the setup wizard. Updates are manual; this pipeline does not enable an automatic application updater.
+
+          Product source: $SOURCE_SHA
+          Embedded application version: $VERSION
+          Validation/build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Linux prerequisite tests and Windows tests/build passed on this exact source. Native interactive installation and GUI acceptance are not claimed. No signing key, real account data, production deployment, or app-store publication is involved. Original authorship and AGPL licensing are retained.
+          NOTES
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$SOURCE_SHA" >/dev/null
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$SOURCE_SHA"
+          gh release create "$TAG" release-input/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --prerelease --title "AI-Toolbox-Next $VERSION (${SOURCE_SHA:0:12})" --notes-file "$RUNNER_TEMP/release-notes.md"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$SOURCE_SHA"
+          mkdir "$RUNNER_TEMP/release-roundtrip"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/release-roundtrip"
+          node .github/validation/windows-package/publish.mjs validate "$RUNNER_TEMP/release-roundtrip" "$SOURCE_SHA" "$VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/release-roundtrip.json"
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const read = name => JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`, 'utf8'));
+          const initial = read('release-manifest.json');
+          const downloaded = read('release-roundtrip.json');
+          for (const key of ['repository', 'source_commit', 'version', 'tag', 'installer', 'bytes', 'sha256', 'workflow_run', 'workflow_attempt']) assert.equal(downloaded[key], initial[key], `Release roundtrip mismatch: ${key}`);
+          NODE
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
