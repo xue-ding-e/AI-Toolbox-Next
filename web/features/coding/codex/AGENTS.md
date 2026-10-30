@@ -13,7 +13,7 @@
 
 ## 核心设计决策（Why）
 
-- Each account row exposes an `auth.json` entry through the shared extra-action slot; it only selects that exact account and opens the existing details. Keep the export controls immediately after account identity, not below quota/token metadata. Full auth.json generation lives in the existing official-account details, behind explicit preview/copy actions and a credential warning. The export component is unmounted while the page is inactive or reloading and keyed by account/root-list identity; late responses after close must not restore secrets. No automatic credential read on mount, persistence, logging, or implicit refresh/apply.
+- Each account row exposes an `auth.json` entry through the shared extra-action slot; it only selects that exact account and opens the existing details. Keep the export controls immediately after account identity, not below quota/token metadata. Full auth.json generation lives in the existing official-account details, behind explicit preview/copy actions and a credential warning. The export component is unmounted while the page is inactive or reloading and keyed by account/root-list identity; late responses after close must not restore secrets. The details Modal itself is conditionally mounted: an inner conditional is insufficient because AntD freezes closed children. Closing immediately removes the credential subtree and restores the connected entry trigger, without retaining a hidden Escape handler. No automatic credential read on mount, persistence, logging, or implicit refresh/apply.
 
 - Codex 与 Claude Code 一样使用共享根目录编辑逻辑，保证 `custom/env/shell/default` 语义一致。
 - provider 导入同样先做 `sourceProviderId` 冲突判断，避免重复导入同一来源时形成歧义。

@@ -242,3 +242,28 @@ test('auth browser selectors match the actual AntD dialog rather than the remove
   assert.ok(checks.includes('codexCardViewFixture.authDialog()'));
   assert.ok(!checks.includes('.ant-modal-content'));
 });
+
+test('closing account details unmounts the entire AntD retained-content boundary', () => {
+  const require = createRequire(import.meta.url);
+  const requireAntd = createRequire(require.resolve('antd/package.json'));
+  const { default: MemoChildren } = require(requireAntd.resolve('@rc-component/dialog/lib/Dialog/Content/MemoChildren')) as {
+    default: { compare: (before: object, after: { shouldUpdate: boolean }) => boolean };
+  };
+  // The installed dependency freezes closed children, so an inner guard alone is insufficient.
+  assert.equal(MemoChildren.compare({}, { shouldUpdate: false }), true);
+  const page = readFileSync(new URL('../../../../../features/coding/codex/pages/CodexPage.tsx', import.meta.url), 'utf8');
+  const ast = ts.createSourceFile('page.tsx', page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let guard: ts.JsxExpression | undefined;
+  function visit(node: ts.Node) {
+    if (ts.isJsxExpression(node) && node.expression?.getText(ast).startsWith('officialAccountDetails && (')
+      && node.expression.getText(ast).includes('open={Boolean(officialAccountDetails)}')) guard = node;
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(guard?.expression, 'the Modal itself must be inside the account-details mount boundary');
+  const code = ts.transpileModule(`const render = (officialAccountDetails) => (${guard.expression.getText(ast)}); render;`, {
+    compilerOptions: { jsx: ts.JsxEmit.React },
+  }).outputText;
+  const render = vm.runInNewContext(code, {});
+  assert.equal(render(null), null, 'closing must not render a hidden retained Modal');
+});

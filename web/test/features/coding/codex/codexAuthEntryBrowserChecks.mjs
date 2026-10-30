@@ -58,18 +58,28 @@ export async function verifyCodexAuthEntry({ send, evaluate, baseUrl }) {
     await until('Boolean(codexCardViewFixture.authDialog()?.querySelector(".monaco-editor")?.textContent.includes("synthetic-account-2"))');
     await check(theme + ' selected auth.json payload is actually previewed',
       'Boolean(codexCardViewFixture.authDialog()?.querySelector(".monaco-editor")?.textContent.includes("synthetic-account-2"))');
+    await key('Escape');
+    await until('!codexCardViewFixture.authDialog()');
+    await until('document.activeElement === document.querySelectorAll("button[aria-label=\\"auth.json\\"]")[1]');
+    await check(theme + ' closing a populated preview disposes its secret editor', '(codexCardViewFixture.authDialog(true)?.querySelectorAll(".monaco-editor").length ?? 0)', 0);
+    await evaluate('document.querySelectorAll("button[aria-label=\\"auth.json\\"]")[1].focus()');
+    await key('Enter');
+    await until('Boolean(codexCardViewFixture.authDialog())');
     await until('[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].some(b=>b.textContent.includes("复制 auth.json") && !b.disabled)');
     await evaluate('[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("复制 auth.json")).click()');
     await until('codexCardViewFixture.state.authCopies?.length === 1');
     await check(theme + ' explicit copy uses same account', 'JSON.parse(codexCardViewFixture.state.authCopies[0]).tokens.access_token', 'synthetic-account-2');
     await key('Escape');
     await until('!codexCardViewFixture.authDialog()');
+    await check(theme + ' closed dialog retains no secret editor', '(codexCardViewFixture.authDialog(true)?.querySelectorAll(".monaco-editor").length ?? 0)', 0);
     await evaluate('document.querySelectorAll("button[aria-label=\\"auth.json\\"]")[0].click(); codexCardViewFixture.state.deferAuth = true');
     await until('Boolean([...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("生成并预览")))');
     await evaluate('[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("生成并预览")).click()');
     await until('Boolean(codexCardViewFixture.state.resolveAuth)');
     await check(theme + ' duplicate operation disabled', '[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("复制 auth.json")).disabled');
     await key('Escape');
+    await until('!codexCardViewFixture.authDialog()');
+    await check(theme + ' closed pending dialog has no retained controls', '[...(codexCardViewFixture.authDialog(true)?.querySelectorAll("button") ?? [])].filter(b=>b.textContent.includes("生成并预览") || b.textContent.includes("复制 auth.json")).length', 0);
     await evaluate('codexCardViewFixture.state.resolveAuth()');
     await wait(200);
     await check(theme + ' late response after Escape leaves no secret editor', '(codexCardViewFixture.authDialog(true)?.querySelectorAll(".monaco-editor").length ?? 0)', 0);
