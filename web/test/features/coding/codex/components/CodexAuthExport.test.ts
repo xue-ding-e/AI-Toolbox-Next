@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 
 const source = readFileSync(new URL('../../../../../features/coding/codex/components/CodexAuthExport.tsx', import.meta.url), 'utf8');
@@ -217,4 +220,25 @@ test('browser keyboard helper sends Enter default-action text and no text for Es
     { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
   ]);
   assert.ok(calls.every(call => call.method === 'Input.dispatchKeyEvent'));
+});
+
+
+test('auth browser selectors match the actual AntD dialog rather than the removed content class', () => {
+  const require = createRequire(import.meta.url);
+  const requireAntd = createRequire(require.resolve('antd/package.json'));
+  const { default: Panel } = require(requireAntd.resolve('@rc-component/dialog/lib/Dialog/Content/Panel')) as {
+    default: React.ComponentType<{ prefixCls: string; visible: boolean; title: string; children: string }>;
+  };
+  const html = renderToStaticMarkup(React.createElement(Panel, {
+    prefixCls: 'ant-modal', visible: true, title: 'Synthetic account', children: 'synthetic',
+  }));
+  assert.match(html, /role="dialog"/);
+  assert.match(html, /class="ant-modal"/);
+  assert.ok(!html.includes('class="ant-modal-content"'));
+  const checks = readFileSync(new URL('../codexAuthEntryBrowserChecks.mjs', import.meta.url), 'utf8');
+  const fixture = readFileSync(new URL('../fixtures/CodexCardViewFixture.jsx', import.meta.url), 'utf8');
+  assert.ok(fixture.includes('.ant-modal[role=dialog]'));
+  assert.ok(fixture.includes("i18n.t('codex.provider.officialAccountDetailsTitle')"));
+  assert.ok(checks.includes('codexCardViewFixture.authDialog()'));
+  assert.ok(!checks.includes('.ant-modal-content'));
 });
