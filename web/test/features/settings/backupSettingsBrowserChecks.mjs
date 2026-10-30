@@ -437,10 +437,13 @@ export async function verifyBackupSettings({ send, evaluate, baseUrl, artifactRo
   await call('nestedClickButton', 'settings.backupSettings.customEntries.addExcludePattern');
   assert.equal(await call('nestedExcludePatternCount'), 1);
   await screenshot('custom-entry-exclude-modal');
-  await call('nestedInput', 'settings.backupSettings.customEntries.excludePatterns', '[', 0);
+  // Structural typos such as '[' belong to the backend compiler. Exercise a
+  // construct explicitly rejected by the frontend Rust-compatibility precheck.
+  await call('nestedInput', 'settings.backupSettings.customEntries.excludePatterns', '(?=private)', 0);
   await call('nestedClickButton', 'common.save');
+  await waitFor('!!backupFixture.nestedModal().querySelector(".ant-form-item-explain-error")');
   assert.equal(await call('visibleModalCount'), 2, 'invalid regex keeps the entry modal open');
-  assert.ok(await evaluate('!!document.querySelector(".ant-form-item-explain-error")'), 'invalid regex shows an inline error');
+  assert.ok(await evaluate('!!backupFixture.nestedModal().querySelector(".ant-form-item-explain-error")'), 'invalid regex shows an inline error');
   await call('nestedInput', 'settings.backupSettings.customEntries.excludePatterns', '^local$', 0);
   await call('nestedClickButton', 'settings.backupSettings.customEntries.addExcludePattern');
   await call('nestedInput', 'settings.backupSettings.customEntries.excludePatterns', '(^|/)\\.git$', 1);
