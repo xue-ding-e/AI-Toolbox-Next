@@ -290,6 +290,13 @@ const iconName = (element) => element?.querySelector('.anticon')?.getAttribute('
 
 window.codexCardViewFixture = {
   state,
+  authDialog(includeHidden = false) {
+    // AntD 6 uses a container, not the old `ant-modal-content` class. Scope
+    // the semantic dialog by its actual localized account-detail title.
+    return [...document.querySelectorAll('.ant-modal[role=dialog]')].find(dialog =>
+      (includeHidden || dialog.getClientRects().length > 0)
+      && dialog.querySelector('.ant-modal-title')?.textContent === i18n.t('codex.provider.officialAccountDetailsTitle')) ?? null;
+  },
   pendingUsageCount: () => pendingUsage.length,
   deferNextAccountList() { deferAccountList = true; },
   pendingAccountListCount: () => pendingAccountLists.length,

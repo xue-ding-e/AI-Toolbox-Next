@@ -27,7 +27,7 @@ export async function verifyCodexAuthEntry({ send, evaluate, baseUrl }) {
       authButtonFocused: document.activeElement?.getAttribute('aria-label') === 'auth.json',
       authButtons: [...document.querySelectorAll('button[aria-label="auth.json"]')].map(b => ({ disabled: b.disabled, visible: b.getClientRects().length > 0 })),
       providerIds: window.codexCardViewFixture?.renderedOrder(),
-      modalCount: document.querySelectorAll('.ant-modal-content').length
+      modalCount: Number(Boolean(window.codexCardViewFixture?.authDialog()))
     })`);
     throw new Error('Timed out: ' + expression + '; synthetic metadata: ' + JSON.stringify(metadata));
   };
@@ -50,29 +50,29 @@ export async function verifyCodexAuthEntry({ send, evaluate, baseUrl }) {
     await check(theme + ' auth entry has keyboard focus',
       'document.activeElement === document.querySelectorAll("button[aria-label=\\"auth.json\\"]")[1]');
     await key('Enter');
-    await until('Boolean(document.querySelector(".ant-modal-content"))');
+    await until('Boolean(codexCardViewFixture.authDialog())');
     await check(theme + ' row entry performs no implicit credential read', 'codexCardViewFixture.state.requests.filter(r => r.command === "export_codex_official_account_auth_json").length', 0);
-    await evaluate('[...document.querySelectorAll(".ant-modal-content button")].find(b=>b.textContent.includes("生成并预览")).click()');
+    await evaluate('[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("生成并预览")).click()');
     await until('codexCardViewFixture.state.requests.some(r => r.command === "export_codex_official_account_auth_json")');
     await check(theme + ' preview selects second account', 'codexCardViewFixture.state.requests.filter(r => r.command === "export_codex_official_account_auth_json").at(-1).args', { providerId: 'provider-c', accountId: 'account-2', copyToClipboard: false });
-    await until('Boolean(document.querySelector(".ant-modal-content .monaco-editor")?.textContent.includes("synthetic-account-2"))');
+    await until('Boolean(codexCardViewFixture.authDialog()?.querySelector(".monaco-editor")?.textContent.includes("synthetic-account-2"))');
     await check(theme + ' selected auth.json payload is actually previewed',
-      'Boolean(document.querySelector(".ant-modal-content .monaco-editor")?.textContent.includes("synthetic-account-2"))');
-    await until('[...document.querySelectorAll(".ant-modal-content button")].some(b=>b.textContent.includes("复制 auth.json") && !b.disabled)');
-    await evaluate('[...document.querySelectorAll(".ant-modal-content button")].find(b=>b.textContent.includes("复制 auth.json")).click()');
+      'Boolean(codexCardViewFixture.authDialog()?.querySelector(".monaco-editor")?.textContent.includes("synthetic-account-2"))');
+    await until('[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].some(b=>b.textContent.includes("复制 auth.json") && !b.disabled)');
+    await evaluate('[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("复制 auth.json")).click()');
     await until('codexCardViewFixture.state.authCopies?.length === 1');
     await check(theme + ' explicit copy uses same account', 'JSON.parse(codexCardViewFixture.state.authCopies[0]).tokens.access_token', 'synthetic-account-2');
     await key('Escape');
-    await until('!document.querySelector(".ant-modal-content") || document.querySelector(".ant-modal-wrap").style.display === "none"');
+    await until('!codexCardViewFixture.authDialog()');
     await evaluate('document.querySelectorAll("button[aria-label=\\"auth.json\\"]")[0].click(); codexCardViewFixture.state.deferAuth = true');
-    await until('Boolean([...document.querySelectorAll(".ant-modal-content button")].find(b=>b.textContent.includes("生成并预览")))');
-    await evaluate('[...document.querySelectorAll(".ant-modal-content button")].find(b=>b.textContent.includes("生成并预览")).click()');
+    await until('Boolean([...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("生成并预览")))');
+    await evaluate('[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("生成并预览")).click()');
     await until('Boolean(codexCardViewFixture.state.resolveAuth)');
-    await check(theme + ' duplicate operation disabled', '[...document.querySelectorAll(".ant-modal-content button")].find(b=>b.textContent.includes("复制 auth.json")).disabled');
+    await check(theme + ' duplicate operation disabled', '[...(codexCardViewFixture.authDialog()?.querySelectorAll("button") ?? [])].find(b=>b.textContent.includes("复制 auth.json")).disabled');
     await key('Escape');
     await evaluate('codexCardViewFixture.state.resolveAuth()');
     await wait(200);
-    await check(theme + ' late response after Escape leaves no secret editor', 'document.querySelectorAll(".ant-modal-content .monaco-editor").length', 0);
+    await check(theme + ' late response after Escape leaves no secret editor', '(codexCardViewFixture.authDialog(true)?.querySelectorAll(".monaco-editor").length ?? 0)', 0);
   }
   return checks;
 }
