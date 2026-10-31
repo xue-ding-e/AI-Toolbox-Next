@@ -1,7 +1,10 @@
 use super::types::{
     default_backup_file_filter_rules, default_sidebar_hidden_by_page, AppSettings,
-    BackupCustomEntry, BackupEncryptionConfig, BackupFileFilterRule,
-    S3Config, WebDAVConfig,
+    BackupCustomEntry, BackupEncryptionConfig, BackupFileFilterRule, S3Config, WebDAVConfig,
+};
+use ai_toolbox_storage::ui_preferences::{
+    gateway_usage_range_from_db_value, provider_list_state_from_db_value,
+    session_detail_filters_from_db_value,
 };
 /**
  * Settings Adapter Layer
@@ -11,10 +14,6 @@ use super::types::{
  */
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use ai_toolbox_storage::ui_preferences::{
-    gateway_usage_range_from_db_value, provider_list_state_from_db_value,
-    session_detail_filters_from_db_value,
-};
 
 /// Convert database JSON Value to AppSettings with fault tolerance
 /// Missing fields will use default values, never panics
@@ -786,10 +785,7 @@ mod tests {
             "visible_tabs": ["codex", "opencode", "gateway"],
         }));
 
-        assert_eq!(
-            settings.visible_tabs,
-            vec!["codex", "opencode", "gateway"]
-        );
+        assert_eq!(settings.visible_tabs, vec!["codex", "opencode", "gateway"]);
     }
 
     #[test]
@@ -1240,13 +1236,7 @@ mod tests {
         assert!(settings.sidebar_hidden_by_page.get("openclaw").copied() == Some(true));
         assert!(settings.sidebar_hidden_by_page.get("pi").copied() == Some(false));
         assert!(settings.sidebar_hidden_by_page.get("oh_my_pi").copied() == Some(true));
-        assert!(
-            settings
-                .sidebar_hidden_by_page
-                .get("omo_native")
-                .copied()
-                == Some(false)
-        );
+        assert!(settings.sidebar_hidden_by_page.get("omo_native").copied() == Some(false));
         assert!(settings.sidebar_hidden_by_page.get("hermes").copied() == Some(true));
         assert!(settings.sidebar_hidden_by_page.get("dsh").copied() == Some(true));
     }

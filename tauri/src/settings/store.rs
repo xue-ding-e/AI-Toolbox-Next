@@ -196,7 +196,10 @@ mod tests {
             })
             .expect("insert legacy row");
         let legacy = load_settings_from_sqlite_state(&sqlite_state).expect("load legacy");
-        assert_eq!(legacy.gateway_usage_range, GatewayUsageRangeSelection::default());
+        assert_eq!(
+            legacy.gateway_usage_range,
+            GatewayUsageRangeSelection::default()
+        );
         assert_eq!(legacy.gateway_usage_range.preset, "today");
 
         save_gateway_usage_range_to_sqlite_state(
@@ -333,39 +336,76 @@ mod tests {
         let db = SqliteDbState::in_memory_for_test().expect("synthetic sqlite");
         for read in 0..3 {
             crate::coding::cli_resolver::set_manual_cli_overrides(
-                [("synthetic-memory-tool".to_string(), "synthetic-memory-path".to_string())]
-                    .into_iter().collect(),
+                [(
+                    "synthetic-memory-tool".to_string(),
+                    "synthetic-memory-path".to_string(),
+                )]
+                .into_iter()
+                .collect(),
             );
             db.with_conn(|connection| {
-                db_put(connection, DbTable::Settings, SETTINGS_ID, &serde_json::json!({}))?;
+                db_put(
+                    connection,
+                    DbTable::Settings,
+                    SETTINGS_ID,
+                    &serde_json::json!({}),
+                )?;
                 // Make only this in-memory fixture's table unavailable. Do not
                 // disable JSONB CHECK constraints to manufacture a read failure.
-                connection.execute_batch("ALTER TABLE settings RENAME TO synthetic_unavailable_settings")
+                connection
+                    .execute_batch("ALTER TABLE settings RENAME TO synthetic_unavailable_settings")
                     .map_err(|error| error.to_string())?;
                 Ok(())
-            }).expect("seed failing startup read");
+            })
+            .expect("seed failing startup read");
             let startup_error = load_settings_from_sqlite_state(&db).unwrap_err();
             let narrow_error = match read {
-                0 => get_session_detail_filters_from_sqlite_state(&db).map(|_| ()).unwrap_err(),
-                1 => get_gateway_usage_range_from_sqlite_state(&db).map(|_| ()).unwrap_err(),
-                _ => crate::settings::provider_list_state::get_provider_list_state(&db).map(|_| ()).unwrap_err(),
+                0 => get_session_detail_filters_from_sqlite_state(&db)
+                    .map(|_| ())
+                    .unwrap_err(),
+                1 => get_gateway_usage_range_from_sqlite_state(&db)
+                    .map(|_| ())
+                    .unwrap_err(),
+                _ => crate::settings::provider_list_state::get_provider_list_state(&db)
+                    .map(|_| ())
+                    .unwrap_err(),
             };
             assert_eq!(narrow_error, startup_error);
-            assert!(crate::coding::cli_resolver::manual_cli_path_configured("synthetic-memory-tool"));
+            assert!(crate::coding::cli_resolver::manual_cli_path_configured(
+                "synthetic-memory-tool"
+            ));
             db.with_conn(|connection| {
-                connection.execute_batch("ALTER TABLE synthetic_unavailable_settings RENAME TO settings")
+                connection
+                    .execute_batch("ALTER TABLE synthetic_unavailable_settings RENAME TO settings")
                     .map_err(|error| error.to_string())?;
-                db_put(connection, DbTable::Settings, SETTINGS_ID, &serde_json::json!({
-                    "cli_manual_paths": {"synthetic-disk-tool": "synthetic-disk-path"}
-                }))
-            }).expect("restore fixture without registry sync");
+                db_put(
+                    connection,
+                    DbTable::Settings,
+                    SETTINGS_ID,
+                    &serde_json::json!({
+                        "cli_manual_paths": {"synthetic-disk-tool": "synthetic-disk-path"}
+                    }),
+                )
+            })
+            .expect("restore fixture without registry sync");
             match read {
-                0 => { get_session_detail_filters_from_sqlite_state(&db).expect("filters"); }
-                1 => { get_gateway_usage_range_from_sqlite_state(&db).expect("range"); }
-                _ => { crate::settings::provider_list_state::get_provider_list_state(&db).expect("providers"); }
+                0 => {
+                    get_session_detail_filters_from_sqlite_state(&db).expect("filters");
+                }
+                1 => {
+                    get_gateway_usage_range_from_sqlite_state(&db).expect("range");
+                }
+                _ => {
+                    crate::settings::provider_list_state::get_provider_list_state(&db)
+                        .expect("providers");
+                }
             }
-            assert!(!crate::coding::cli_resolver::manual_cli_path_configured("synthetic-memory-tool"));
-            assert!(crate::coding::cli_resolver::manual_cli_path_configured("synthetic-disk-tool"));
+            assert!(!crate::coding::cli_resolver::manual_cli_path_configured(
+                "synthetic-memory-tool"
+            ));
+            assert!(crate::coding::cli_resolver::manual_cli_path_configured(
+                "synthetic-disk-tool"
+            ));
         }
         println!("synthetic-ui-preferences-registry-restored");
     }
@@ -379,11 +419,13 @@ mod tests {
         let stdout_path = fixture.path().join("stdout");
         let stderr_path = fixture.path().join("stderr");
         let mut command = Command::new(std::env::current_exe().expect("libtest executable"));
-        command.args([
-            "--exact",
-            "settings::store::tests::narrow_ui_preference_registry_actor",
-            "--nocapture",
-        ]).env_clear()
+        command
+            .args([
+                "--exact",
+                "settings::store::tests::narrow_ui_preference_registry_actor",
+                "--nocapture",
+            ])
+            .env_clear()
             .env("AI_TOOLBOX_PREFERENCE_READ_ACTOR", "1")
             .env("HOME", fixture.path().join("missing-home"))
             .env("USERPROFILE", fixture.path().join("missing-home"))
@@ -434,13 +476,20 @@ mod tests {
         let stderr = std::fs::read_to_string(stderr_path).unwrap();
         assert!(status.success(), "registry actor failed: {stdout} {stderr}");
         assert!(stdout.contains("synthetic-ui-preferences-registry-restored"));
-        for name in ["missing-home", "missing-appdata", "missing-localappdata",
-            "missing-config", "missing-data", "missing-cache"]
-        {
-            assert!(!fixture.path().join(name).exists(), "unexpected child state: {name}");
+        for name in [
+            "missing-home",
+            "missing-appdata",
+            "missing-localappdata",
+            "missing-config",
+            "missing-data",
+            "missing-cache",
+        ] {
+            assert!(
+                !fixture.path().join(name).exists(),
+                "unexpected child state: {name}"
+            );
         }
     }
-
 
     #[test]
     fn narrow_ui_preference_wrappers_match_the_full_adapter_projection() {
@@ -464,15 +513,22 @@ mod tests {
             db.with_conn(|connection| db_put(connection, DbTable::Settings, SETTINGS_ID, &record))
                 .expect("seed preference fixture");
             let expected = adapter::from_db_value(record);
-            assert_eq!(get_session_detail_filters_from_sqlite_state(&db).unwrap(), expected.session_detail_filters);
-            assert_eq!(get_gateway_usage_range_from_sqlite_state(&db).unwrap(), expected.gateway_usage_range);
-            assert_eq!(crate::settings::provider_list_state::get_provider_list_state(&db).unwrap(),
+            assert_eq!(
+                get_session_detail_filters_from_sqlite_state(&db).unwrap(),
+                expected.session_detail_filters
+            );
+            assert_eq!(
+                get_gateway_usage_range_from_sqlite_state(&db).unwrap(),
+                expected.gateway_usage_range
+            );
+            assert_eq!(
+                crate::settings::provider_list_state::get_provider_list_state(&db).unwrap(),
                 crate::settings::types::ProviderListState {
                     sort_modes: expected.provider_sort_modes,
                     last_used: expected.provider_last_used,
                     view_modes: expected.provider_view_modes,
-                });
+                }
+            );
         }
     }
-
 }

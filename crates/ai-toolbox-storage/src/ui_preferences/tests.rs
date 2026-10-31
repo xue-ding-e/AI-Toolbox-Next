@@ -16,15 +16,19 @@ fn missing_record_reads_defaults_without_creating_or_writing() {
     let db = SqliteDbState::in_memory_for_test().unwrap();
     db.with_conn(|connection| {
         let changes = connection.total_changes();
-        assert_eq!(read_all(connection), json!({
-            "filters": null,
-            "range": {"preset": "today", "start_date": null, "end_date": null},
-            "providers": {},
-        }));
+        assert_eq!(
+            read_all(connection),
+            json!({
+                "filters": null,
+                "range": {"preset": "today", "start_date": null, "end_date": null},
+                "providers": {},
+            })
+        );
         assert!(db_get(connection, DbTable::Settings, SETTINGS_ID)?.is_none());
         assert_eq!(connection.total_changes(), changes);
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 #[test]
@@ -64,21 +68,42 @@ fn existing_partial_values_preserve_tolerant_decoding_and_dynamic_keys() {
 
 #[test]
 fn missing_null_and_wrong_type_blocks_keep_the_original_distinctions() {
-    for value in [Value::Null, json!({}), json!({
-        "session_detail_filters": null,
-        "gateway_usage_range": [],
-        "provider_sort_modes": "invalid"
-    }), json!({"session_detail_filters": false})] {
+    for value in [
+        Value::Null,
+        json!({}),
+        json!({
+            "session_detail_filters": null,
+            "gateway_usage_range": [],
+            "provider_sort_modes": "invalid"
+        }),
+        json!({"session_detail_filters": false}),
+    ] {
         assert_eq!(session_detail_filters_from_db_value(&value), None);
-        assert_eq!(gateway_usage_range_from_db_value(&value), GatewayUsageRangeSelection::default());
-        assert_eq!(provider_list_state_from_db_value(&value), ProviderListState::default());
+        assert_eq!(
+            gateway_usage_range_from_db_value(&value),
+            GatewayUsageRangeSelection::default()
+        );
+        assert_eq!(
+            provider_list_state_from_db_value(&value),
+            ProviderListState::default()
+        );
     }
-    assert_eq!(session_detail_filters_from_db_value(&json!({
-        "session_detail_filters": {"role_filter": [], "content_filter": false}
-    })), Some(SessionDetailFilters::default()));
-    assert_eq!(gateway_usage_range_from_db_value(&json!({
-        "gateway_usage_range": {"preset": "  ", "start_date": 7, "end_date": 9}
-    })), GatewayUsageRangeSelection { preset: "today".into(), start_date: Some(7), end_date: Some(9) });
+    assert_eq!(
+        session_detail_filters_from_db_value(&json!({
+            "session_detail_filters": {"role_filter": [], "content_filter": false}
+        })),
+        Some(SessionDetailFilters::default())
+    );
+    assert_eq!(
+        gateway_usage_range_from_db_value(&json!({
+            "gateway_usage_range": {"preset": "  ", "start_date": 7, "end_date": 9}
+        })),
+        GatewayUsageRangeSelection {
+            preset: "today".into(),
+            start_date: Some(7),
+            end_date: Some(9)
+        }
+    );
 }
 
 #[test]
@@ -113,28 +138,60 @@ fn readers_use_the_supplied_connections_uncommitted_transaction() {
     let db = SqliteDbState::in_memory_for_test().unwrap();
     db.with_conn(|connection| {
         connection.execute_batch("BEGIN").unwrap();
-        db_put(connection, DbTable::Settings, SETTINGS_ID, &json!({
-            "session_detail_filters": {"role_filter": {"user": false}},
-            "gateway_usage_range": {"preset": "synthetic-uncommitted"},
-            "provider_view_modes": {"synthetic-module": "card"}
-        }))?;
-        assert!(!read_session_detail_filters(connection)?.unwrap().role_filter.user);
-        assert_eq!(read_gateway_usage_range(connection)?.preset, "synthetic-uncommitted");
-        assert_eq!(read_provider_list_state(connection)?.view_modes["synthetic-module"], "card");
+        db_put(
+            connection,
+            DbTable::Settings,
+            SETTINGS_ID,
+            &json!({
+                "session_detail_filters": {"role_filter": {"user": false}},
+                "gateway_usage_range": {"preset": "synthetic-uncommitted"},
+                "provider_view_modes": {"synthetic-module": "card"}
+            }),
+        )?;
+        assert!(
+            !read_session_detail_filters(connection)?
+                .unwrap()
+                .role_filter
+                .user
+        );
+        assert_eq!(
+            read_gateway_usage_range(connection)?.preset,
+            "synthetic-uncommitted"
+        );
+        assert_eq!(
+            read_provider_list_state(connection)?.view_modes["synthetic-module"],
+            "card"
+        );
         connection.execute_batch("ROLLBACK").unwrap();
         assert!(read_session_detail_filters(connection)?.is_none());
-        assert_eq!(read_gateway_usage_range(connection)?, GatewayUsageRangeSelection::default());
-        assert_eq!(read_provider_list_state(connection)?, ProviderListState::default());
+        assert_eq!(
+            read_gateway_usage_range(connection)?,
+            GatewayUsageRangeSelection::default()
+        );
+        assert_eq!(
+            read_provider_list_state(connection)?,
+            ProviderListState::default()
+        );
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 #[test]
 fn unavailable_storage_reports_only_the_static_read_error() {
     // Deliberately no schema, without the storage initializer or any profile.
     let connection = Connection::open_in_memory().unwrap();
-    assert_eq!(read_session_detail_filters(&connection).unwrap_err(), "Unable to read UI preferences");
-    assert_eq!(read_gateway_usage_range(&connection).unwrap_err(), "Unable to read UI preferences");
-    assert_eq!(read_provider_list_state(&connection).unwrap_err(), "Unable to read UI preferences");
+    assert_eq!(
+        read_session_detail_filters(&connection).unwrap_err(),
+        "Unable to read UI preferences"
+    );
+    assert_eq!(
+        read_gateway_usage_range(&connection).unwrap_err(),
+        "Unable to read UI preferences"
+    );
+    assert_eq!(
+        read_provider_list_state(&connection).unwrap_err(),
+        "Unable to read UI preferences"
+    );
     assert_eq!(connection.total_changes(), 0);
 }

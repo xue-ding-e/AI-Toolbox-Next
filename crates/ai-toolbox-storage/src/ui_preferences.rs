@@ -198,7 +198,6 @@ pub fn session_detail_filters_from_db_value(value: &Value) -> Option<SessionDeta
     })
 }
 
-
 /// Preserve arbitrary existing module keys and string values; this is a UI
 /// projection, not a new module allowlist or semantic secret detector.
 pub fn provider_list_state_from_db_value(value: &Value) -> ProviderListState {
@@ -220,7 +219,9 @@ fn read_record(connection: &Connection) -> Result<Value, String> {
 pub fn read_session_detail_filters(
     connection: &Connection,
 ) -> Result<Option<SessionDetailFilters>, String> {
-    Ok(session_detail_filters_from_db_value(&read_record(connection)?))
+    Ok(session_detail_filters_from_db_value(&read_record(
+        connection,
+    )?))
 }
 
 pub fn read_gateway_usage_range(
