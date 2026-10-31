@@ -2,45 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GatewayCliKey {
-    Claude,
-    ClaudeDesktop,
-    Codex,
-    Grok,
-    Kimi,
-    Gemini,
-    Antigravity,
-    OpenCode,
-}
-
-impl GatewayCliKey {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::ClaudeDesktop => "claude_desktop",
-            Self::Codex => "codex",
-            Self::Grok => "grok",
-            Self::Kimi => "kimi",
-            Self::Gemini => "gemini",
-            Self::Antigravity => "antigravity",
-            Self::OpenCode => "opencode",
-        }
-    }
-
-    pub fn supported_mvp() -> Vec<Self> {
-        vec![
-            Self::Claude,
-            Self::ClaudeDesktop,
-            Self::Codex,
-            Self::Grok,
-            Self::Kimi,
-            Self::Gemini,
-            Self::Antigravity,
-        ]
-    }
-}
+// Keep the desktop type path stable while sharing the original enum semantics.
+pub use ai_toolbox_gateway_capabilities::GatewayCliKey;
 
 /// Usage collection is independent of gateway takeover support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1572,12 +1535,6 @@ pub struct GatewayModelHealthItem {
     pub next_retry_at: Option<DateTime<Utc>>,
     pub last_failure_at: Option<DateTime<Utc>>,
     pub last_error_category: Option<String>,
-}
-
-impl Default for GatewayCliKey {
-    fn default() -> Self {
-        Self::Claude
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

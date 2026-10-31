@@ -15,6 +15,8 @@
 
 ## Source of Truth
 
+- `GatewayCliKey` is re-exported from the pure `ai-toolbox-gateway-capabilities` crate. The supported query and `cli_proxy::is_supported_cli` delegate to that same crate. Preserve the original MVP order followed by the takeover predicate, not the seven-item MVP list alone; Antigravity and OpenCode are not newly enabled. This extraction adds no runtime, file or credential access.
+
 - 聚合子代理裸名模型的勾选是有序用户选择：接管与草稿保存都必须拒绝任何未被当前选中站点声明的勾选项，不能只过滤失效项后接受剩余项；空列表仍按旧 manifest 语义处理。
 - 全局网关设置来自 AI Toolbox 主数据库的 `proxy_gateway_settings`；必须直接读写 SQLite JSONB，旧 SurrealDB 仅用于启动时一次性导入。CLI 接管状态不进数据库，以 `proxy-gateway/cli-proxy/<cli>/manifest.json` 为准。
 - `AI_TOOLBOX_GATEWAY_PORT` 是隔离测试启动器的进程级端口覆盖：读取或保存任何已存在的 `proxy_gateway_settings` 记录时都必须强制采用该合法端口，不能只在“无记录走 Default”时生效；否则复用既有数据库的隔离实例会继续打开生产端口 37123。env 未设置或非法时保持原设置，不要回写默认端口。

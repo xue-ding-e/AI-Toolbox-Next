@@ -1830,15 +1830,7 @@ pub async fn ensure_proxyable_provider(
 /// narrower than [`GatewayCliKey::supported_mvp`], which additionally lists
 /// CLIs whose config the gateway knows about but cannot yet rewrite.
 pub fn is_supported_cli(cli_key: GatewayCliKey) -> bool {
-    matches!(
-        cli_key,
-        GatewayCliKey::Claude
-            | GatewayCliKey::ClaudeDesktop
-            | GatewayCliKey::Codex
-            | GatewayCliKey::Grok
-            | GatewayCliKey::Kimi
-            | GatewayCliKey::Gemini
-    )
+    ai_toolbox_gateway_capabilities::is_supported_cli(cli_key)
 }
 
 async fn resolve_targets(

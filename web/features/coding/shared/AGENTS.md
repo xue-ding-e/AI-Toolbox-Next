@@ -51,7 +51,7 @@
 - `ModelListSection.module.less`：折叠形态要 `transparentCollapse`（antd Collapse 每一层都画自己的底色，漏掉就会在**有底色的卡片**上露出白色标题条——该规则原本在 codex / grok 各自 `.less` 里逐字重复，漏 import 时完全看不出来，能潜伏很久），常开形态只需区块自己不画底色，行则靠 `transparentRows`（同名 prop 自动施加）。**CLI 侧不要再自己写一份透明规则。**
 - `providerConfig/ProviderFormSections.tsx` 是供应商编辑弹窗的**分区编排**（模型映射 → 高级设置 → 计费 → 请求头 → 模型改写 → 速度档改写 → 备注）。`modelMapping` 是可选 prop：**有映射表的 CLI 传，没有的不传**（Codex 的模型目录在卡片列表上，弹窗里没有映射表，这是有意差异）。`advancedSettings` 由调用方传——编辑器随 CLI 变（Claude 的 JSON vs Codex 的 TOML），校验规则也不同。备注区文案走 `common.provider.notes`/`notesPlaceholder`（各 CLI 相同，无 `i18nPrefix`）。顶部通用字段（渠道/名称/URL/Key）刻意不共享，各 CLI 的校验和渠道联动差异太大。见 §4.2.6。
 - `providerServiceTiers/`（issue #414，界面叫「速度档改写」）是"按模型改写速度档"的 meta 读写对，与 `providerModelRewrites/` 同构：`meta.modelServiceTiers: ModelServiceTierEntry[]`，每行 = 上游模型 + 目标档位（`priority` = Fast / `ultrafast`）。**与模型目录里的 `serviceTiers` 是两回事**——那个只写进生成的 Codex `model_catalog`，告诉 Codex 该模型支持哪些档；这个是网关在转发时补写 `service_tier`。网关只在目标协议是 OpenAI Chat / Responses、且请求自身没有指定高级档时才改写，所以 CLI 显式选的档位永远优先。当前只在 Codex 供应商弹窗接线（`showModelServiceTiers` 可选 prop，默认跟 `editable`），其它 CLI 不传；后端运行时对任何 provider meta 都生效。
-- `gateway/useGatewaySupportedCliKeys.ts` 提供"该 CLI 能否被网关接管"的判定，供供应商表单的协议下拉置灰用。判定源是后端 `GatewayCliKey::supported_mvp()`（经命令 `proxy_gateway_supported_cli_keys` 暴露），**不要在前端维护镜像列表**。加载中返回 `undefined`，调用方只在明确 `false` 时置灰（避免加载瞬间锁死用户）。注意与 `GATEWAY_USAGE_TOOLS` 区分：后者只是统计收集，不代表能接管。见 §4.2.7。
+- `gateway/useGatewaySupportedCliKeys.ts` 提供"该 CLI 能否被网关接管"的判定，供供应商表单的协议下拉置灰用。判定源是共享 service 中 `GatewayCliKey::supported_mvp()` 经 `is_supported_cli` 过滤后的有序交集（经命令 `proxy_gateway_supported_cli_keys` 暴露；不是原始七项 MVP 列表），**不要在前端维护镜像列表**。加载中返回 `undefined`，调用方只在明确 `false` 时置灰（避免加载瞬间锁死用户）。注意与 `GATEWAY_USAGE_TOOLS` 区分：后者只是统计收集，不代表能接管。见 §4.2.7。
 
 ## 关键流程
 

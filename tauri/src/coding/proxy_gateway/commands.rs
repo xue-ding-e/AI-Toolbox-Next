@@ -332,11 +332,7 @@ pub fn proxy_gateway_check_port_available(
 /// usage-collection tool list (collecting usage does not imply takeover).
 #[tauri::command]
 pub fn proxy_gateway_supported_cli_keys() -> Result<Vec<String>, String> {
-    Ok(GatewayCliKey::supported_mvp()
-        .into_iter()
-        .filter(|cli_key| cli_proxy::is_supported_cli(*cli_key))
-        .map(|cli_key| cli_key.as_str().to_string())
-        .collect())
+    Ok(ai_toolbox_gateway_capabilities::supported_cli_keys())
 }
 
 #[tauri::command]
@@ -1199,6 +1195,16 @@ fn is_sensitive_key(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn supported_cli_query_delegates_to_shared_takeover_gate() {
+        let result = super::proxy_gateway_supported_cli_keys().unwrap();
+        assert_eq!(result, ai_toolbox_gateway_capabilities::supported_cli_keys());
+        assert_eq!(result, ["claude", "claude_desktop", "codex", "grok", "kimi", "gemini"]);
+        for key in super::GatewayCliKey::supported_mvp().into_iter().chain([super::GatewayCliKey::OpenCode]) {
+            assert_eq!(super::cli_proxy::is_supported_cli(key), ai_toolbox_gateway_capabilities::is_supported_cli(key));
+        }
+    }
+
     use super::*;
     use crate::coding::proxy_gateway::types::GatewayRequestLogSummary;
 
