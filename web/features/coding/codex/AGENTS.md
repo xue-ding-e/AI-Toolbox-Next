@@ -37,6 +37,8 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- Account-list enrichment may finish after a newer root/provider reload. Check `officialAccountLoadGeneration` inside its background completion callback before every state-write group, including empty results after rejection. `CodexPageLoad.test.ts` executes the real callback with deferred synthetic responses; it does not replace DOM or native-account acceptance.
+
 - 不要把页面上的 root path 只当展示信息。它直接决定当前读写哪份 `config.toml` / `auth.json` / active prompt 文件。
 - 导入 provider 时的冲突分支、favorite provider 备份和 tray refresh 是一组相邻语义，改一个时通常要一起检查。
 - 前端表单不要引入比后端更强的 paired validation，尤其是可选字段和导入数据兼容性相关字段。

@@ -615,6 +615,7 @@ const CodexPage: React.FC = () => {
             : [],
         ] as const),
       ).then((officialAccountEntries) => {
+      if (officialAccountLoadGeneration.current !== generation) return;
       const accountsByProviderId = Object.fromEntries(officialAccountEntries.map(([providerId, accounts]) => [
         providerId,
         accounts.map((account) => reconcileOfficialAccountUsage(
