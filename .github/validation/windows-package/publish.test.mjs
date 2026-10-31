@@ -1,3 +1,4 @@
+import { shellBaseline } from './automation-profile.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
@@ -16,6 +17,7 @@ async function fixture(t) {
   provenance.automation = { ownership: {exit_code:0,natural_quiescence:true,quiescence_confirmed:true,timed_out:false,output_exceeded:false,tool_cleanup:null}, executable: 'ai-toolbox-cli.exe', sha256: 'e'.repeat(64), bytes: 123, package_version: '0.1.0', mcp_args: ['mcp', 'serve'], lifecycle: {
     source_commit: expected.sha, installer_sha256: digest,
     automation: { sha256: 'e'.repeat(64), cli_mcp_installed_calls_verified: true, version: {ok:true, data:{name:'ai-toolbox-cli',version:'0.1.0'}} },
+    shell_profile_initialized_before_install: true, shell_profile_baseline: structuredClone(shellBaseline),
     synthetic_install_verified: true, same_version_reinstall_verified: true, synthetic_sentinel_preserved: true, registry_path_unchanged: true, uninstall_console_removed: true,
     previous_gui: {executable:'ai-toolbox.exe',bytes:123,sha256:'c'.repeat(64)}, foreign_install_file_preserved: true, external_roots_unchanged: true, uninstall_registration_verified: true, generated_nsis_sha256: 'd'.repeat(64), gui_only_upgrade_verified: true, previous_installer_sha256: '1451c7cf8eec647edaaf284d6ab451a65b2433d2867cb201d4554310f590a658', real_configuration_migration_verified: false, native_gui_verified: false,
   } };
@@ -88,7 +90,7 @@ test('rejects oversized provenance before parsing', async t => {
   await assert.rejects(validateArtifacts(dir, expected), /file type or size/);
 });
 
-for (const change of [a => a.sha256 = 'f'.repeat(64), a => a.package_version = '0.2.0', a => a.lifecycle.registry_path_unchanged = false, a => a.lifecycle.gui_only_upgrade_verified = false, a => a.lifecycle.automation.cli_mcp_installed_calls_verified = false]) {
+for (const change of [a => delete a.lifecycle.shell_profile_initialized_before_install, a => delete a.lifecycle.shell_profile_baseline, a => a.lifecycle.shell_profile_baseline.Desktop['desktop.ini'] = 'unknown', a => a.sha256 = 'f'.repeat(64), a => a.package_version = '0.2.0', a => a.lifecycle.registry_path_unchanged = false, a => a.lifecycle.gui_only_upgrade_verified = false, a => a.lifecycle.automation.cli_mcp_installed_calls_verified = false]) {
   test('rejects incomplete or mismatched automation evidence', async t => {
     const {dir, provenance} = await fixture(t); change(provenance.automation);
     await writeFile(join(dir, 'build-provenance.json'), JSON.stringify(provenance));

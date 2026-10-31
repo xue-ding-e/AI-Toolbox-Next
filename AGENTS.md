@@ -1159,3 +1159,9 @@ Two distinct key sets — do not conflate:
 - Regression tests for this class of bug must assert that a newly added key round-trips its stored value through the full read path, not just that the default is present.
 - Do not silently truncate coverage. If a list intentionally excludes some keys (e.g. a historical `PRE_*` migration baseline snapshot, or a tool that has no MCP config), leave a comment saying so.
 - A module whose effective config root can be a WSL UNC path must participate in shared runtime-location status and refresh that status after directory changes, even if its directory precedence is implemented by its own reusable resolver. Test save -> read status -> sync skip -> switch back to local as one lifecycle. Fixed-path GUI-config tools (e.g. claudedesktop) do not need registration solely because they have a tab.
+
+## Windows installer qualification fixture
+
+- NSIS 3.11 resolves shell variables with `SHGetFolderPath` and may create KnownFolder `desktop.ini` metadata even under `/NS`. Before freezing a synthetic HOME snapshot, the CI-only `windows-shell-fixture.ps1` must probe all destinations without creation, reject out-of-root paths/reparse points, then initialize only the three reviewed folders. `automation-profile.mjs` validates the complete canonical tree; never ignore `desktop.ini` or reset a baseline after installation.
+- Run the fixture-only old-GUI install/uninstall qualification before a cold bundle build when changing profile isolation. Fixture success is not CLI/MCP qualification; the full installed-executable, transition, reinstall, uninstall and owned-process gates remain mandatory.
+- Diagnostic binaries must be explicitly unqualified, source/tree/control/run/hash bound and short-lived. They are not sealed release assets and cannot replace same-run process-ownership/lifecycle evidence.

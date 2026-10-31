@@ -1,3 +1,4 @@
+import { assertShellBaseline } from './automation-profile.mjs';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -45,6 +46,8 @@ function main(mode) {
   const binding = owner.binding;
   if (!binding || binding.source_commit !== sha || binding.control_commit !== process.env.GITHUB_SHA || binding.workflow_run !== process.env.GITHUB_RUN_ID || binding.workflow_attempt !== process.env.GITHUB_RUN_ATTEMPT || binding.installer_sha256 !== sha256 || binding.helper_sha256 !== hashFile('.github/validation/windows-package/windows-owned-process.ps1') || binding.root_script !== '.github/validation/windows-package/automation-install.mjs' || binding.root_script_sha256 !== hashFile(binding.root_script) || binding.lifecycle_sha256 !== hashFile(`${process.env.RUNNER_TEMP}/automation-install.json`) || binding.compiler_exception_enabled !== false || !/^[a-f0-9]{32}$/.test(binding.invocation_id ?? '') || binding.invocation_id !== lifecycle.invocation_id) throw new Error('Owned lifecycle receipt binding mismatch');
   if (lifecycle.source_commit !== sha || lifecycle.installer_sha256 !== sha256 || lifecycle.automation?.sha256 !== automationSha || lifecycle.automation?.cli_mcp_installed_calls_verified !== true || lifecycle.synthetic_install_verified !== true || lifecycle.same_version_reinstall_verified !== true || lifecycle.synthetic_sentinel_preserved !== true || lifecycle.registry_path_unchanged !== true || lifecycle.uninstall_console_removed !== true || lifecycle.gui_only_upgrade_verified !== true || lifecycle.previous_installer_sha256 !== '1451c7cf8eec647edaaf284d6ab451a65b2433d2867cb201d4554310f590a658' || lifecycle.foreign_install_file_preserved !== true || lifecycle.external_roots_unchanged !== true || lifecycle.uninstall_registration_verified !== true) throw new Error('Installed automation provenance mismatch');
+  if (lifecycle.shell_profile_initialized_before_install !== true) throw new Error('Shell fixture initialization missing');
+  assertShellBaseline(lifecycle.shell_profile_baseline);
   if (lifecycle.automation?.version?.ok !== true || lifecycle.automation?.version?.data?.name !== 'ai-toolbox-cli' || lifecycle.automation?.version?.data?.version !== automationVersion) throw new Error('Installed automation version mismatch');
   if (!automationVersion) throw new Error('Automation package version missing');
   mkdirSync('release-assets');

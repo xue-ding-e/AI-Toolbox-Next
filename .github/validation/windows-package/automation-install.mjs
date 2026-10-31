@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, realpathSync, lstatSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { run, smoke, digest } from './automation-smoke.mjs';
+import { snapshot, initializeShellProfile } from './automation-profile.mjs';
 
 assert.equal(process.platform, 'win32');
 assert.match(process.env.AUTOMATION_INVOCATION_ID ?? '', /^[a-f0-9]{32}$/);
@@ -60,12 +61,9 @@ async function registeredUninstaller() {
 }
 const beforePaths = await paths();
 const externalRoots = ['HOME', 'APPDATA', 'LOCALAPPDATA', 'AI_TOOLBOX_CACHE_DIR', 'CODEX_HOME'];
-function snapshot(path) {
-  if (!existsSync(path)) return null;
-  assert(!lstatSync(path).isSymbolicLink(), 'Synthetic tree must not contain links');
-  if (statSync(path).isFile()) return digest(path);
-  return Object.fromEntries(readdirSync(path).sort().map(name => [name, snapshot(join(path, name))]));
-}
+const shellBefore = Object.fromEntries(externalRoots.filter(key => key !== 'HOME').map(key => [key, snapshot(env[key])]));
+const shellProfile = await initializeShellProfile(env);
+for (const [key, value] of Object.entries(shellBefore)) assert.deepEqual(snapshot(env[key]), value, `Shell initialization wrote outside HOME: ${key}`);
 const externalBefore = Object.fromEntries(externalRoots.map(key => [key, snapshot(env[key])]));
 const foreignName = 'not-owned-by-installer.fixture';
 let foreignCreated = false;
@@ -131,6 +129,7 @@ writeFileSync(evidence, JSON.stringify({
   // The pinned old and new packages may share an app version: this is a GUI-only to bundled-console transition, not version migration.
   product_version_increase_verified: false, preinstalled_webview_required: true,
   gui_only_upgrade_verified: Boolean(previousArg), previous_installer_sha256: previousHash ?? null,
+  shell_profile_initialized_before_install: true, shell_profile_baseline: shellProfile,
   synthetic_sentinel_preserved: true, foreign_install_file_preserved: true, external_roots_unchanged: true, registry_path_unchanged: true, uninstall_console_removed: true,
   // No real settings DB migration or interactive GUI acceptance is inferred.
   real_configuration_migration_verified: false, native_gui_verified: false,

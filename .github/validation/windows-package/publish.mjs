@@ -1,3 +1,4 @@
+import { assertShellBaseline } from './automation-profile.mjs';
 // Validate downloaded same-run artifacts before a separate authorized release job.
 // This module never accesses credentials, creates releases, or replaces assets.
 import { lstat, readdir, readFile } from 'node:fs/promises';
@@ -48,6 +49,8 @@ export async function validateArtifacts(directory, expected) {
   requireValue(lifecycle?.source_commit === sha && lifecycle.installer_sha256 === provenance.sha256 && lifecycle.automation?.sha256 === automation.sha256, 'Automation lifecycle source mismatch');
   requireValue(lifecycle.automation?.version?.ok === true && lifecycle.automation.version.data?.name === 'ai-toolbox-cli' && lifecycle.automation.version.data?.version === automation.package_version, 'Installed automation version mismatch');
   for (const key of ['synthetic_install_verified', 'same_version_reinstall_verified', 'synthetic_sentinel_preserved', 'registry_path_unchanged', 'uninstall_console_removed', 'foreign_install_file_preserved', 'external_roots_unchanged', 'uninstall_registration_verified']) requireValue(lifecycle[key] === true, 'Incomplete automation lifecycle');
+  requireValue(lifecycle.shell_profile_initialized_before_install === true, 'Shell fixture initialization missing');
+  assertShellBaseline(lifecycle.shell_profile_baseline);
   requireValue(lifecycle.automation.cli_mcp_installed_calls_verified === true && lifecycle.real_configuration_migration_verified === false && lifecycle.native_gui_verified === false, 'Unexpected automation validation claim');
   requireValue(lifecycle.gui_only_upgrade_verified === true && lifecycle.previous_installer_sha256 === '1451c7cf8eec647edaaf284d6ab451a65b2433d2867cb201d4554310f590a658' && /^[a-f0-9]{64}$/.test(lifecycle.generated_nsis_sha256 ?? ''), 'Invalid upgrade evidence');
   requireValue(lifecycle.previous_gui && /^[a-zA-Z0-9_. -]+\.exe$/.test(lifecycle.previous_gui.executable ?? '') && Number.isSafeInteger(lifecycle.previous_gui.bytes) && lifecycle.previous_gui.bytes > 2 && /^[a-f0-9]{64}$/.test(lifecycle.previous_gui.sha256 ?? ''), 'Missing installed GUI-only baseline evidence');
