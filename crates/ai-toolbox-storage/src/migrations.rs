@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 30;
+pub const TARGET_SCHEMA_VERSION: i32 = 31;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -99,6 +99,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
         run_migration_step(conn, 30, migrate_v30)?;
     }
 
+    if current_version < 31 {
+        run_migration_step(conn, 31, migrate_v31)?;
+    }
     Ok(())
 }
 
@@ -570,7 +573,12 @@ fn migrate_v26(conn: &Connection) -> Result<(), String> {
 /// means "no premium tier billed".
 fn migrate_v27(conn: &Connection) -> Result<(), String> {
     add_column_if_missing(conn, "proxy_request_logs", "service_tier", "TEXT")?;
-    add_column_if_missing(conn, "proxy_request_logs", "service_tier_multiplier", "TEXT")
+    add_column_if_missing(
+        conn,
+        "proxy_request_logs",
+        "service_tier_multiplier",
+        "TEXT",
+    )
 }
 
 fn migrate_v28(conn: &Connection) -> Result<(), String> {
@@ -597,7 +605,12 @@ fn migrate_v29(conn: &Connection) -> Result<(), String> {
     add_column_if_missing(conn, "proxy_request_logs", "credits", "REAL")?;
     // Added before the rebuild so the INSERT ... SELECT below can copy it from
     // the old table; the rebuilt table declares it itself.
-    add_column_if_missing(conn, "usage_daily_rollups", "credits", "REAL NOT NULL DEFAULT 0")?;
+    add_column_if_missing(
+        conn,
+        "usage_daily_rollups",
+        "credits",
+        "REAL NOT NULL DEFAULT 0",
+    )?;
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_request_logs_project
             ON proxy_request_logs(project_path);",
@@ -668,6 +681,12 @@ fn migrate_v30(conn: &Connection) -> Result<(), String> {
     // Fresh databases already create ALL_TABLES in v1. This idempotent step
     // also upgrades existing v29 databases without changing frozen migrations.
     create_jsonb_table(conn, DbTable::CodexContextOperation)
+}
+
+/// Existing builds may have recorded schema v30 before the context ledger was present.
+/// Re-run the idempotent table creation at v31 without changing existing rows.
+fn migrate_v31(conn: &Connection) -> Result<(), String> {
+    migrate_v30(conn)
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {

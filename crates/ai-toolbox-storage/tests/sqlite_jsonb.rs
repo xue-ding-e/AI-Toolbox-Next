@@ -17,7 +17,10 @@ fn standalone_state_initializes_schema_jsonb_and_bundled_pricing() {
             let count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
                 .map_err(|error| error.to_string())?;
-            assert!(count > 0, "standalone initialization must not omit pricing seed");
+            assert!(
+                count > 0,
+                "standalone initialization must not omit pricing seed"
+            );
             assert_eq!(model_pricing_seed::ensure_seeded_from_bundled(conn)?, 0);
             assert!(ALL_TABLES.contains(&DbTable::CodexContextOperation));
             assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
@@ -81,7 +84,10 @@ fn v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records(
     let state = SqliteDbState::open(path.clone()).unwrap();
     state
         .with_conn(|conn| {
-            assert_eq!(migrations::get_user_version(conn)?, 30);
+            assert_eq!(
+                migrations::get_user_version(conn)?,
+                migrations::TARGET_SCHEMA_VERSION
+            );
             assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
             assert_eq!(
                 db_get(conn, DbTable::CodexCommonConfig, "common")?,
@@ -107,8 +113,11 @@ fn v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records(
         db_get(&snapshot, DbTable::CodexCommonConfig, "common").unwrap(),
         Some(original)
     );
-    let entries_after_snapshot_read: Vec<_> = std::fs::read_dir(dir.path().join(SQLITE_MIGRATION_BACKUP_DIR))
-        .unwrap().map(|entry| entry.unwrap().file_name()).collect();
+    let entries_after_snapshot_read: Vec<_> =
+        std::fs::read_dir(dir.path().join(SQLITE_MIGRATION_BACKUP_DIR))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
     eprintln!("backup directory immediately after read-only snapshot queries: {entries_after_snapshot_read:?}");
     state.with_conn_mut(migrations::run_all).unwrap();
     drop(state);
@@ -127,19 +136,35 @@ fn v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records(
         .collect();
     entries.sort();
     let backup_name = snapshots[0].file_name().unwrap().to_str().unwrap();
-    let allowed = [backup_name.to_owned(), format!("{backup_name}-wal"), format!("{backup_name}-shm")];
+    let allowed = [
+        backup_name.to_owned(),
+        format!("{backup_name}-wal"),
+        format!("{backup_name}-shm"),
+    ];
     for entry in &entries {
         assert!(entry.is_file());
-        assert!(allowed.iter().any(|name| entry.file_name().unwrap() == name.as_str()),
-                "unexpected backup-directory entry: {:?}", entry.file_name());
+        assert!(
+            allowed
+                .iter()
+                .any(|name| entry.file_name().unwrap() == name.as_str()),
+            "unexpected backup-directory entry: {:?}",
+            entry.file_name()
+        );
     }
-    let database_snapshots: Vec<_> = entries.iter()
+    let database_snapshots: Vec<_> = entries
+        .iter()
         .filter(|entry| entry.extension().is_some_and(|extension| extension == "db"))
-        .cloned().collect();
+        .cloned()
+        .collect();
     assert_eq!(database_snapshots, snapshots);
     assert_eq!(std::fs::read(&snapshots[0]).unwrap(), snapshot_bytes);
-    eprintln!("backup directory after reopen: {:?}",
-              entries.iter().map(|entry| entry.file_name().unwrap()).collect::<Vec<_>>());
+    eprintln!(
+        "backup directory after reopen: {:?}",
+        entries
+            .iter()
+            .map(|entry| entry.file_name().unwrap())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
