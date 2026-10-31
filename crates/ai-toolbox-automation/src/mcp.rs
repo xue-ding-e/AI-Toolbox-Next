@@ -1,4 +1,4 @@
-//! Bounded, synchronous stdio MCP adapter for one shared path service.
+//! Bounded, synchronous stdio MCP adapter for shared path and static gateway capability services.
 //! Explicitly supports revision 2025-11-25, not an implicit latest revision.
 //! Discovery never initializes an owner, storage or a desktop.
 use serde_json::{json, Value};
@@ -6,6 +6,7 @@ use std::io::{self, BufRead, Write};
 
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
 pub const TOOL_NAME: &str = "backup_normalize_path";
+pub const GATEWAY_TOOL_NAME: &str = "gateway_supported_cli_keys";
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 #[derive(Default)]
@@ -94,7 +95,7 @@ impl Server {
             self.initialized = true;
             return Some(success(
                 id,
-                json!({"protocolVersion":PROTOCOL_VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"ai-toolbox-cli","version":env!("CARGO_PKG_VERSION")},"instructions":"Only backup path normalization is implemented. No account, storage or desktop operation is exposed."}),
+                json!({"protocolVersion":PROTOCOL_VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"ai-toolbox-cli","version":env!("CARGO_PKG_VERSION")},"instructions":"Only backup path normalization and static gateway capability queries are implemented. No takeover, account, storage or desktop operation is exposed."}),
             ));
         }
         if method == "ping" {
@@ -114,7 +115,7 @@ impl Server {
                 }
                 Some(success(
                     id,
-                    json!({"tools":[{"name":TOOL_NAME,"description":"Normalize a supplied backup path through the desktop's shared service. Resolves host home/config directories and path environment, without reading or writing target file contents. This is not a path safety validator.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"outputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}]}),
+                    json!({"tools":[{"name":TOOL_NAME,"description":"Normalize a supplied backup path through the desktop's shared service. Resolves host home/config directories and path environment, without reading or writing target file contents. This is not a path safety validator.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"outputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}, {"name":GATEWAY_TOOL_NAME,"description":"Query static gateway takeover CLI support through the desktop's shared service. Does not enable takeover or inspect running status, installed CLIs, configuration or user files.","inputSchema":{"type":"object","properties":{},"additionalProperties":false},"outputSchema":{"type":"object","properties":{"cli_keys":{"type":"array","items":{"type":"string"}}},"required":["cli_keys"],"additionalProperties":false},"annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}]}),
                 ))
             }
             "tools/call" => {
@@ -124,8 +125,22 @@ impl Server {
                 if params
                     .keys()
                     .any(|k| !matches!(k.as_str(), "name" | "arguments" | "_meta"))
-                    || params.get("name").and_then(Value::as_str) != Some(TOOL_NAME)
                 {
+                    return Some(error(id, -32602, "Invalid params"));
+                }
+                if params.get("name").and_then(Value::as_str) == Some(GATEWAY_TOOL_NAME) {
+                    if params.get("arguments").is_some_and(|args| {
+                        !args.as_object().is_some_and(|object| object.is_empty())
+                    }) {
+                        return Some(error(id, -32602, "Invalid params"));
+                    }
+                    let output = json!({"cli_keys": ai_toolbox_gateway_capabilities::supported_cli_keys()});
+                    return Some(success(
+                        id,
+                        json!({"content":[{"type":"text","text":output.to_string()}],"structuredContent":output,"isError":false}),
+                    ));
+                }
+                if params.get("name").and_then(Value::as_str) != Some(TOOL_NAME) {
                     return Some(error(id, -32602, "Invalid params"));
                 }
                 let Some(args) = params.get("arguments").and_then(Value::as_object) else {
@@ -247,8 +262,9 @@ mod tests {
                 &mut |_| panic!(),
             )
             .unwrap();
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 2);
         assert_eq!(list["result"]["tools"][0]["name"], TOOL_NAME);
+        assert_eq!(list["result"]["tools"][1]["name"], GATEWAY_TOOL_NAME);
     }
     #[test]
     fn notifications_and_invalid_calls_do_not_dispatch() {
@@ -270,6 +286,23 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn gateway_query_rejects_arguments_and_never_resolves_paths() {
+        let mut s = Server::default();
+        init(&mut s);
+        for arguments in [json!({}), Value::Null, json!({"path":"fixture"}), json!([])] {
+            let request = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+                "name":GATEWAY_TOOL_NAME,"arguments":arguments}});
+            let result = s.handle(&serde_json::to_vec(&request).unwrap(), &mut |_| panic!("gateway query resolved paths")).unwrap();
+            if arguments == json!({}) {
+                assert_eq!(result["result"]["structuredContent"], json!({"cli_keys": ai_toolbox_gateway_capabilities::supported_cli_keys()}));
+                assert_eq!(result["result"]["isError"], false);
+            } else {
+                assert_eq!(result["error"]["code"], -32602);
+            }
+        }
+    }
+
     #[test]
     fn malformed_initialized_does_not_make_ready() {
         let mut s = Server {

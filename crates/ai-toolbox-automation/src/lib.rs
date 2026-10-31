@@ -1,4 +1,4 @@
-//! Headless contract foundation with one shared path-normalization service.
+//! Headless contract foundation with shared path-normalization and static gateway capability services.
 //!
 //! Schema version 1 is independent of desktop/package versions. Breaking wire
 //! changes require a new schema version; consumers must reject unknown versions.
@@ -51,7 +51,8 @@ Status does not prove DB readiness or complete writer admission. No daemon is st
 Context syntax is a Linux local client, not a claim that an owner enables writes.\n\
 ContextSet is reserved and returns NOT_SUPPORTED before path or connection I/O.\n\
 backup normalize-path --path <path> normalizes a supplied path without target file I/O.\n\
-mcp serve exposes only this path service over stdio (MCP 2025-11-25).\n\
+gateway supported-cli-keys queries static takeover support, not live status.\n\
+mcp serve exposes the path service and static gateway query over stdio (MCP 2025-11-25).\n\
 PID, start time, full daemon lifecycle and the P0 workflow remain incomplete.\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +62,7 @@ pub enum Operation {
     Capabilities,
     CodexStatus,
     BackupNormalizePath,
+    GatewaySupportedCliKeys,
     DaemonStatus,
     ContextInspect,
     ContextSet,
@@ -68,12 +70,13 @@ pub enum Operation {
 }
 
 impl Operation {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Help,
         Self::Version,
         Self::Capabilities,
         Self::CodexStatus,
         Self::BackupNormalizePath,
+        Self::GatewaySupportedCliKeys,
         Self::DaemonStatus,
         Self::ContextInspect,
         Self::ContextSet,
@@ -87,6 +90,7 @@ impl Operation {
             Self::Capabilities => "automation.capabilities",
             Self::CodexStatus => "codex.status",
             Self::BackupNormalizePath => "backup.normalize_path",
+            Self::GatewaySupportedCliKeys => "gateway.supported_cli_keys",
             Self::DaemonStatus => "daemon.status",
             Self::ContextInspect => "codex.context.inspect",
             Self::ContextSet => "codex.context.set",
@@ -101,6 +105,7 @@ impl Operation {
             Self::Capabilities => "capabilities",
             Self::CodexStatus => "codex status",
             Self::BackupNormalizePath => "backup normalize-path --path <path>",
+            Self::GatewaySupportedCliKeys => "gateway supported-cli-keys",
             Self::DaemonStatus => "daemon status",
             Self::ContextInspect => "codex context inspect",
             Self::ContextSet => "codex context set",
@@ -132,6 +137,7 @@ pub enum Command {
     Capabilities,
     CodexStatus,
     BackupNormalizePath(BackupPathInput),
+    GatewaySupportedCliKeys,
     DaemonStatus(OwnerStatusInput),
     ContextInspect(OwnerStatusInput),
     ContextSet(ContextSetInput),
@@ -146,6 +152,7 @@ impl Command {
             Self::Capabilities => Operation::Capabilities,
             Self::CodexStatus => Operation::CodexStatus,
             Self::BackupNormalizePath(_) => Operation::BackupNormalizePath,
+            Self::GatewaySupportedCliKeys => Operation::GatewaySupportedCliKeys,
             Self::DaemonStatus(_) => Operation::DaemonStatus,
             Self::ContextInspect(_) => Operation::ContextInspect,
             Self::ContextSet(_) => Operation::ContextSet,
@@ -319,6 +326,7 @@ pub enum Data {
     Version,
     Capabilities,
     BackupPath(String),
+    GatewayCliKeys(Vec<String>),
     OwnerStatus(OwnerStatusData),
     #[cfg(target_os = "linux")]
     ContextInspection(ai_toolbox_management::transport::ContextInspection),
@@ -379,6 +387,9 @@ pub fn execute(command: Command) -> Envelope {
                     message: error.message(),
                 })
         }
+        Command::GatewaySupportedCliKeys => Ok(Data::GatewayCliKeys(
+            ai_toolbox_gateway_capabilities::supported_cli_keys(),
+        )),
         Command::DaemonStatus(input) => owner_status(input).map(Data::OwnerStatus),
         command @ (Command::ContextInspect(_)
         | Command::ContextSet(_)
@@ -702,7 +713,7 @@ impl Envelope {
             ),
             Ok(Data::Capabilities) => {
                 let mut result = String::from(
-                    "Automation foundation. Business coverage: partial (backup path normalization). MCP: stdio 2025-11-25.\n",
+                    "Automation foundation. Business coverage: partial (backup path normalization and static gateway capability query). MCP: stdio 2025-11-25.\n",
                 );
                 for operation in Operation::ALL {
                     let _ = writeln!(
@@ -722,6 +733,7 @@ impl Envelope {
                 result
             }
             Ok(Data::BackupPath(path)) => format!("{path}\n"),
+            Ok(Data::GatewayCliKeys(keys)) => format!("{}\n", keys.join("\n")),
             Ok(Data::OwnerStatus(status)) => format!(
                 "profile_lease_held: {}\nThis does not establish database readiness or complete writer admission.\n",
                 status.profile_lease_held
@@ -762,8 +774,9 @@ impl Data {
                         json_string(operation.id()), json_string(operation.command()), operation.supported(),
                         false, json_string(input))
                 }).join(",");
-                format!("{{\"stage\":\"foundation\",\"business_coverage\":\"partial\",\"mcp_supported\":true,\"mcp_protocol_version\":\"2025-11-25\",\"mcp_tools\":[\"backup_normalize_path\"],\"operations\":[{operations}]}}")
+                format!("{{\"stage\":\"foundation\",\"business_coverage\":\"partial\",\"mcp_supported\":true,\"mcp_protocol_version\":\"2025-11-25\",\"mcp_tools\":[\"backup_normalize_path\",\"gateway_supported_cli_keys\"],\"operations\":[{operations}]}}")
             }
+            Self::GatewayCliKeys(keys) => serde_json::json!({"cli_keys": keys}).to_string(),
             Self::BackupPath(path) => format!("{{\"path\":{}}}", json_string(path)),
             Self::OwnerStatus(status) => format!("{{\"profile_lease_held\":{}}}", status.profile_lease_held),
             #[cfg(target_os = "linux")]

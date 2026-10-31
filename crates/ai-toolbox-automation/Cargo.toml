@@ -7,6 +7,7 @@ description = "Headless automation contract and console foundation for AI Toolbo
 publish = false
 
 [dependencies]
+ai-toolbox-gateway-capabilities = { path = "../ai-toolbox-gateway-capabilities" }
 ai-toolbox-paths = { path = "../ai-toolbox-paths" }
 serde_json = "=1.0.149"
 

@@ -98,6 +98,9 @@ fn parse(args: &[OsString], format: &mut Format) -> Result<Command, OperationErr
         ["--help" | "-h"] if options.is_empty() => return Ok(Command::Help),
         ["--version" | "-V"] if options.is_empty() => return Ok(Command::Version),
         ["capabilities"] if options.is_empty() => return Ok(Command::Capabilities),
+        ["gateway", "supported-cli-keys"] if options.is_empty() => {
+            return Ok(Command::GatewaySupportedCliKeys);
+        }
         ["codex", "status"] if options.is_empty() => return Ok(Command::CodexStatus),
         ["backup", "normalize-path"] => {
             let path = required(&mut options, "--path")?;
@@ -195,4 +198,43 @@ fn number(value: Option<&str>) -> Result<Option<u64>, OperationError> {
             value.parse().map_err(|_| OperationError::invalid_input())
         })
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gateway_query_uses_shared_service_and_preserves_text_and_json_modes() {
+        let args = ["gateway", "supported-cli-keys"].map(OsString::from);
+        let response = run(&args);
+        assert_eq!(response.format, Format::Text);
+        assert_eq!(response.envelope.exit_code(), 0);
+        let expected = ai_toolbox_gateway_capabilities::supported_cli_keys();
+        assert_eq!(response.envelope.to_text(), format!("{}\n", expected.join("\n")));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&response.envelope.to_json()).unwrap()["data"],
+            serde_json::json!({"cli_keys": expected})
+        );
+        for json_args in [
+            ["--format", "json", "gateway", "supported-cli-keys"],
+            ["gateway", "supported-cli-keys", "--format", "json"],
+        ] {
+            let json_response = run(&json_args.map(OsString::from));
+            assert_eq!(json_response.format, Format::Json);
+            assert_eq!(json_response.envelope.exit_code(), 0);
+            assert_eq!(json_response.envelope.to_json(), response.envelope.to_json());
+        }
+        for extra in [
+            vec!["--format", "json", "--format", "json"],
+            vec!["--path", "fixture"],
+            vec!["--profile", "fixture"],
+            vec!["--unknown"],
+            vec!["extra"],
+        ] {
+            let mut args = args.to_vec();
+            args.extend(extra.into_iter().map(OsString::from));
+            assert_eq!(run(&args).envelope.exit_code(), 2);
+        }
+    }
 }
