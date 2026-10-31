@@ -17,6 +17,7 @@ dependencies = [
 name = "ai-toolbox-automation"
 version = "0.1.0"
 dependencies = [
+ "ai-toolbox-gateway-capabilities",
  "ai-toolbox-management",
  "ai-toolbox-paths",
  "libc",
@@ -29,6 +30,13 @@ name = "ai-toolbox-codex-config"
 version = "0.1.0"
 dependencies = [
  "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "ai-toolbox-gateway-capabilities"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
