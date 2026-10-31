@@ -116,6 +116,7 @@ jobs:
       CARGO_TERM_COLOR: never
       NODE_OPTIONS: --max-old-space-size=4096
       VITE_BUILD_SHA: ${{ github.sha }}
+      SOURCE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -141,7 +142,7 @@ jobs:
       - name: Source and packaging controls
         timeout-minutes: 5
         run: |
-          node --test .github/validation/windows-package/package.test.mjs .github/validation/windows-package/publish.test.mjs
+          node --test .github/validation/windows-package/package.test.mjs .github/validation/windows-package/publish.test.mjs .github/validation/windows-package/automation-smoke.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Packaging controls failed' }
           node .github/validation/windows-package/package.mjs verify
           if ($LASTEXITCODE -ne 0) { throw 'Source identity check failed' }
@@ -167,12 +168,57 @@ jobs:
         timeout-minutes: 45
         run: '& .github/validation/windows-package/test-native.ps1'
       # Artifact-only: no signing secret, Release/tag, updater channel or Rust cache.
-      # Passing these gates does not establish installation or real-account OAuth.
+      # The later synthetic installation gate does not establish interactive GUI or real-account OAuth.
+      - name: Build the shared CLI and stdio MCP executable
+        timeout-minutes: 10
+        run: |
+          cargo build --locked --release --manifest-path crates/ai-toolbox-automation/Cargo.toml --target x86_64-pc-windows-msvc --target-dir tauri/target/automation-build --bin ai-toolbox-cli
+          if ($LASTEXITCODE -ne 0) { throw 'Automation console build failed' }
+          New-Item -ItemType Directory -Force tauri/target/automation-sidecars | Out-Null
+          Copy-Item tauri/target/automation-build/x86_64-pc-windows-msvc/release/ai-toolbox-cli.exe tauri/target/automation-sidecars/ai-toolbox-cli-x86_64-pc-windows-msvc.exe
       - name: Build unsigned Next NSIS installer
         timeout-minutes: 60
         run: |
-          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config tauri/tauri.automation.conf.json -- --locked
           if ($LASTEXITCODE -ne 0) { throw 'Native installer build failed' }
+      - name: Native Job Object negative controls
+        timeout-minutes: 5
+        run: |
+          . .github/validation/windows-package/windows-owned-process.ps1
+          $controlResult = Invoke-NextOwnedProcess -FilePath (Get-Process -Id $PID).Path -Arguments @('-NoProfile', '-NonInteractive', '-File', '.github/validation/windows-package/windows-owned-process.test.ps1') -WorkingDirectory $PWD.Path -TimeoutSeconds 180 -EvidencePrefix "$env:RUNNER_TEMP/automation-owner-controls"
+          if (-not $controlResult.naturalQuiescence -or -not $controlResult.quiescenceConfirmed -or $null -ne $controlResult.toolCleanup) { throw 'Native owner controls did not finish with a naturally empty process tree' }
+      - name: Fetch the pinned public GUI-only transition baseline
+        timeout-minutes: 5
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP 'gui-only-0b8e83aa2606-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/xue-ding-e/AI-Toolbox-Next/releases/download/v1.2.1-next.1-build.0b8e83aa2606/AI-Toolbox-Next_1.2.1-next.1_0b8e83aa2606_windows-x64-setup.exe' -OutFile $previous -TimeoutSec 120
+          if ((Get-Item $previous).Length -ne 15501542) { throw 'GUI-only baseline size mismatch' }
+          if ((Get-FileHash $previous -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1451c7cf8eec647edaaf284d6ab451a65b2433d2867cb201d4554310f590a658') { throw 'GUI-only baseline digest mismatch' }
+      - name: Install, exercise CLI and MCP, reinstall and uninstall in a synthetic profile
+        timeout-minutes: 10
+        run: |
+          $installers = @(Get-ChildItem tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one installer' }
+          . .github/validation/windows-package/windows-owned-process.ps1
+          $env:AUTOMATION_INVOCATION_ID = [Guid]::NewGuid().ToString('N')
+          $arguments = @('.github/validation/windows-package/automation-install.mjs', $installers[0].FullName, 'tauri/target/automation-sidecars/ai-toolbox-cli-x86_64-pc-windows-msvc.exe', "$env:RUNNER_TEMP/automation-install.json", "$env:RUNNER_TEMP/gui-only-0b8e83aa2606-setup.exe", '1451c7cf8eec647edaaf284d6ab451a65b2433d2867cb201d4554310f590a658')
+          # Every installer, console and MCP descendant remains in this exact Job.
+          # Never enable the DSH compiler-specific VerifiedTool exception here.
+          $result = Invoke-NextOwnedProcess -FilePath (Get-Command node.exe).Source -Arguments $arguments -WorkingDirectory $PWD.Path -TimeoutSeconds 480 -EvidencePrefix "$env:RUNNER_TEMP/automation-lifecycle"
+          if (-not $result.naturalQuiescence -or -not $result.quiescenceConfirmed -or $null -ne $result.toolCleanup) { throw 'Installed automation process ownership incomplete' }
+          $receiptPath = "$env:RUNNER_TEMP/automation-lifecycle.result.json"
+          $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          $binding = @{
+            source_commit = $env:SOURCE_SHA; control_commit = $env:GITHUB_SHA; workflow_run = $env:GITHUB_RUN_ID; workflow_attempt = $env:GITHUB_RUN_ATTEMPT
+            invocation_id = $env:AUTOMATION_INVOCATION_ID
+            installer_sha256 = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            helper_sha256 = (Get-FileHash .github/validation/windows-package/windows-owned-process.ps1 -Algorithm SHA256).Hash.ToLowerInvariant()
+            root_script_sha256 = (Get-FileHash .github/validation/windows-package/automation-install.mjs -Algorithm SHA256).Hash.ToLowerInvariant()
+            lifecycle_sha256 = (Get-FileHash "$env:RUNNER_TEMP/automation-install.json" -Algorithm SHA256).Hash.ToLowerInvariant()
+            root_script = '.github/validation/windows-package/automation-install.mjs'; compiler_exception_enabled = $false
+          }
+          $receipt | Add-Member -NotePropertyName binding -NotePropertyValue $binding
+          $receipt | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $receiptPath -Encoding utf8
       - name: Seal exact-source installer and checksums
         timeout-minutes: 5
         run: |
@@ -192,6 +238,11 @@ jobs:
           path: |
             ${{ runner.temp }}/auth-browser-evidence/**/results.json
             ${{ runner.temp }}/native-tests-*.log
+            ${{ runner.temp }}/automation-install.json
+            ${{ runner.temp }}/automation-lifecycle.*
+            ${{ runner.temp }}/automation-owner-controls.*
+            ${{ runner.temp }}/next-process-controls-*/**
+            tauri/target/x86_64-pc-windows-msvc/release/nsis/x64/installer.nsi
           if-no-files-found: warn
           retention-days: 14
   publish:

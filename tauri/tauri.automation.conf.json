@@ -1,0 +1,5 @@
+{
+  "bundle": {
+    "externalBin": ["target/automation-sidecars/ai-toolbox-cli"]
+  }
+}

@@ -25,6 +25,26 @@ Get-FileHash .\AI-Toolbox-Next_1.2.1-next.1_96cfbc495fe1_windows-x64-setup.exe -
 
 每次向 `main` 推送都会自动执行验证与构建，全部闸门通过后发布带源码标识的新预览包，无需手动点击构建。失败时保留已有公开安装包；这不代表应用内自动更新。
 
+### 安装后的 CLI 与 stdio MCP
+
+本次打包候选将 `ai-toolbox-cli.exe` 与 GUI 主程序放在同一安装目录。旧 GUI-only 安装包（包括上方历史下载链接）不会自动获得该文件。请选择 `build-provenance.json` 含 `automation` 的可执行文件摘要、版本和安装后调用证据的版本；本节本身不代表候选已通过原生安装验收。
+
+将下方占位目录替换为实际安装目录，再用 PowerShell 调用：
+
+```powershell
+& 'C:\实际安装目录\ai-toolbox-cli.exe' --format json gateway supported-cli-keys
+& 'C:\实际安装目录\ai-toolbox-cli.exe' --format json backup normalize-path --path '$HOME/example'
+```
+
+MCP 使用**同一个可执行文件**，不是另一个服务端程序。按客户端自己的配置格式手动添加，例如：
+
+```json
+{"mcpServers":{"ai-toolbox-next":{"command":"C:\\实际安装目录\\ai-toolbox-cli.exe","args":["mcp","serve"]}}}
+```
+
+由客户端启动 stdio 子进程，无需 GUI 常驻。安装不会添加全局 PATH、修改 MCP 客户端配置、启动 daemon 或新增 GUI shell 权限。当前仅有 `backup_normalize_path` 与 `gateway_supported_cli_keys` 两个 MCP 工具：前者不读写目标文件内容；后者只查询静态支持列表，不执行接管，也不代表工具已安装或网关正在运行。偏好设置读取及完整 GUI/CLI/MCP 功能对等尚未接入。手动重装/卸载前，请先关闭客户端持有的 CLI/MCP 进程。保留配置不等于已验证真实设置数据库迁移，同版本覆盖不宣称版本升级。
+
+
 ---
 
 以下为原项目说明。

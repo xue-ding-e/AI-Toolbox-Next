@@ -27,6 +27,26 @@ Expected SHA-256: `8ed717c6f4dbe7e1a3b24d8e986d54eb5aedcc4cfab5042239dd0bb4b2e74
 
 Every push to `main` automatically validates, builds, and publishes a new source-stamped preview only if all gates pass. No manual build is required; failed gates leave existing public installers available. This is distribution automation, not an in-app automatic updater.
 
+### Installed CLI and stdio MCP
+
+The packaging candidate includes `ai-toolbox-cli.exe` beside the GUI executable. Older GUI-only installers, including the historical download linked above, do not gain it retroactively. Use a release whose `build-provenance.json` contains the `automation` executable digest, version and installed-call evidence; this section alone does not claim the candidate has passed native installation acceptance.
+
+Use your actual installation directory (do not copy the placeholder literally):
+
+```powershell
+& 'C:\Your Install Directory\ai-toolbox-cli.exe' --format json gateway supported-cli-keys
+& 'C:\Your Install Directory\ai-toolbox-cli.exe' --format json backup normalize-path --path '$HOME/example'
+```
+
+MCP uses the **same executable**, not a second server binary. Add an entry manually using your client's configuration format, for example:
+
+```json
+{"mcpServers":{"ai-toolbox-next":{"command":"C:\\Your Install Directory\\ai-toolbox-cli.exe","args":["mcp","serve"]}}}
+```
+
+The client launches the stdio process; the GUI need not be running. Installation does not add global PATH entries, edit MCP clients, start a daemon, or grant new GUI shell permissions. The only current MCP tools are `backup_normalize_path` and `gateway_supported_cli_keys`: path normalization does not read/write the target file; the gateway query is static support metadata, not takeover execution or installed/running status. Settings/preferences and general GUI operation parity are not implemented by these tools. Close client-owned CLI/MCP processes before manual reinstall/uninstall. Keeping configuration is distinct from testing real settings-database migration; same-version replacement is not a version-upgrade claim.
+
+
 ---
 
 # AI Toolbox
