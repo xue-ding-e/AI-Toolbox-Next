@@ -134,7 +134,8 @@ impl Server {
                     }) {
                         return Some(error(id, -32602, "Invalid params"));
                     }
-                    let output = json!({"cli_keys": ai_toolbox_gateway_capabilities::supported_cli_keys()});
+                    let output =
+                        json!({"cli_keys": ai_toolbox_gateway_capabilities::supported_cli_keys()});
                     return Some(success(
                         id,
                         json!({"content":[{"type":"text","text":output.to_string()}],"structuredContent":output,"isError":false}),
@@ -293,9 +294,16 @@ mod tests {
         for arguments in [json!({}), Value::Null, json!({"path":"fixture"}), json!([])] {
             let request = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
                 "name":GATEWAY_TOOL_NAME,"arguments":arguments}});
-            let result = s.handle(&serde_json::to_vec(&request).unwrap(), &mut |_| panic!("gateway query resolved paths")).unwrap();
+            let result = s
+                .handle(&serde_json::to_vec(&request).unwrap(), &mut |_| {
+                    panic!("gateway query resolved paths")
+                })
+                .unwrap();
             if arguments == json!({}) {
-                assert_eq!(result["result"]["structuredContent"], json!({"cli_keys": ai_toolbox_gateway_capabilities::supported_cli_keys()}));
+                assert_eq!(
+                    result["result"]["structuredContent"],
+                    json!({"cli_keys": ai_toolbox_gateway_capabilities::supported_cli_keys()})
+                );
                 assert_eq!(result["result"]["isError"], false);
             } else {
                 assert_eq!(result["error"]["code"], -32602);

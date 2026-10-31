@@ -78,8 +78,24 @@ mod tests {
     #[test]
     fn takeover_query_preserves_exact_order_and_exclusions() {
         let actual = supported_cli_keys();
-        assert_eq!(actual, ["claude", "claude_desktop", "codex", "grok", "kimi", "gemini"]);
-        assert_eq!(actual.iter().collect::<std::collections::HashSet<_>>().len(), actual.len());
+        assert_eq!(
+            actual,
+            [
+                "claude",
+                "claude_desktop",
+                "codex",
+                "grok",
+                "kimi",
+                "gemini"
+            ]
+        );
+        assert_eq!(
+            actual
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            actual.len()
+        );
         assert!(GatewayCliKey::supported_mvp().contains(&GatewayCliKey::Antigravity));
         assert!(!GatewayCliKey::supported_mvp().contains(&GatewayCliKey::OpenCode));
         assert!(!is_supported_cli(GatewayCliKey::Antigravity));
@@ -90,11 +106,20 @@ mod tests {
     fn enum_wire_format_and_as_str_remain_distinct_for_open_code() {
         assert_eq!(GatewayCliKey::default(), GatewayCliKey::Claude);
         // Preserve the original enum serde contract, not a new takeover key.
-        assert_eq!(serde_json::to_string(&GatewayCliKey::OpenCode).unwrap(), "\"open_code\"");
+        assert_eq!(
+            serde_json::to_string(&GatewayCliKey::OpenCode).unwrap(),
+            "\"open_code\""
+        );
         assert_eq!(GatewayCliKey::OpenCode.as_str(), "opencode");
-        for key in GatewayCliKey::supported_mvp().into_iter().chain([GatewayCliKey::OpenCode]) {
+        for key in GatewayCliKey::supported_mvp()
+            .into_iter()
+            .chain([GatewayCliKey::OpenCode])
+        {
             let encoded = serde_json::to_string(&key).unwrap();
-            assert_eq!(serde_json::from_str::<GatewayCliKey>(&encoded).unwrap(), key);
+            assert_eq!(
+                serde_json::from_str::<GatewayCliKey>(&encoded).unwrap(),
+                key
+            );
         }
     }
 }

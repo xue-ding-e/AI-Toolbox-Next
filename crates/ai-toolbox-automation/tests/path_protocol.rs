@@ -285,27 +285,55 @@ fn actual_gateway_cli_and_mcp_query_share_results_without_initialization() {
     assert_eq!(cli.len(), 1);
     assert_eq!(cli[0]["ok"], true);
     assert_eq!(cli[0]["operation"], "gateway.supported_cli_keys");
-    assert_eq!(cli[0]["data"], json!({"cli_keys":["claude", "claude_desktop", "codex", "grok", "kimi", "gemini"]}));
-    let mut requests = session("unused").lines().take(2).map(|line| format!("{line}\n")).collect::<String>();
-    for (id, arguments) in [(2, json!({})), (3, json!({"path":"fixture"})), (4, Value::Null)] {
-        requests.push_str(&format!("{}\n", json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
-            "name":"gateway_supported_cli_keys","arguments":arguments}})));
+    assert_eq!(
+        cli[0]["data"],
+        json!({"cli_keys":["claude", "claude_desktop", "codex", "grok", "kimi", "gemini"]})
+    );
+    let mut requests = session("unused")
+        .lines()
+        .take(2)
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    for (id, arguments) in [
+        (2, json!({})),
+        (3, json!({"path":"fixture"})),
+        (4, Value::Null),
+    ] {
+        requests.push_str(&format!(
+            "{}\n",
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"gateway_supported_cli_keys","arguments":arguments}})
+        ));
     }
-    requests.push_str(&format!("{}\n", json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
-        "name":"gateway_supported_cli_keys"}})));
+    requests.push_str(&format!(
+        "{}\n",
+        json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
+        "name":"gateway_supported_cli_keys"}})
+    ));
     let (status, mcp) = fixture.run(&["mcp", "serve"], &requests);
     assert!(status.success());
     assert_eq!(mcp.len(), 5);
     for index in [1, 4] {
         assert_eq!(mcp[index]["result"]["structuredContent"], cli[0]["data"]);
         assert_eq!(mcp[index]["result"]["isError"], false);
-        assert_eq!(serde_json::from_str::<Value>(mcp[index]["result"]["content"][0]["text"].as_str().unwrap()).unwrap(), cli[0]["data"]);
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                mcp[index]["result"]["content"][0]["text"].as_str().unwrap()
+            )
+            .unwrap(),
+            cli[0]["data"]
+        );
     }
     for index in [2, 3] {
         assert_eq!(mcp[index]["error"]["code"], -32602);
         assert_eq!(mcp[index]["result"], Value::Null);
     }
-    for extra in [&["--path", "fixture"][..], &["extra"][..], &["--profile", "fixture"][..], &["--unknown"][..]] {
+    for extra in [
+        &["--path", "fixture"][..],
+        &["extra"][..],
+        &["--profile", "fixture"][..],
+        &["--unknown"][..],
+    ] {
         let mut args = vec!["--format", "json", "gateway", "supported-cli-keys"];
         args.extend_from_slice(extra);
         let (status, result) = fixture.run(&args, "");

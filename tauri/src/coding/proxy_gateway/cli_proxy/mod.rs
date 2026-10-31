@@ -65,7 +65,9 @@ pub(super) async fn admit_gateway_write(
 fn admit_codex_file_write(
     path: &Path,
 ) -> Result<crate::management_admission::LegacyRuntimeAdmission, String> {
-    let root = path.parent().ok_or_else(|| "Codex target has no runtime root".to_string())?;
+    let root = path
+        .parent()
+        .ok_or_else(|| "Codex target has no runtime root".to_string())?;
     crate::management_admission::admit_legacy_runtime(root)
 }
 
@@ -77,7 +79,9 @@ fn admit_gateway_target_write(
     let admission = if cli_key == GatewayCliKey::Codex {
         let admission = crate::management_admission::admit_legacy_runtime(&targets.runtime_root)?;
         for target in &targets.files {
-            let root = target.path.parent()
+            let root = target
+                .path
+                .parent()
                 .ok_or_else(|| "Codex target has no runtime root".to_string())?;
             admission.require_runtime(root)?;
         }
@@ -85,16 +89,23 @@ fn admit_gateway_target_write(
     } else {
         // Non-Codex names are not proof of disjointness: custom roots can alias
         // protected Codex/profile paths. Include all control-file destinations.
-        let mut destinations = targets.files.iter()
-            .map(|target| target.path.clone()).collect::<Vec<_>>();
+        let mut destinations = targets
+            .files
+            .iter()
+            .map(|target| target.path.clone())
+            .collect::<Vec<_>>();
         destinations.push(targets.runtime_root.clone());
         if let Some(paths) = paths {
             destinations.push(paths.manifest_path(cli_key));
             destinations.push(paths.backup_dir(cli_key));
         }
-        let references = destinations.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+        let references = destinations
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
         GatewayWriteAdmission::Other(crate::management_admission::admit_non_codex_targets(
-            Some(cli_key.as_str()), &references,
+            Some(cli_key.as_str()),
+            &references,
         )?)
     };
     admission.ensure_current()?;
@@ -1438,9 +1449,9 @@ async fn retire_codex_aggregate_catalog(
             return;
         }
     };
-    let result = admission.require_runtime(&config_dir).and_then(|()| {
-        apply_codex_aggregate_catalog_leave(&config_dir, pre_aggregate_catalog)
-    });
+    let result = admission
+        .require_runtime(&config_dir)
+        .and_then(|()| apply_codex_aggregate_catalog_leave(&config_dir, pre_aggregate_catalog));
     if let Err(error) = result {
         log::warn!("Failed to retire Codex aggregate model catalog: {error}");
     }
@@ -1576,7 +1587,11 @@ fn admit_codex_websocket_projection(
     (config_path, managed_fields): (PathBuf, Vec<String>),
 ) -> Result<CodexWebsocketProjection, String> {
     let admission = admit_codex_file_write(&config_path)?;
-    Ok(CodexWebsocketProjection { config_path, managed_fields, admission })
+    Ok(CodexWebsocketProjection {
+        config_path,
+        managed_fields,
+        admission,
+    })
 }
 
 pub(super) struct CodexWebsocketProjection {
@@ -1587,7 +1602,9 @@ pub(super) struct CodexWebsocketProjection {
 
 impl CodexWebsocketProjection {
     pub(super) fn apply(self, codex_websocket_enabled: bool) -> Result<bool, String> {
-        let root = self.config_path.parent()
+        let root = self
+            .config_path
+            .parent()
             .ok_or_else(|| "Codex target has no runtime root".to_string())?;
         self.admission.require_runtime(root)?;
         if !self.config_path.exists() {
@@ -4395,7 +4412,9 @@ mod tests {
         // Left in place they would pin subagents and one picker row to the
         // channel the gateway just took over from.
         assert!(patched.pointer("/env/CLAUDE_CODE_SUBAGENT_MODEL").is_none());
-        assert!(patched.pointer("/env/ANTHROPIC_CUSTOM_MODEL_OPTION").is_none());
+        assert!(patched
+            .pointer("/env/ANTHROPIC_CUSTOM_MODEL_OPTION")
+            .is_none());
         assert!(patched
             .pointer("/env/ANTHROPIC_CUSTOM_MODEL_OPTION_NAME")
             .is_none());
@@ -4683,8 +4702,12 @@ mod tests {
                     );
                     assert!(codex_config_managed_fields_for_provider("custom")
                         .contains(&"model_providers.custom.supports_websockets".to_string()));
-                    restore_codex_config(&path, Some(&backup), &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS)
-                        .unwrap();
+                    restore_codex_config(
+                        &path,
+                        Some(&backup),
+                        &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
+                    )
+                    .unwrap();
                     let restored = parse_toml_file(&path).unwrap();
                     assert_eq!(
                         restored["model_providers"]["custom"]
@@ -4752,8 +4775,7 @@ mod tests {
                 let dir = tempfile::tempdir().unwrap();
                 let paths = ProxyGatewayPaths::new(dir.path());
                 // Start from the opposite value so the rewrite is observable.
-                let config_path =
-                    write_taken_over_codex_config(&paths, mode, Some(!enabled));
+                let config_path = write_taken_over_codex_config(&paths, mode, Some(!enabled));
 
                 assert!(reproject_codex_websocket_capability(&paths, enabled).unwrap());
 
@@ -4803,10 +4825,8 @@ mod tests {
         let config_path = write_taken_over_codex_config(&paths, GatewayProxyMode::Single, None);
         let mut document = read_or_new_toml_document(&config_path).unwrap();
         document["model_provider"] = value("other");
-        document["model_providers"]["other"] =
-            Item::Table(toml_edit::Table::new());
-        document["model_providers"]["other"]["base_url"] =
-            value("https://upstream.example/v1");
+        document["model_providers"]["other"] = Item::Table(toml_edit::Table::new());
+        document["model_providers"]["other"]["base_url"] = value("https://upstream.example/v1");
         write_toml_file(&config_path, &document).unwrap();
 
         assert!(reproject_codex_websocket_capability(&paths, true).unwrap());

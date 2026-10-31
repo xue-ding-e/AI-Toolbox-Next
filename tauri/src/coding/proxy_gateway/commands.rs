@@ -110,11 +110,8 @@ pub async fn proxy_gateway_update_settings(
     if running {
         settings.enabled_on_startup = true;
     }
-    let (saved, projection) = save_settings_with_codex_projection(
-        &sqlite_state,
-        &proxy_gateway_paths(&app)?,
-        settings,
-    )?;
+    let (saved, projection) =
+        save_settings_with_codex_projection(&sqlite_state, &proxy_gateway_paths(&app)?, settings)?;
     if running {
         let mut manager = gateway_state
             .manager
@@ -147,10 +144,17 @@ pub(super) fn save_settings_with_codex_projection(
     sqlite_state: &SqliteDbState,
     paths: &ProxyGatewayPaths,
     settings: ProxyGatewaySettings,
-) -> Result<(ProxyGatewaySettings, Option<cli_proxy::CodexWebsocketProjection>), String> {
+) -> Result<
+    (
+        ProxyGatewaySettings,
+        Option<cli_proxy::CodexWebsocketProjection>,
+    ),
+    String,
+> {
     let settings = settings::normalize_settings(settings)?;
     let previous = settings::load_settings_from_sqlite_state(sqlite_state)?;
-    let websocket_gate_changed = settings.codex_websocket_enabled != previous.codex_websocket_enabled;
+    let websocket_gate_changed =
+        settings.codex_websocket_enabled != previous.codex_websocket_enabled;
     // Reject an unsupported Codex projection before the settings DB write or
     // runtime update. No takeover/no field change is not a Codex write.
     let projection = cli_proxy::prepare_codex_websocket_projection(paths, websocket_gate_changed)?;
@@ -1198,10 +1202,29 @@ mod tests {
     #[test]
     fn supported_cli_query_delegates_to_shared_takeover_gate() {
         let result = super::proxy_gateway_supported_cli_keys().unwrap();
-        assert_eq!(result, ai_toolbox_gateway_capabilities::supported_cli_keys());
-        assert_eq!(result, ["claude", "claude_desktop", "codex", "grok", "kimi", "gemini"]);
-        for key in super::GatewayCliKey::supported_mvp().into_iter().chain([super::GatewayCliKey::OpenCode]) {
-            assert_eq!(super::cli_proxy::is_supported_cli(key), ai_toolbox_gateway_capabilities::is_supported_cli(key));
+        assert_eq!(
+            result,
+            ai_toolbox_gateway_capabilities::supported_cli_keys()
+        );
+        assert_eq!(
+            result,
+            [
+                "claude",
+                "claude_desktop",
+                "codex",
+                "grok",
+                "kimi",
+                "gemini"
+            ]
+        );
+        for key in super::GatewayCliKey::supported_mvp()
+            .into_iter()
+            .chain([super::GatewayCliKey::OpenCode])
+        {
+            assert_eq!(
+                super::cli_proxy::is_supported_cli(key),
+                ai_toolbox_gateway_capabilities::is_supported_cli(key)
+            );
         }
     }
 

@@ -211,9 +211,13 @@ mod tests {
         assert_eq!(response.format, Format::Text);
         assert_eq!(response.envelope.exit_code(), 0);
         let expected = ai_toolbox_gateway_capabilities::supported_cli_keys();
-        assert_eq!(response.envelope.to_text(), format!("{}\n", expected.join("\n")));
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&response.envelope.to_json()).unwrap()["data"],
+            response.envelope.to_text(),
+            format!("{}\n", expected.join("\n"))
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&response.envelope.to_json()).unwrap()
+                ["data"],
             serde_json::json!({"cli_keys": expected})
         );
         for json_args in [
@@ -223,7 +227,10 @@ mod tests {
             let json_response = run(&json_args.map(OsString::from));
             assert_eq!(json_response.format, Format::Json);
             assert_eq!(json_response.envelope.exit_code(), 0);
-            assert_eq!(json_response.envelope.to_json(), response.envelope.to_json());
+            assert_eq!(
+                json_response.envelope.to_json(),
+                response.envelope.to_json()
+            );
         }
         for extra in [
             vec!["--format", "json", "--format", "json"],
