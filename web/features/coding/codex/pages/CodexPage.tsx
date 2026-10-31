@@ -595,7 +595,12 @@ const CodexPage: React.FC = () => {
         listCodexProviders(),
       ]);
       if (officialAccountLoadGeneration.current !== generation) return;
-      const officialAccountEntries = await Promise.all(
+      setConfigPath(path);
+      setRootPathInfo(nextRootPathInfo);
+      setProviders(providerList);
+      // Base provider data is ready; account enrichment continues in the background.
+      setLoading(false);
+      void Promise.all(
         providerList.map(async (provider) => [
           provider.id,
           shouldLoadCodexOfficialAccounts(provider)
@@ -609,11 +614,7 @@ const CodexPage: React.FC = () => {
               })
             : [],
         ] as const),
-      );
-      if (officialAccountLoadGeneration.current !== generation) return;
-      setConfigPath(path);
-      setRootPathInfo(nextRootPathInfo);
-      setProviders(providerList);
+      ).then((officialAccountEntries) => {
       const accountsByProviderId = Object.fromEntries(officialAccountEntries.map(([providerId, accounts]) => [
         providerId,
         accounts.map((account) => reconcileOfficialAccountUsage(
@@ -636,6 +637,9 @@ const CodexPage: React.FC = () => {
       const applied = providerList.find((p) => p.isApplied && !isLocalConfigId(p.id));
       setAppliedProviderId(applied?.id || '');
       console.info('[CodexPage] loadConfig:done', { elapsedMs: Math.round(performance.now() - startedAt), providers: providerList.length });
+      }).catch((error) => {
+        console.warn('[CodexPage] official account enrichment failed', { error });
+      });
     } catch (error) {
       if (officialAccountLoadGeneration.current !== generation) return;
       console.error('[CodexPage] loadConfig:failed', { elapsedMs: Math.round(performance.now() - startedAt), error });
