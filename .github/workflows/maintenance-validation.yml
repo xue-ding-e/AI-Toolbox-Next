@@ -17,12 +17,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: 0905128edde7f5c802c3febe9eed0786462df23f
+          ref: ef9d11727eafe8d832bbebe39914c45a04ad6460
       - name: Verify fixed product source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 0905128edde7f5c802c3febe9eed0786462df23f
+          test "$(git rev-parse HEAD)" = ef9d11727eafe8d832bbebe39914c45a04ad6460
           git rev-parse HEAD HEAD^{tree}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
