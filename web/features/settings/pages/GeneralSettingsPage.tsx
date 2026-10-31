@@ -274,14 +274,6 @@ const GeneralSettingsPage: React.FC = () => {
     return () => { disposed = true; };
   }, [t]);
 
-  // Auto check for updates on mount
-  React.useEffect(() => {
-    if (autoCheckUpdate) {
-      handleCheckUpdate(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Listen for update download progress
   React.useEffect(() => {
     const unlisten = listen<{

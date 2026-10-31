@@ -62,6 +62,7 @@ const DeepLinkImportMount: React.FC = () => {
 
 const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { notification, message } = App.useApp();
+  const { autoCheckUpdate } = useSettingsStore();
   const hasCheckedUpdate = React.useRef(false);
 
   // Update progress states
@@ -161,7 +162,7 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
   // Check for updates on app startup (at most once per hour)
   React.useEffect(() => {
-    if (hasCheckedUpdate.current) return;
+    if (!autoCheckUpdate || hasCheckedUpdate.current) return;
     hasCheckedUpdate.current = true;
 
     const LAST_CHECK_KEY = 'lastUpdateCheckTime';
@@ -175,6 +176,11 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
         const info = await checkForUpdates();
         localStorage.setItem(LAST_CHECK_KEY, String(now));
         if (info.hasUpdate) {
+          const LAST_NOTIFIED_UPDATE_KEY = 'lastNotifiedUpdateVersion';
+          if (localStorage.getItem(LAST_NOTIFIED_UPDATE_KEY) === info.latestVersion) {
+            return;
+          }
+          localStorage.setItem(LAST_NOTIFIED_UPDATE_KEY, info.latestVersion);
           notification.info({
             message: i18n.t('settings.about.newVersion'),
             description: info.scoopInstall
@@ -210,7 +216,7 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
     checkUpdate();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notification]);
+  }, [autoCheckUpdate, notification]);
 
   // Keep a global fallback for tray-driven config changes so inactive pages and
   // subpanels that do not maintain their own listeners still resync to disk state.

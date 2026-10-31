@@ -11,6 +11,8 @@ const webTestDirectory = path.join(projectRoot, 'web', 'test');
 const typeScriptExtensionRegisterUrl = pathToFileURL(
   path.join(scriptsDirectory, 'register-node-ts-extension-loader.mjs'),
 ).href;
+const nodeMajorVersion = Number.parseInt(process.versions.node.split('.', 1)[0], 10);
+const typeStripExecArgv = nodeMajorVersion >= 22 ? ['--experimental-strip-types'] : [];
 
 async function collectTestFiles(directoryPath) {
   let entries;
@@ -53,7 +55,7 @@ if (testFiles.length === 0) {
 const testStream = run({
   files: testFiles,
   concurrency: true,
-  execArgv: ['--import', typeScriptExtensionRegisterUrl],
+  execArgv: [...typeStripExecArgv, '--import', typeScriptExtensionRegisterUrl],
 });
 
 // Node emits per-file summaries before the final run summary. A passing first
