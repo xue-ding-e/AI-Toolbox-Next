@@ -641,3 +641,244 @@ jobs:
       - name: Run migration and neighboring preferences tests serially
         run: |
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::skills::skill_store::tests:: -- --test-threads=1
+
+  shared-gateway-final-linux:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/shared-gateway-final-20261031'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      SOURCE_SHA: 0b8e83aa2606a81ed7348855ed4acded1a7a377e
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+      CARGO_NET_RETRY: '1'
+      CARGO_HTTP_TIMEOUT: '60'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: 0b8e83aa2606a81ed7348855ed4acded1a7a377e
+        persist-credentials: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - uses: dtolnay/rust-toolchain@1.99.1
+      with:
+        components: rustfmt
+    - name: Record source and synthetic native environment
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        mkdir -p "$RUNNER_TEMP/native-evidence" "$RUNNER_TEMP/native-home" "$RUNNER_TEMP/native-config" "$RUNNER_TEMP/native-local"
+        printf '%s\n' "control=$GITHUB_SHA" "product=$SOURCE_SHA" "tree=$(git rev-parse HEAD^{tree})" > "$RUNNER_TEMP/native-evidence/identity.txt"
+        rustc --version | tee "$RUNNER_TEMP/native-evidence/toolchain.txt"
+        cargo --version | tee -a "$RUNNER_TEMP/native-evidence/toolchain.txt"
+        df -h | tee "$RUNNER_TEMP/native-evidence/disk.txt"
+        free -m | tee "$RUNNER_TEMP/native-evidence/memory.txt"
+        echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+        echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
+        echo "CARGO_TARGET_DIR=$RUNNER_TEMP/native-target" >> "$GITHUB_ENV"
+        for name in HOME USERPROFILE; do echo "$name=$RUNNER_TEMP/native-home" >> "$GITHUB_ENV"; done
+        for name in APPDATA XDG_CONFIG_HOME; do echo "$name=$RUNNER_TEMP/native-config" >> "$GITHUB_ENV"; done
+        for name in LOCALAPPDATA AI_TOOLBOX_DATA_DIR AI_TOOLBOX_CACHE_DIR XDG_DATA_HOME XDG_CACHE_HOME CODEX_HOME; do echo "$name=$RUNNER_TEMP/native-local/$name" >> "$GITHUB_ENV"; done
+        sha256sum crates/ai-toolbox-gateway-capabilities/Cargo.lock crates/ai-toolbox-automation/Cargo.lock tauri/Cargo.lock > "$RUNNER_TEMP/native-evidence/locks.sha256"
+    - name: Verify final formatting and locked headless crates
+      timeout-minutes: 15
+      run: |
+        set -euo pipefail
+        rustfmt --version | tee -a "$RUNNER_TEMP/native-evidence/toolchain.txt"
+        cargo fmt --manifest-path crates/ai-toolbox-gateway-capabilities/Cargo.toml -- --check
+        cargo fmt --manifest-path crates/ai-toolbox-automation/Cargo.toml -- --check
+        rustfmt --check --edition 2021 --config skip_children=true crates/ai-toolbox-gateway-capabilities/src/lib.rs crates/ai-toolbox-automation/src/cli.rs crates/ai-toolbox-automation/src/lib.rs crates/ai-toolbox-automation/src/mcp.rs crates/ai-toolbox-automation/tests/console.rs crates/ai-toolbox-automation/tests/path_protocol.rs tauri/src/coding/proxy_gateway/types.rs tauri/src/coding/proxy_gateway/commands.rs tauri/src/coding/proxy_gateway/cli_proxy/mod.rs
+        for crate in ai-toolbox-gateway-capabilities ai-toolbox-automation; do
+          cargo test --locked --manifest-path "crates/$crate/Cargo.toml" --jobs 1 -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/native-evidence/$crate-tests.log"
+        done
+        node - "$RUNNER_TEMP/native-evidence" <<'NODE'
+        const fs=require('node:fs'), assert=require('node:assert/strict');
+        for(const [crate,expected] of [['ai-toolbox-gateway-capabilities',[2]],['ai-toolbox-automation',[9,8,17,6]]]) {
+         const text=fs.readFileSync(`${process.argv[2]}/${crate}-tests.log`,'utf8');
+         const results=[...text.matchAll(/test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;/g)];
+         assert(results.length); for(const m of results) { assert.equal(Number(m[2]),0); assert.equal(Number(m[3]),0); }
+         assert.deepEqual(results.map(m=>Number(m[1])).filter(n=>n>0),expected);
+        }
+        console.log('Final Linux shared 2 and automation 40 tests verified.');
+        NODE
+    - name: Install existing Linux native prerequisites
+      timeout-minutes: 10
+      run: |-
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+    - name: Compile desktop library and run exactly one shared gateway query regression
+      timeout-minutes: 65
+      run: |
+        set -euo pipefail
+        cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::supported_cli_query_delegates_to_shared_takeover_gate -- --exact --test-threads=1 2>&1 | tee "$RUNNER_TEMP/native-evidence/desktop-gateway.log"
+        node .github/validation/windows-package/check-native.mjs "$RUNNER_TEMP/native-evidence/desktop-gateway.log" 0 coding::proxy_gateway::commands::tests::supported_cli_query_delegates_to_shared_takeover_gate 1
+        grep -Fx "test coding::proxy_gateway::commands::tests::supported_cli_query_delegates_to_shared_takeover_gate ... ok" "$RUNNER_TEMP/native-evidence/desktop-gateway.log"
+    - name: Verify source and locks unchanged
+      if: ${{ !cancelled() }}
+      run: |-
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        test -z "$(git status --porcelain)"
+        sha256sum --check "$RUNNER_TEMP/native-evidence/locks.sha256"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: shared-gateway-final-linux-${{ github.run_id }}
+        path: ${{ runner.temp }}/native-evidence
+        if-no-files-found: error
+        retention-days: 14
+  shared-gateway-final-windows:
+    needs: shared-gateway-final-linux
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/validation/shared-gateway-final-20261031'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SOURCE_SHA: 0b8e83aa2606a81ed7348855ed4acded1a7a377e
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+      CARGO_NET_RETRY: '1'
+      CARGO_HTTP_TIMEOUT: '60'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: 0b8e83aa2606a81ed7348855ed4acded1a7a377e
+        persist-credentials: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - uses: dtolnay/rust-toolchain@1.99.1
+      with:
+        components: rustfmt
+    - name: Record source and synthetic Windows environment
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if ((git rev-parse HEAD) -ne $env:SOURCE_SHA) { throw 'Source mismatch' }
+        $evidence = Join-Path $env:RUNNER_TEMP 'native-evidence'
+        New-Item -ItemType Directory -Force $evidence | Out-Null
+        "control=$env:GITHUB_SHA", "product=$env:SOURCE_SHA", "tree=$(git rev-parse 'HEAD^{tree}')" | Set-Content "$evidence/identity.txt"
+        rustc --version | Set-Content "$evidence/toolchain.txt"
+        cargo --version | Add-Content "$evidence/toolchain.txt"
+        Get-PSDrive -PSProvider FileSystem | Out-File "$evidence/disk.txt"
+        Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Out-File "$evidence/memory.txt"
+        $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+        $rustupHome = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE '.rustup' }
+        "CARGO_HOME=$cargoHome", "RUSTUP_HOME=$rustupHome", "CARGO_TARGET_DIR=$env:RUNNER_TEMP/native-target" | Add-Content $env:GITHUB_ENV
+        foreach ($pair in @(@('HOME','home'),@('USERPROFILE','home'),@('APPDATA','config'),@('LOCALAPPDATA','local'),@('AI_TOOLBOX_DATA_DIR','data'),@('AI_TOOLBOX_CACHE_DIR','cache'),@('CODEX_HOME','codex'))) {
+          $dir = Join-Path $env:RUNNER_TEMP ('native-' + $pair[1])
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          "$($pair[0])=$dir" | Add-Content $env:GITHUB_ENV
+        }
+        $locks = @('crates/ai-toolbox-gateway-capabilities/Cargo.lock','crates/ai-toolbox-automation/Cargo.lock','tauri/Cargo.lock')
+        $locks | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash)  $_" } | Set-Content "$evidence/locks.sha256"
+    - name: Verify final formatting and actual Windows locked headless crates
+      timeout-minutes: 15
+      run: |
+        $ErrorActionPreference = 'Stop'
+        rustfmt --version | Add-Content "$env:RUNNER_TEMP/native-evidence/toolchain.txt"
+        foreach ($crate in @('ai-toolbox-gateway-capabilities','ai-toolbox-automation')) {
+          cargo fmt --manifest-path "crates/$crate/Cargo.toml" -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'Final formatting check failed' }
+        }
+        rustfmt --check --edition 2021 --config skip_children=true crates/ai-toolbox-gateway-capabilities/src/lib.rs crates/ai-toolbox-automation/src/cli.rs crates/ai-toolbox-automation/src/lib.rs crates/ai-toolbox-automation/src/mcp.rs crates/ai-toolbox-automation/tests/console.rs crates/ai-toolbox-automation/tests/path_protocol.rs tauri/src/coding/proxy_gateway/types.rs tauri/src/coding/proxy_gateway/commands.rs tauri/src/coding/proxy_gateway/cli_proxy/mod.rs
+        if ($LASTEXITCODE -ne 0) { throw 'Final formatting check failed' }
+        foreach ($crate in @('ai-toolbox-gateway-capabilities','ai-toolbox-automation')) {
+          cargo test --locked --manifest-path "crates/$crate/Cargo.toml" --jobs 1 -- --test-threads=1 2>&1 | Tee-Object "$env:RUNNER_TEMP/native-evidence/$crate-tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows crate tests failed' }
+        }
+        @'
+        const fs=require('node:fs'), assert=require('node:assert/strict');
+        for(const [crate,expected] of [['ai-toolbox-gateway-capabilities',[2]],['ai-toolbox-automation',[9,8]]]) {
+         const text=fs.readFileSync(`${process.env.RUNNER_TEMP}/native-evidence/${crate}-tests.log`,'utf8');
+         const results=[...text.matchAll(/test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;/g)];
+         assert(results.length); for(const m of results) { assert.equal(Number(m[2]),0); assert.equal(Number(m[3]),0); }
+         assert.deepEqual(results.map(m=>Number(m[1])).filter(n=>n>0),expected);
+        }
+        console.log('Final Windows shared 2 and automation 17 tests verified. Linux-only process suites are not counted.');
+        '@ | Set-Content -Encoding utf8 "$env:RUNNER_TEMP/check-gateway-crates.cjs"
+        node "$env:RUNNER_TEMP/check-gateway-crates.cjs"
+        if ($LASTEXITCODE -ne 0) { throw 'Windows exact crate counts failed' }
+    - name: Actual Windows CLI and MCP smoke with bounded children
+      timeout-minutes: 2
+      run: |
+        $ErrorActionPreference = 'Stop'
+        @'
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const { spawnSync } = require('node:child_process');
+        const root = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'gateway-smoke-'));
+        const env = {};
+        for (const name of ['SystemRoot', 'WINDIR']) if (process.env[name]) env[name] = process.env[name];
+        for (const [key, folder] of Object.entries({ HOME:'home', USERPROFILE:'home', APPDATA:'config', LOCALAPPDATA:'local', TEMP:'temp', TMP:'temp', AI_TOOLBOX_DATA_DIR:'data', AI_TOOLBOX_CACHE_DIR:'cache', CODEX_HOME:'codex', CLAUDE_CONFIG_DIR:'claude' })) {
+          env[key] = path.join(root, folder);
+          if (!fs.existsSync(env[key])) fs.mkdirSync(env[key]);
+        }
+        const expectedDirectories = fs.readdirSync(root).sort();
+        const exe = path.join(process.env.CARGO_TARGET_DIR, 'debug', 'ai-toolbox-cli.exe');
+        function run(args, input = '', exitCode = 0) {
+          const child = spawnSync(exe, args, { cwd:root, env, input, encoding:'utf8', timeout:5000, killSignal:'SIGKILL', maxBuffer:65536, windowsHide:true });
+          assert.ifError(child.error); assert.equal(child.signal, null);
+          assert.equal(child.stderr, ''); assert.equal(child.status, exitCode);
+          return child.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line));
+        }
+        const expected={cli_keys:['claude','claude_desktop','codex','grok','kimi','gemini']};
+        for(const args of [['--format','json','gateway','supported-cli-keys'],['gateway','supported-cli-keys','--format','json']]) {
+         const cli=run(args); assert.equal(cli.length,1); assert.equal(cli[0].ok,true);
+         assert.equal(cli[0].operation,'gateway.supported_cli_keys'); assert.deepEqual(cli[0].data,expected);
+        }
+        for(const extra of [['--path','fixture'],['--profile','fixture'],['extra'],['--unknown'],['--format','json']]) {
+         const cli=run(['--format','json','gateway','supported-cli-keys',...extra],'',2);
+         assert.equal(cli.length,1); assert.equal(cli[0].ok,false); assert.equal(cli[0].data,null); assert.equal(cli[0].error.code,'INVALID_INPUT');
+        }
+        const requests=[{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'native-fixture',version:'1'}}},
+         {jsonrpc:'2.0',method:'notifications/initialized'},
+         {jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'gateway_supported_cli_keys',arguments:{}}},
+         {jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'gateway_supported_cli_keys'}},
+         ...[{path:'fixture'},null,[],{profile:'fixture'}].map((arguments,i)=>({jsonrpc:'2.0',id:4+i,method:'tools/call',params:{name:'gateway_supported_cli_keys',arguments}})),
+         {jsonrpc:'2.0',id:8,method:'tools/call',params:{name:'gateway_supported_cli_keys',arguments:{}}}];
+        const mcp=run(['mcp','serve'],requests.map(x=>JSON.stringify(x)+'\n').join(''));
+        assert.equal(mcp.length,8); assert.equal(mcp[0].id,1); assert.equal(mcp[0].result.protocolVersion,'2025-11-25');
+        for(const index of [1,2,7]) { assert.equal(mcp[index].id,index+1); assert.equal(mcp[index].result.isError,false); assert.deepEqual(mcp[index].result.structuredContent,expected); assert.deepEqual(JSON.parse(mcp[index].result.content[0].text),expected); }
+        for(const index of [3,4,5,6]) { assert.equal(mcp[index].id,index+1); assert.equal(mcp[index].error.code,-32602); assert.equal(mcp[index].result,undefined); }
+        assert.deepEqual(fs.readdirSync(root).sort(),expectedDirectories,'No unexpected state entries');
+        for(const entry of fs.readdirSync(root,{withFileTypes:true})) { assert(entry.isDirectory()); assert.equal(fs.readdirSync(path.join(root,entry.name)).length,0,'No application state writes'); }
+        for(const entry of expectedDirectories) fs.rmdirSync(path.join(root,entry));
+        fs.rmdirSync(root);
+        console.log('Windows gateway actual CLI/MCP: CLI 2 success/5 rejection; MCP 3 success/4 rejection; no initialization passed.');
+        '@ | Set-Content -Encoding utf8 "$env:RUNNER_TEMP/native-smoke.cjs"
+        node "$env:RUNNER_TEMP/native-smoke.cjs" 2>&1 | Tee-Object "$env:RUNNER_TEMP/native-evidence/windows-protocol-smoke.log"
+        if ($LASTEXITCODE -ne 0) { throw 'Windows actual protocol smoke failed' }
+    - name: Compile Windows desktop library and run exactly one shared gateway query regression
+      timeout-minutes: 65
+      run: |
+        $ErrorActionPreference = 'Stop'
+        cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::commands::tests::supported_cli_query_delegates_to_shared_takeover_gate -- --exact --test-threads=1 2>&1 | Tee-Object "$env:RUNNER_TEMP/native-evidence/desktop-gateway.log"
+        $exit = $LASTEXITCODE
+        node .github/validation/windows-package/check-native.mjs "$env:RUNNER_TEMP/native-evidence/desktop-gateway.log" $exit coding::proxy_gateway::commands::tests::supported_cli_query_delegates_to_shared_takeover_gate 1
+        if ($exit -ne 0 -or $LASTEXITCODE -ne 0) { throw 'Native test identities or result mismatch' }
+        if (-not (Select-String -SimpleMatch 'test coding::proxy_gateway::commands::tests::supported_cli_query_delegates_to_shared_takeover_gate ... ok' "$env:RUNNER_TEMP/native-evidence/desktop-gateway.log")) { throw 'Exact desktop test missing' }
+    - name: Verify source and locks unchanged
+      if: ${{ !cancelled() }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if ((git rev-parse HEAD) -ne $env:SOURCE_SHA -or (git status --porcelain)) { throw 'Source changed' }
+        foreach ($line in Get-Content "$env:RUNNER_TEMP/native-evidence/locks.sha256") {
+          $parts = $line -split '  ',2
+          if ((Get-FileHash $parts[1] -Algorithm SHA256).Hash -ne $parts[0]) { throw 'Lock changed' }
+        }
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: shared-gateway-final-windows-${{ github.run_id }}
+        path: ${{ runner.temp }}/native-evidence
+        if-no-files-found: error
+        retention-days: 14
