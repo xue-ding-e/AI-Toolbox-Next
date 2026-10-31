@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:
-      SOURCE_SHA: f5e94d4043c9fa9d255570f21335f2f47e4d2307
+      SOURCE_SHA: c95f9ec1bc54904ea850a2e2f5b7166db681d6dd
       CARGO_BUILD_JOBS: '1'
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -23,7 +23,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: f5e94d4043c9fa9d255570f21335f2f47e4d2307
+        ref: c95f9ec1bc54904ea850a2e2f5b7166db681d6dd
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/setup-node@v4
@@ -91,18 +91,20 @@ jobs:
 
         const expected={"crates/ai-toolbox-storage/AGENTS.md": "ce196c302372ce354d5420eda282a99c99d81f7a4a3140bb1474e8bb4c17f4c6",
         "crates/ai-toolbox-storage/src/lib.rs": "aab376958f94ebc11136a52fb64089e913c156fb7469bd5d01d0f80a433b93c0",
-        "crates/ai-toolbox-storage/src/ui_preferences.rs": "105ce594ad8f40f583295f33650318874f781e43fa12720240c440ca526b298b",
-        "crates/ai-toolbox-storage/src/ui_preferences/tests.rs": "6949935bf0054066b41b7a82202611f4223516e9c8dfbc81e736393989f2bc64",
+        "crates/ai-toolbox-storage/src/ui_preferences.rs": "207456254d02f7daf80d5bb2fbb91400f2bd151ba71c4c914fe3372cdda2d28c",
+        "crates/ai-toolbox-storage/src/ui_preferences/tests.rs": "261324f3706fef21825f9927d99f7a249ed383a3ae11861561973369c9da519f",
         "tauri/src/settings/AGENTS.md": "47e1f0cc8953839cae950ad03c369982301f5d29dc8e6ae2a3781f7f918ce3e1", "tauri/src/settings/adapter.rs":
-        "135b595df6a366f64266a97addce1630cd3a6145e82f5346d25affd1bc1fa15a", "tauri/src/settings/commands.rs": "a9386859f1bb3221182307541da2b4662ec12f5dd21ecbf3156dc4319f09cf08",
-        "tauri/src/settings/store.rs": "0f7d401a86a06d3d06a5c43d10c8d612ccc41dd0c338cba5d6c73277ceec03ed", "tauri/src/settings/types.rs":
+        "fbc299d95e877b4e22aae5cae66f192756f42ab3a3a812c27bdc6fe640c6bcc0", "tauri/src/settings/commands.rs": "a9386859f1bb3221182307541da2b4662ec12f5dd21ecbf3156dc4319f09cf08",
+        "tauri/src/settings/store.rs": "009d95d4a35567485901614cc93a4c997f244b8e80e9e64e8b5bbef49beece27", "tauri/src/settings/types.rs":
         "33510e949880bd4d88556649f150cf1ff3d5b5b2979b77f6d5685b45ff016909"};
 
-        assert.equal(git(''rev-parse'',''HEAD''),''f5e94d4043c9fa9d255570f21335f2f47e4d2307'');
+        assert.equal(git(''rev-parse'',''HEAD''),''c95f9ec1bc54904ea850a2e2f5b7166db681d6dd'');
 
-        assert.equal(git(''rev-parse'',''HEAD^{tree}''),''53e0d3b2dd4d4cd88b0343525f118641d8255eca'');
+        assert.equal(git(''rev-parse'',''HEAD^{tree}''),''b6bbf47e85d8980610a1a38b43c690df74dcc682'');
 
-        assert.equal(git(''rev-parse'',''HEAD^''),''0b8e83aa2606a81ed7348855ed4acded1a7a377e'');
+        assert.equal(git(''rev-parse'',''HEAD^''),''f5e94d4043c9fa9d255570f21335f2f47e4d2307'');
+
+        assert.equal(git(''rev-parse'',''HEAD^^''),''0b8e83aa2606a81ed7348855ed4acded1a7a377e'');
 
         assert.deepEqual(git(''diff'',''--name-only'',''0b8e83aa2606a81ed7348855ed4acded1a7a377e'',''HEAD'').split(''\n'').sort(),Object.keys(expected).sort());
 
@@ -110,7 +112,7 @@ jobs:
 
         assert.equal(git(''status'',''--porcelain''),'''');
 
-        fs.writeFileSync(process.env.RUNNER_TEMP+''/native-evidence/reviewed-source.json'',JSON.stringify({source:''f5e94d4043c9fa9d255570f21335f2f47e4d2307'',tree:''53e0d3b2dd4d4cd88b0343525f118641d8255eca'',base:''0b8e83aa2606a81ed7348855ed4acded1a7a377e'',files:expected},null,2));
+        fs.writeFileSync(process.env.RUNNER_TEMP+''/native-evidence/reviewed-source.json'',JSON.stringify({source:''c95f9ec1bc54904ea850a2e2f5b7166db681d6dd'',tree:''b6bbf47e85d8980610a1a38b43c690df74dcc682'',base:''0b8e83aa2606a81ed7348855ed4acded1a7a377e'',files:expected},null,2));
 
         console.log(''Reviewed source tree, exact nine-file allowlist and content hashes verified'');
 
@@ -241,7 +243,7 @@ jobs:
       run:
         shell: pwsh
     env:
-      SOURCE_SHA: f5e94d4043c9fa9d255570f21335f2f47e4d2307
+      SOURCE_SHA: c95f9ec1bc54904ea850a2e2f5b7166db681d6dd
       CARGO_BUILD_JOBS: '1'
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -252,7 +254,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: f5e94d4043c9fa9d255570f21335f2f47e4d2307
+        ref: c95f9ec1bc54904ea850a2e2f5b7166db681d6dd
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/setup-node@v4
@@ -292,18 +294,20 @@ jobs:
 
         const expected={"crates/ai-toolbox-storage/AGENTS.md": "ce196c302372ce354d5420eda282a99c99d81f7a4a3140bb1474e8bb4c17f4c6",
         "crates/ai-toolbox-storage/src/lib.rs": "aab376958f94ebc11136a52fb64089e913c156fb7469bd5d01d0f80a433b93c0",
-        "crates/ai-toolbox-storage/src/ui_preferences.rs": "105ce594ad8f40f583295f33650318874f781e43fa12720240c440ca526b298b",
-        "crates/ai-toolbox-storage/src/ui_preferences/tests.rs": "6949935bf0054066b41b7a82202611f4223516e9c8dfbc81e736393989f2bc64",
+        "crates/ai-toolbox-storage/src/ui_preferences.rs": "207456254d02f7daf80d5bb2fbb91400f2bd151ba71c4c914fe3372cdda2d28c",
+        "crates/ai-toolbox-storage/src/ui_preferences/tests.rs": "261324f3706fef21825f9927d99f7a249ed383a3ae11861561973369c9da519f",
         "tauri/src/settings/AGENTS.md": "47e1f0cc8953839cae950ad03c369982301f5d29dc8e6ae2a3781f7f918ce3e1", "tauri/src/settings/adapter.rs":
-        "135b595df6a366f64266a97addce1630cd3a6145e82f5346d25affd1bc1fa15a", "tauri/src/settings/commands.rs": "a9386859f1bb3221182307541da2b4662ec12f5dd21ecbf3156dc4319f09cf08",
-        "tauri/src/settings/store.rs": "0f7d401a86a06d3d06a5c43d10c8d612ccc41dd0c338cba5d6c73277ceec03ed", "tauri/src/settings/types.rs":
+        "fbc299d95e877b4e22aae5cae66f192756f42ab3a3a812c27bdc6fe640c6bcc0", "tauri/src/settings/commands.rs": "a9386859f1bb3221182307541da2b4662ec12f5dd21ecbf3156dc4319f09cf08",
+        "tauri/src/settings/store.rs": "009d95d4a35567485901614cc93a4c997f244b8e80e9e64e8b5bbef49beece27", "tauri/src/settings/types.rs":
         "33510e949880bd4d88556649f150cf1ff3d5b5b2979b77f6d5685b45ff016909"};
 
-        assert.equal(git(''rev-parse'',''HEAD''),''f5e94d4043c9fa9d255570f21335f2f47e4d2307'');
+        assert.equal(git(''rev-parse'',''HEAD''),''c95f9ec1bc54904ea850a2e2f5b7166db681d6dd'');
 
-        assert.equal(git(''rev-parse'',''HEAD^{tree}''),''53e0d3b2dd4d4cd88b0343525f118641d8255eca'');
+        assert.equal(git(''rev-parse'',''HEAD^{tree}''),''b6bbf47e85d8980610a1a38b43c690df74dcc682'');
 
-        assert.equal(git(''rev-parse'',''HEAD^''),''0b8e83aa2606a81ed7348855ed4acded1a7a377e'');
+        assert.equal(git(''rev-parse'',''HEAD^''),''f5e94d4043c9fa9d255570f21335f2f47e4d2307'');
+
+        assert.equal(git(''rev-parse'',''HEAD^^''),''0b8e83aa2606a81ed7348855ed4acded1a7a377e'');
 
         assert.deepEqual(git(''diff'',''--name-only'',''0b8e83aa2606a81ed7348855ed4acded1a7a377e'',''HEAD'').split(''\n'').sort(),Object.keys(expected).sort());
 
@@ -311,7 +315,7 @@ jobs:
 
         assert.equal(git(''status'',''--porcelain''),'''');
 
-        fs.writeFileSync(process.env.RUNNER_TEMP+''/native-evidence/reviewed-source.json'',JSON.stringify({source:''f5e94d4043c9fa9d255570f21335f2f47e4d2307'',tree:''53e0d3b2dd4d4cd88b0343525f118641d8255eca'',base:''0b8e83aa2606a81ed7348855ed4acded1a7a377e'',files:expected},null,2));
+        fs.writeFileSync(process.env.RUNNER_TEMP+''/native-evidence/reviewed-source.json'',JSON.stringify({source:''c95f9ec1bc54904ea850a2e2f5b7166db681d6dd'',tree:''b6bbf47e85d8980610a1a38b43c690df74dcc682'',base:''0b8e83aa2606a81ed7348855ed4acded1a7a377e'',files:expected},null,2));
 
         console.log(''Reviewed source tree, exact nine-file allowlist and content hashes verified'');
 
