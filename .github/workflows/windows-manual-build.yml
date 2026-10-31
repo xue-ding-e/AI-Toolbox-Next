@@ -102,8 +102,8 @@ jobs:
           path: ${{ runner.temp }}/acceptance-evidence/
           if-no-files-found: error
           retention-days: 14
+  # Windows is independent; only publish waits for both platform jobs.
   windows:
-    needs: linux
     if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.repository_id == '1422130502' && github.ref == 'refs/heads/main'
     runs-on: windows-2022
     timeout-minutes: 120
