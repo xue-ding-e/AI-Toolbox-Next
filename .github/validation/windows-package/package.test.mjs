@@ -48,7 +48,8 @@ test('automatic publishing remains narrowly gated and immutable', () => {
   assert.match(workflow, /cancel-in-progress: false\n  queue: max/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /git rev-list --count --merges HEAD/);
-  assert.match(workflow, /windows:\n    needs: linux/);
+  assert.doesNotMatch(workflow, /windows:\n    needs:/, 'Windows validation must run in parallel with Linux');
+  assert.match(workflow, /windows:\n    if:/);
   assert.match(publisher, /needs: \[linux, windows\]/);
   assert.equal((workflow.match(/contents: write/g) ?? []).length, 1);
   assert.match(publisher, /permissions:\n      contents: write/);
