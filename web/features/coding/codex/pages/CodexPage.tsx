@@ -77,6 +77,7 @@ import {
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
 import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
 import { useSettingsStore } from '@/stores';
+import { withTimeout } from '@/utils/withTimeout';
 import CodexProviderCard from '../components/CodexProviderCard';
 import CodexProviderFormModal from '../components/CodexProviderFormModal';
 import CodexModelFormModal from '../components/CodexModelFormModal';
@@ -584,6 +585,8 @@ const CodexPage: React.FC = () => {
     // A root/login reload invalidates results captured for the previous account list.
     const generation = ++officialAccountLoadGeneration.current;
     const usageRevision = officialAccountUsageRevision.current;
+    const startedAt = performance.now();
+    console.info('[CodexPage] loadConfig:start', { silent });
     setLoading(true);
     try {
       const [path, nextRootPathInfo, providerList] = await Promise.all([
@@ -596,7 +599,14 @@ const CodexPage: React.FC = () => {
         providerList.map(async (provider) => [
           provider.id,
           shouldLoadCodexOfficialAccounts(provider)
-            ? await listCodexOfficialAccounts(provider.id)
+            ? await withTimeout(
+                listCodexOfficialAccounts(provider.id),
+                15_000,
+                'Codex official account list timed out',
+              ).catch((error) => {
+                console.warn('[CodexPage] official account list failed', { providerId: provider.id, error });
+                return [];
+              })
             : [],
         ] as const),
       );
@@ -625,9 +635,10 @@ const CodexPage: React.FC = () => {
       // applied tag on its card, so it is not what 定位 should point at.
       const applied = providerList.find((p) => p.isApplied && !isLocalConfigId(p.id));
       setAppliedProviderId(applied?.id || '');
+      console.info('[CodexPage] loadConfig:done', { elapsedMs: Math.round(performance.now() - startedAt), providers: providerList.length });
     } catch (error) {
       if (officialAccountLoadGeneration.current !== generation) return;
-      console.error('Failed to load config:', error);
+      console.error('[CodexPage] loadConfig:failed', { elapsedMs: Math.round(performance.now() - startedAt), error });
       if (!silent) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         message.error(errorMsg || t('common.error'));
