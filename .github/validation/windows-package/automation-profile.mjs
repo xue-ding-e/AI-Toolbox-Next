@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readdirSync, lstatSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, isAbsolute, relative, dirname } from 'node:path';
 import { digest, run, boundedUtf8 } from './automation-smoke.mjs';
 
 export function snapshot(path) {
@@ -27,14 +27,39 @@ export function assertShellProgress(stderr) {
   const expected = ['shell-fixture:add-type:start', 'shell-fixture:add-type:complete', 'shell-fixture:probe:start', 'shell-fixture:probe:complete', 'shell-fixture:create:start', 'shell-fixture:create:complete'].join('\n') + '\n';
   assert.equal(stderr.replace(/\r\n/g, '\n'), expected, 'Unexpected shell progress output');
 }
-export async function initializeShellProfile(env) {
+export function assertFreshShellHome(env, fixtureRoot) {
+  assert(isAbsolute(fixtureRoot) && resolve(fixtureRoot) === fixtureRoot, 'Non-canonical fixture root');
+  assert(isAbsolute(env.HOME) && resolve(env.HOME) === env.HOME, 'Non-canonical synthetic HOME');
+  assert(!fixtureRoot.startsWith('\\\\') && !env.HOME.startsWith('\\\\'), 'Network profiles are not allowed');
+  assert.equal(env.USERPROFILE, env.HOME, 'USERPROFILE must equal synthetic HOME');
+  assert(lstatSync(fixtureRoot).isDirectory(), 'Fixture root must already exist');
+  for (const key of ['HOME', 'APPDATA', 'LOCALAPPDATA', 'AI_TOOLBOX_DATA_DIR', 'AI_TOOLBOX_CACHE_DIR', 'CODEX_HOME']) {
+    const path = env[key];
+    assert(typeof path === 'string' && isAbsolute(path) && resolve(path) === path, 'Non-canonical synthetic profile path');
+    const child = relative(fixtureRoot, path);
+    assert(child && child !== '..' && !child.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(child), 'Profile path must remain inside the explicit fresh fixture root');
+    for (let cursor = path; ;) {
+      let info;
+      try { info = lstatSync(cursor); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (info) {
+        assert(!info.isSymbolicLink(), 'Synthetic profile contains a link or junction');
+        assert(info.isDirectory(), 'Synthetic profile ancestor is not a directory');
+        if (key === 'HOME') assert.notEqual(cursor, path, 'Never reset an existing profile baseline');
+      }
+      const parent = dirname(cursor); if (parent === cursor) break; cursor = parent;
+    }
+  }
+}
+export async function initializeShellProfile(env, fixtureRoot, invoke = run) {
   assert.equal(process.platform, 'win32');
-  assert.equal(snapshot(env.HOME), null, 'Never reset an existing profile baseline');
+  // A shell may initialize profile directories BEFORE executing its script.
+  // Therefore reject every unsafe HOME/ancestor before starting ANY shell.
+  assertFreshShellHome(env, fixtureRoot);
   const command = join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   console.log(JSON.stringify({ phase: 'shell-profile-initialize', state: 'start' }));
   let result;
   try {
-    result = await run(command, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', env.HOME], env, '', 30000, false, true);
+    result = await invoke(command, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', env.HOME], env, '', 30000, false, true);
   } catch (error) {
     console.error(JSON.stringify({ phase: 'shell-profile-initialize', error: error.message, process: error.processEvidence }));
     throw error;

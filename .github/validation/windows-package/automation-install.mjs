@@ -62,7 +62,7 @@ async function registeredUninstaller() {
 const beforePaths = await paths();
 const externalRoots = ['HOME', 'APPDATA', 'LOCALAPPDATA', 'AI_TOOLBOX_CACHE_DIR', 'CODEX_HOME'];
 const shellBefore = Object.fromEntries(externalRoots.filter(key => key !== 'HOME').map(key => [key, snapshot(env[key])]));
-const shellProfile = await initializeShellProfile(env);
+const shellProfile = await initializeShellProfile(env, root);
 for (const [key, value] of Object.entries(shellBefore)) assert.deepEqual(snapshot(env[key]), value, `Shell initialization wrote outside HOME: ${key}`);
 const externalBefore = Object.fromEntries(externalRoots.map(key => [key, snapshot(env[key])]));
 const foreignName = 'not-owned-by-installer.fixture';

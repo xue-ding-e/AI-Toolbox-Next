@@ -31,20 +31,15 @@ const pathsBefore = await paths();
 const outside = join(root, 'boundary-sentinel'); mkdirSync(outside);
 writeFileSync(join(outside, 'preserve.fixture'), 'outside-home-preserve');
 const outsideBefore = snapshot(outside);
-const powershell = join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 async function rejectBoundary(phase, candidateHome, actualHome = candidateHome) {
   console.log(JSON.stringify({ phase, state: 'start' }));
-  let result;
-  try {
-  result = await run(powershell, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', candidateHome],
-    { ...env, HOME: actualHome, USERPROFILE: actualHome }, '', 30000, false, true);
-  } catch (error) {
-    console.error(JSON.stringify({ phase, error: error.message, process: error.processEvidence }));
-    throw error;
-  }
-  console.log(JSON.stringify({ phase, state: 'exit', code: result.code, signal: result.signal, stderr: boundedUtf8(result.err) }));
-  assert.notEqual(result.code, 0); assert.equal(result.signal, null);
+  let spawnCount = 0;
+  await assert.rejects(initializeShellProfile({ ...env, HOME: candidateHome, USERPROFILE: actualHome }, root, (...args) => {
+    spawnCount++; return run(...args);
+  }));
+  assert.equal(spawnCount, 0, 'Unsafe profile must be rejected before any shell starts');
   assert.deepEqual(snapshot(outside), outsideBefore);
+  console.log(JSON.stringify({ phase, state: 'rejected-before-spawn', spawn_count: spawnCount, outside_tree_unchanged: true }));
 }
 const dangling = join(root, 'dangling-home');
 symlinkSync(join(root, 'absent-target'), dangling, 'junction');
@@ -56,7 +51,7 @@ await rejectBoundary('reject-ancestor-junction', join(ancestor, 'child'));
 rmSync(ancestor);
 await rejectBoundary('reject-mismatched-home', join(root, 'mismatched-home'), outside);
 assert.equal(existsSync(join(root, 'mismatched-home')), false);
-const baseline = await initializeShellProfile(env);
+const baseline = await initializeShellProfile(env, root);
 for (const key of keys.filter(key => key !== 'HOME')) assert.equal(snapshot(env[key]), null, `Shell initialization wrote outside HOME: ${key}`);
 for (const key of keys.filter(key => key !== 'HOME')) {
   mkdirSync(env[key]); writeFileSync(join(env[key], 'preserve.fixture'), 'synthetic-preserve\n');

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { snapshot, shellBaseline, assertShellBaseline, assertShellProgress } from './automation-profile.mjs';
+import { snapshot, shellBaseline, assertShellBaseline, assertShellProgress, assertFreshShellHome } from './automation-profile.mjs';
 
 test('exact independently observed shell metadata is accepted, not ignored', () => {
   assertShellBaseline(structuredClone(shellBaseline));
@@ -51,4 +51,28 @@ test('shell progress accepts only exact six markers and one terminal newline', (
   const good = ['shell-fixture:add-type:start', 'shell-fixture:add-type:complete', 'shell-fixture:probe:start', 'shell-fixture:probe:complete', 'shell-fixture:create:start', 'shell-fixture:create:complete'].join('\n') + '\n';
   assertShellProgress(good); assertShellProgress(good.replaceAll('\n', '\r\n'));
   for (const bad of ['\n' + good, good + '\n', good + 'unknown\n', good.trimEnd(), good.replace('probe:start', 'unknown')]) assert.throws(() => assertShellProgress(bad));
+});
+
+test('parent pre-spawn guard rejects unsafe HOME and linked ancestors', () => {
+  const root = mkdtempSync(join(tmpdir(), 'automation-profile-parent-'));
+  const fresh = join(root, 'home');
+  const environment = home => ({ HOME: home, USERPROFILE: home, APPDATA: join(root, 'roaming'), LOCALAPPDATA: join(root, 'local'), AI_TOOLBOX_DATA_DIR: join(root, 'data'), AI_TOOLBOX_CACHE_DIR: join(root, 'cache'), CODEX_HOME: join(root, 'codex') });
+  try {
+    assertFreshShellHome(environment(fresh), root);
+    assert.throws(() => assertFreshShellHome({ HOME: fresh, USERPROFILE: root }, root), /USERPROFILE/);
+    assert.throws(() => assertFreshShellHome(environment(root), root), /inside/);
+    assert.throws(() => assertFreshShellHome(environment(join(root, '..', 'outside')), root), /inside/);
+    mkdirSync(fresh);
+    assert.throws(() => assertFreshShellHome(environment(fresh), root), /existing/);
+    rmSync(fresh, { recursive: true });
+    const outside = join(root, 'sentinel'); mkdirSync(outside);
+    writeFileSync(join(outside, 'keep'), 'preserve');
+    const before = snapshot(outside);
+    const link = join(root, 'junction'); symlinkSync(outside, link, 'junction');
+    assert.throws(() => assertFreshShellHome(environment(join(link, 'child')), root), /link or junction/);
+    const dangling = join(root, 'dangling'); symlinkSync(join(root, 'absent'), dangling, 'junction');
+    assert.throws(() => assertFreshShellHome(environment(dangling), root), /link or junction/);
+    assert.throws(() => assertFreshShellHome({ ...environment(fresh), APPDATA: join(link, 'roaming') }, root), /link or junction/);
+    assert.deepEqual(snapshot(outside), before);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
