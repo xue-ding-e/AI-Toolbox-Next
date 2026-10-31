@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { snapshot, shellBaseline, assertShellBaseline } from './automation-profile.mjs';
+import { snapshot, shellBaseline, assertShellBaseline, assertShellProgress } from './automation-profile.mjs';
 
 test('exact independently observed shell metadata is accepted, not ignored', () => {
   assertShellBaseline(structuredClone(shellBaseline));
@@ -45,4 +45,10 @@ test('snapshot refuses dangling links rather than treating them as absent', () =
     symlinkSync(join(root, 'absent'), join(root, 'dangling'), 'junction');
     assert.throws(() => snapshot(root), /links/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('shell progress accepts only exact six markers and one terminal newline', () => {
+  const good = ['shell-fixture:add-type:start', 'shell-fixture:add-type:complete', 'shell-fixture:probe:start', 'shell-fixture:probe:complete', 'shell-fixture:create:start', 'shell-fixture:create:complete'].join('\n') + '\n';
+  assertShellProgress(good); assertShellProgress(good.replaceAll('\n', '\r\n'));
+  for (const bad of ['\n' + good, good + '\n', good + 'unknown\n', good.trimEnd(), good.replace('probe:start', 'unknown')]) assert.throws(() => assertShellProgress(bad));
 });

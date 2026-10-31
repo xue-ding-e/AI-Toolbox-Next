@@ -14,6 +14,7 @@ function Assert-NoLinks([string]$Path) {
     $cursor = [IO.Path]::GetDirectoryName($cursor)
   }
 }
+[Console]::Error.WriteLine('shell-fixture:add-type:start')
 Add-Type -TypeDefinition @'
 using System;
 using System.Text;
@@ -39,6 +40,7 @@ public static class FixtureShellFolders {
   }
 }
 '@
+[Console]::Error.WriteLine('shell-fixture:add-type:complete')
 Assert-NoLinks $SyntheticHome
 if (Test-Path -LiteralPath $SyntheticHome) { throw 'Shell preparation requires a fresh absent HOME' }
 $folders = @(
@@ -48,6 +50,7 @@ $folders = @(
 )
 # DONT_VERIFY neither creates nor initializes. Validate ALL destinations before
 # any CREATE call; no registry redirection, default-user token or fallback path.
+[Console]::Error.WriteLine('shell-fixture:probe:start')
 foreach ($folder in $folders) {
   $expected = [IO.Path]::Combine($SyntheticHome, $folder.relative)
   $actual = [FixtureShellFolders]::Get($folder.id, 0x4000)
@@ -55,10 +58,13 @@ foreach ($folder in $folders) {
   Assert-NoLinks $actual
 }
 if (Test-Path -LiteralPath $SyntheticHome) { throw 'Read-only shell probe initialized HOME' }
+[Console]::Error.WriteLine('shell-fixture:probe:complete')
+[Console]::Error.WriteLine('shell-fixture:create:start')
 foreach ($folder in $folders) {
   $expected = [IO.Path]::Combine($SyntheticHome, $folder.relative)
   $actual = [FixtureShellFolders]::Get($folder.id, 0x8000)
   if (-not [string]::Equals($actual, $expected, [StringComparison]::OrdinalIgnoreCase)) { throw 'Shell destination changed during creation' }
   Assert-NoLinks $actual
 }
+[Console]::Error.WriteLine('shell-fixture:create:complete')
 @{ initialized=$true; home=$SyntheticHome; csidl=@(16,11,2) } | ConvertTo-Json -Compress

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, realpathSync, symlinkSync, unlinkSync, rmSync } from 'node:fs';
 import { join, isAbsolute, resolve } from 'node:path';
-import { run, digest } from './automation-smoke.mjs';
+import { run, digest, boundedUtf8 } from './automation-smoke.mjs';
 import { snapshot, initializeShellProfile } from './automation-profile.mjs';
 assert.equal(process.platform, 'win32');
 assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -25,27 +25,36 @@ async function paths() {
   }
   return values;
 }
+console.log(JSON.stringify({ phase: 'registry-path-snapshot', state: 'start' }));
 const pathsBefore = await paths();
 // Native CREATE-boundary negatives stay inside this one disposable fixture.
 const outside = join(root, 'boundary-sentinel'); mkdirSync(outside);
 writeFileSync(join(outside, 'preserve.fixture'), 'outside-home-preserve');
 const outsideBefore = snapshot(outside);
 const powershell = join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-async function rejectBoundary(candidateHome, actualHome = candidateHome) {
-  const result = await run(powershell, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', candidateHome],
-    { ...env, HOME: actualHome, USERPROFILE: actualHome }, '', 30000);
+async function rejectBoundary(phase, candidateHome, actualHome = candidateHome) {
+  console.log(JSON.stringify({ phase, state: 'start' }));
+  let result;
+  try {
+  result = await run(powershell, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', candidateHome],
+    { ...env, HOME: actualHome, USERPROFILE: actualHome }, '', 30000, false, true);
+  } catch (error) {
+    console.error(JSON.stringify({ phase, error: error.message, process: error.processEvidence }));
+    throw error;
+  }
+  console.log(JSON.stringify({ phase, state: 'exit', code: result.code, signal: result.signal, stderr: boundedUtf8(result.err) }));
   assert.notEqual(result.code, 0); assert.equal(result.signal, null);
   assert.deepEqual(snapshot(outside), outsideBefore);
 }
 const dangling = join(root, 'dangling-home');
 symlinkSync(join(root, 'absent-target'), dangling, 'junction');
-await rejectBoundary(dangling);
+await rejectBoundary('reject-dangling-home', dangling);
 rmSync(dangling); assert.equal(existsSync(join(root, 'absent-target')), false);
 const ancestor = join(root, 'linked-ancestor');
 symlinkSync(outside, ancestor, 'junction');
-await rejectBoundary(join(ancestor, 'child'));
+await rejectBoundary('reject-ancestor-junction', join(ancestor, 'child'));
 rmSync(ancestor);
-await rejectBoundary(join(root, 'mismatched-home'), outside);
+await rejectBoundary('reject-mismatched-home', join(root, 'mismatched-home'), outside);
 assert.equal(existsSync(join(root, 'mismatched-home')), false);
 const baseline = await initializeShellProfile(env);
 for (const key of keys.filter(key => key !== 'HOME')) assert.equal(snapshot(env[key]), null, `Shell initialization wrote outside HOME: ${key}`);
@@ -72,6 +81,7 @@ for (const key of ['HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\
   if (result.code === 0 && version && version !== '0.0.0.0') webview = true;
 }
 assert(webview, 'Preinstalled WebView2 required; never launch bootstrapper');
+console.log(JSON.stringify({ phase: 'old-gui-install', state: 'start' }));
 const installed = await run(previous, ['/S', '/NS', `/D=${install}`], env, '', 180000, true);
 assert.equal(installed.code, 0); assert.equal(installed.signal, null); preserved();
 assert.deepEqual(await paths(), pathsBefore);
@@ -87,6 +97,7 @@ for (const [field, expected] of [['InstallLocation', install], ['UninstallString
 }
 const guiIdentity = { sha256: digest(gui), bytes: statSync(gui).size };
 const foreign = join(install, 'not-owned.fixture'); writeFileSync(foreign, 'preserve\n');
+console.log(JSON.stringify({ phase: 'old-gui-uninstall', state: 'start' }));
 const removed = await run(uninstaller, ['/S', `_?=${install}`], env, '', 180000, true);
 assert.equal(removed.code, 0); assert.equal(removed.signal, null);
 assert.equal(existsSync(gui), false); assert.equal(readFileSync(foreign, 'utf8'), 'preserve\n');

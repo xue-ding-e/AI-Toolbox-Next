@@ -38,6 +38,23 @@ test('bounded runner observes real success, failure, timeout and output overflow
   await assert.rejects(run(process.execPath, ['-e', 'process.stdout.write("x".repeat(2*1024*1024));setInterval(()=>{},100)'], {}), /output/);
 });
 
+test('synthetic timeout diagnostics are opt-in, bounded and contain no environment', async () => {
+  const { run } = await import('./automation-smoke.mjs');
+  const argv = ['-e', 'process.stderr.write("d".repeat(6000));setInterval(()=>{},100)'];
+  await assert.rejects(run(process.execPath, argv, { FIXTURE_PRIVATE: 'not-logged' }, '', 1000, false, true), error => {
+    assert.match(error.message, /deadline/);
+    assert.equal(error.processEvidence.executable, process.execPath);
+    assert.deepEqual(error.processEvidence.argv, argv);
+    assert.equal(error.processEvidence.timeout_ms, 1000);
+    assert.equal(error.processEvidence.stderr.length, 4096);
+    assert(!JSON.stringify(error.processEvidence).includes('not-logged'));
+    return true;
+  });
+  await assert.rejects(run(process.execPath, ['-e', 'setInterval(()=>{},100)'], {}, '', 100), error => {
+    assert.equal(error.processEvidence, undefined); return true;
+  });
+});
+
 test('Windows lifecycle reuses the reviewed Job Object owner without compiler exceptions', async () => {
   const { createHash } = await import('node:crypto');
   const owner = readFileSync(new URL('./windows-owned-process.ps1', import.meta.url), 'utf8');
@@ -51,4 +68,14 @@ test('Windows lifecycle reuses the reviewed Job Object owner without compiler ex
   assert.match(workflow, /Invoke-NextOwnedProcess -FilePath/);
   assert.doesNotMatch(workflow, /-VerifiedToolPath|-VerifiedToolSha256/);
   assert(workflow.indexOf('windows-owned-process.test.ps1') < workflow.indexOf('$result = Invoke-NextOwnedProcess'));
+});
+
+test('diagnostic capture enforces UTF-8 bytes for multibyte text', async () => {
+  const { boundedUtf8 } = await import('./automation-smoke.mjs');
+  for (const input of ['中'.repeat(3000), '🙂'.repeat(3000), 'a'.repeat(4095) + '中']) {
+    const result = boundedUtf8(input);
+    assert(Buffer.byteLength(result, 'utf8') <= 4096);
+    assert(input.startsWith(result)); assert(!result.includes('�'));
+  }
+  assert.equal(boundedUtf8('a'.repeat(5000)).length, 4096);
 });

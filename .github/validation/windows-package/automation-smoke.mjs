@@ -5,11 +5,29 @@ import { createHash } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 
+// Bound captured text by UTF-8 bytes without splitting a code point.
+export function boundedUtf8(value, limit = 4096) {
+  let result = '', bytes = 0;
+  for (const point of value) {
+    const size = Buffer.byteLength(point, 'utf8');
+    if (bytes + size > limit) break;
+    result += point; bytes += size;
+  }
+  return result;
+}
 export function digest(path) { return createHash('sha256').update(readFileSync(path)).digest('hex'); }
-export function run(file, args, env, input = '', timeout = 10000, windowsVerbatimArguments = false) {
+export function run(file, args, env, input = '', timeout = 10000, windowsVerbatimArguments = false, failureDiagnostics = false) {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { env, windowsHide: true, windowsVerbatimArguments, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '', err = '', failure;
+    // Opt-in CI synthetic fixture diagnostics only; never capture environment.
+    const diagnosticError = (error, code = null, signal = null) => {
+      if (failureDiagnostics) error.processEvidence = {
+        executable: file, argv: args, timeout_ms: timeout, exit_code: code, signal,
+        stdout: boundedUtf8(out), stderr: boundedUtf8(err),
+      };
+      return error;
+    };
     const stop = (reason) => {
       if (failure) return;
       failure = reason;
@@ -21,7 +39,7 @@ export function run(file, args, env, input = '', timeout = 10000, windowsVerbati
         cleanup();
         child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
         child.unref();
-        reject(new Error('Child did not reap after termination; descendant cleanup is unverified', { cause: failure }));
+        reject(diagnosticError(new Error('Child did not reap after termination; descendant cleanup is unverified', { cause: failure })));
       }, 5000);
     };
     const interrupt = () => stop(new Error('Child interrupted by SIGINT'));
@@ -40,11 +58,11 @@ export function run(file, args, env, input = '', timeout = 10000, windowsVerbati
     child.stdin.on('error', error => { if (error.code !== 'EPIPE') stop(error); });
     child.on('error', error => {
       if (child.pid) stop(error);
-      else { cleanup(); child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); reject(error); }
+      else { cleanup(); child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); reject(diagnosticError(error)); }
     });
     child.on('close', (code, signal) => {
       cleanup();
-      if (failure) reject(failure); else resolve({ code, signal, out, err });
+      if (failure) reject(diagnosticError(failure, code, signal)); else resolve({ code, signal, out, err });
     });
     child.stdin.end(input);
   });

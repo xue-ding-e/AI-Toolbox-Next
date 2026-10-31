@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readdirSync, lstatSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { digest, run } from './automation-smoke.mjs';
+import { digest, run, boundedUtf8 } from './automation-smoke.mjs';
 
 export function snapshot(path) {
   let info;
@@ -23,12 +23,25 @@ export const shellBaseline = {
   Desktop: { 'desktop.ini': '4b9d687ac625690fd026ed4b236dad1cac90ef69e7ad256cc42766a065b50026' },
 };
 export function assertShellBaseline(value) { assert.deepEqual(value, shellBaseline, 'Unexpected Windows shell initialization'); }
+export function assertShellProgress(stderr) {
+  const expected = ['shell-fixture:add-type:start', 'shell-fixture:add-type:complete', 'shell-fixture:probe:start', 'shell-fixture:probe:complete', 'shell-fixture:create:start', 'shell-fixture:create:complete'].join('\n') + '\n';
+  assert.equal(stderr.replace(/\r\n/g, '\n'), expected, 'Unexpected shell progress output');
+}
 export async function initializeShellProfile(env) {
   assert.equal(process.platform, 'win32');
   assert.equal(snapshot(env.HOME), null, 'Never reset an existing profile baseline');
   const command = join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const result = await run(command, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', env.HOME], env, '', 30000);
-  assert.equal(result.code, 0); assert.equal(result.signal, null); assert.equal(result.err, '');
+  console.log(JSON.stringify({ phase: 'shell-profile-initialize', state: 'start' }));
+  let result;
+  try {
+    result = await run(command, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', env.HOME], env, '', 30000, false, true);
+  } catch (error) {
+    console.error(JSON.stringify({ phase: 'shell-profile-initialize', error: error.message, process: error.processEvidence }));
+    throw error;
+  }
+  console.log(JSON.stringify({ phase: 'shell-profile-initialize', state: 'exit', code: result.code, signal: result.signal, stderr: boundedUtf8(result.err) }));
+  assert.equal(result.code, 0); assert.equal(result.signal, null);
+  assertShellProgress(result.err);
   assert.deepEqual(JSON.parse(result.out), { initialized: true, home: env.HOME, csidl: [16, 11, 2] });
   const baseline = snapshot(env.HOME);
   assertShellBaseline(baseline);
