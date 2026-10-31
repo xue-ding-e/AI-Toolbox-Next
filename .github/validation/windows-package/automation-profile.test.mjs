@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { snapshot, shellBaseline, assertShellBaseline, assertShellProgress, assertFreshShellHome } from './automation-profile.mjs';
+import { snapshot, shellBaseline, assertShellBaseline, assertShellProgress, assertFreshShellHome, SHELL_INITIALIZATION_TIMEOUT_MS } from './automation-profile.mjs';
 
 test('exact independently observed shell metadata is accepted, not ignored', () => {
   assertShellBaseline(structuredClone(shellBaseline));
@@ -76,4 +76,8 @@ test('parent pre-spawn guard rejects unsafe HOME and linked ancestors', () => {
     assert.throws(() => assertFreshShellHome({ ...environment(fresh), APPDATA: join(link, 'roaming') }, root), /link or junction/);
     assert.deepEqual(snapshot(outside), before);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cold shell compilation uses one bounded 90 second helper ceiling', () => {
+  assert.equal(SHELL_INITIALIZATION_TIMEOUT_MS, 90000);
 });

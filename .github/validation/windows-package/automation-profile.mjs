@@ -61,6 +61,10 @@ export function assertFreshShellHome(env, fixtureRoot) {
     }
   }
 }
+// Run 41203361227 hit the 30s child ceiling inside Add-Type. This is ONE legal
+// helper invocation; the unchanged outer Job's 240s fixture deadline is total,
+// not a promise that helper + installer + uninstaller receive their full limits.
+export const SHELL_INITIALIZATION_TIMEOUT_MS = 90000;
 export async function initializeShellProfile(env, fixtureRoot, invoke = run) {
   assert.equal(process.platform, 'win32');
   // A shell may initialize profile directories BEFORE executing its script.
@@ -70,7 +74,7 @@ export async function initializeShellProfile(env, fixtureRoot, invoke = run) {
   console.log(JSON.stringify({ phase: 'shell-profile-initialize', state: 'start' }));
   let result;
   try {
-    result = await invoke(command, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', env.HOME], env, '', 30000, false, true);
+    result = await invoke(command, ['-NoProfile', '-NonInteractive', '-File', resolve('.github/validation/windows-package/windows-shell-fixture.ps1'), '-SyntheticHome', env.HOME], env, '', SHELL_INITIALIZATION_TIMEOUT_MS, false, true);
   } catch (error) {
     console.error(JSON.stringify({ phase: 'shell-profile-initialize', error: error.message, process: error.processEvidence }));
     throw error;
