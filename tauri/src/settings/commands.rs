@@ -53,7 +53,7 @@ pub async fn save_session_detail_filters(
 pub async fn get_gateway_usage_range(
     sqlite_state: tauri::State<'_, SqliteDbState>,
 ) -> Result<GatewayUsageRangeSelection, String> {
-    Ok(store::load_settings_from_sqlite_state(&sqlite_state)?.gateway_usage_range)
+    store::get_gateway_usage_range_from_sqlite_state(&sqlite_state)
 }
 
 /// Persist the gateway statistics page's time range and rebuild the tray menu

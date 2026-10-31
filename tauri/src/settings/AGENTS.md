@@ -8,7 +8,7 @@
 
 ## Source of Truth
 
-- 权威数据是 SQLite `settings/app` 记录里的 JSONB；`AppSettings` 只是它的 Rust 投影，`adapter` 是唯一转换层（`from_db_value` 容错读取、`to_db_value` 全量序列化）。前端、托盘、各 coding 模块读到的都是这份记录。
+- 权威数据是 SQLite `settings/app` 记录里的 JSONB；`AppSettings` 只是它的 Rust 投影，`adapter` 是完整设置的转换层（`from_db_value` 容错读取、`to_db_value` 全量序列化）；三个窄 UI 偏好 DTO/解码复用 `ai_toolbox_storage::ui_preferences`。前端、托盘、各 coding 模块读到的都是这份记录。
 - 记录不存在时读取返回 `AppSettings::default()`，**不会**回写；首次写入由各写入口按需创建。
 - `settings` 表里还有别的 id：`backup_repository` 与 legacy `repository_sync`（备份域，见 backup 文档）。不要假设这张表只有一条记录。
 - 派生/进程内状态，不是事实源：
@@ -56,7 +56,7 @@ sequenceDiagram
 - **`save_settings` 是全量替换**：adapter 只序列化 `AppSettings` 的字段，任何「存在 app 记录里但不在 `AppSettings` 结构里」的键都会在下次前端保存时被静默删除。新增这类键必须同时加到 `types.rs` + `adapter.rs`，否则不要放进这条记录。
 - **前端必须提交完整对象**：`AppSettings` 没有 `#[serde(default)]`，缺字段的 payload 会让 `save_settings` 直接反序列化失败（不是静默丢数据）。前端所有 setter 的约定是 `getSettings()` → spread 改一个字段 → `saveSettings()`。
 - **读-改-写有并发窗口**：`set_manual_cli_path`、`save_provider_sort_mode`、`record_provider_last_used` 都是「先 load 再 save/patch」，且分两次取 DB 锁；两次之间插入的其它写入会被回退。新增此类命令时尽量把读写放进同一个 `with_conn` 闭包，或明确接受这个窗口。前端 `save_settings` 之间的并发由调用方串行化（如 `keepAwakeSettings` 的队列、language 保存前的 preference 重查）。
-- **`sync_manual_cli_overrides` 是副作用，不是纯读取**：任何一次 load/save 都会用持久化值整体替换 `cli_resolver` 的进程内注册表——加载默认（空）设置会清空它。测试里依赖注册表的用例必须持 `coding::test_env::lock()`（`sync_manual_cli_overrides` 在 `cfg(test)` 下持同一把锁），详见 `coding/AGENTS.md`。
+- **`sync_manual_cli_overrides` 是副作用，不是纯读取**：完整 settings load/save 都会用持久化值整体替换 `cli_resolver` 的进程内注册表——加载默认（空）设置会清空它。测试里依赖注册表的用例必须持 `coding::test_env::lock()`（`sync_manual_cli_overrides` 在 `cfg(test)` 下持同一把锁），详见 `coding/AGENTS.md`。
 - **语言空串不是 bug**：备份表单会以 `{}` 创建 app 记录并只 patch 自己拥有的字段，所以「记录存在但没有 language」是真实形态；读成具体语言会让前端把它当成显式选择。
 - **新增 tab 要同时改三处**：adapter 的 `CURRENT_DEFAULT_VISIBLE_TABS` + 一份「加入前的默认快照」常量、`default_sidebar_hidden_by_page()` 的 key 集合、前端 `settingsApi` 的 `SIDEBAR_PAGE_KEYS` / `defaultSettings`。`sidebar_hidden_by_page` 的读取**不按 allowlist 过滤**（曾因此把新页面丢掉、开关重启后复位），默认集合只是为了新库有完整键。
 - **`get_session_detail_filters` 的 `None` 有语义**：表示「从未保存」，前端回落全可见；若 key 存在但嵌套布尔只写了一部分，adapter 按逐项默认（全可见）补齐，不会整块丢弃。
@@ -90,3 +90,10 @@ sequenceDiagram
 
 - 新增/改变设置字段语义、保存语义、或发现新的并发/副作用坑时，同一任务内写回。
 - 若经验对所有模块都成立（如「读-改-写要在同一连接闭包内」），同步补根 `AGENTS.md`。
+
+## Narrow UI preference service boundary
+
+- 三个 UI 偏好 DTO 与容错解码共用 `ai_toolbox_storage::ui_preferences`；完整 adapter 委托同一实现。缺记录 filters 为 None、部分字段默认、provider 动态键与既有字符串语义保持不变。
+- GUI 的 `get_session_detail_filters`、`get_gateway_usage_range`、`get_provider_list_state` **保留原 full-load、CLI override 注册表同步和错误传播**，每次仍只有原来的一次读取。不要改接共享纯 read 函数：启动完整读取可能失败后被托盘/前端 fallback 吞掉，后续成功窄读原本会补同步注册表；删除该效果会改变恢复语义。
+- 新增共享 read 函数只接收已经打开的 Connection，固定读取 settings/app 并输出三个 DTO，错误是固定安全字符串；本轮尚未接入任何 GUI/CLI/MCP 读入口。它不导出 AppSettings/备份密码/secret_key/代理认证 URL，不 open/初始化/写入/建立 owner 或 daemon。
+- 合成 registry actor 覆盖早期 full-load 失败、行恢复、三个 GUI 读路径补同步的契约；仅该测试子进程在内存 fixture 暂时重命名 settings 表制造读取失败，再恢复原名（不绕过 JSONB CHECK），绝不访问用户配置。候选未执行测试时不能称已验证恢复或跨平台闭环。

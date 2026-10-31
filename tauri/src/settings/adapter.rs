@@ -1,8 +1,7 @@
 use super::types::{
     default_backup_file_filter_rules, default_sidebar_hidden_by_page, AppSettings,
     BackupCustomEntry, BackupEncryptionConfig, BackupFileFilterRule,
-    GatewayUsageRangeSelection, S3Config, SessionContentFilter, SessionDetailFilters,
-    SessionRoleFilter, WebDAVConfig,
+    S3Config, WebDAVConfig,
 };
 /**
  * Settings Adapter Layer
@@ -12,10 +11,15 @@ use super::types::{
  */
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use ai_toolbox_storage::ui_preferences::{
+    gateway_usage_range_from_db_value, provider_list_state_from_db_value,
+    session_detail_filters_from_db_value,
+};
 
 /// Convert database JSON Value to AppSettings with fault tolerance
 /// Missing fields will use default values, never panics
 pub fn from_db_value(value: Value) -> AppSettings {
+    let provider_list = provider_list_state_from_db_value(&value);
     AppSettings {
         // Empty means "never chosen" — the frontend resolves it against the OS
         // locale and the settings dropdown renders it as "System Default". It has
@@ -101,11 +105,11 @@ pub fn from_db_value(value: Value) -> AppSettings {
         preferred_terminal: get_opt_str(&value, "preferred_terminal"),
         backup_file_filter_rules: get_backup_file_filter_rules(&value),
         cli_manual_paths: get_string_map(&value, "cli_manual_paths"),
-        session_detail_filters: get_session_detail_filters(&value),
-        provider_sort_modes: get_string_map(&value, "provider_sort_modes"),
-        provider_last_used: get_string_map(&value, "provider_last_used"),
-        provider_view_modes: get_string_map(&value, "provider_view_modes"),
-        gateway_usage_range: get_gateway_usage_range(&value),
+        session_detail_filters: session_detail_filters_from_db_value(&value),
+        provider_sort_modes: provider_list.sort_modes,
+        provider_last_used: provider_list.last_used,
+        provider_view_modes: provider_list.view_modes,
+        gateway_usage_range: gateway_usage_range_from_db_value(&value),
     }
 }
 
@@ -173,26 +177,6 @@ fn get_string_array(value: &Value, key: &str, defaults: &[&str]) -> Vec<String> 
         .unwrap_or_else(|| defaults.iter().map(|s| s.to_string()).collect())
 }
 
-/// Read the persisted gateway statistics range. A row written before this field
-/// existed reads back as the statistics page's own default (`today`) instead of
-/// an empty preset, so the tray never has to guess what "no selection" means.
-fn get_gateway_usage_range(value: &Value) -> GatewayUsageRangeSelection {
-    let Some(block) = value.get("gateway_usage_range").and_then(|v| v.as_object()) else {
-        return GatewayUsageRangeSelection::default();
-    };
-    let preset = block
-        .get("preset")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|preset| !preset.is_empty())
-        .unwrap_or("today");
-    GatewayUsageRangeSelection {
-        preset: preset.to_string(),
-        start_date: block.get("start_date").and_then(|v| v.as_i64()),
-        end_date: block.get("end_date").and_then(|v| v.as_i64()),
-    }
-}
-
 fn get_string_map(value: &Value, key: &str) -> HashMap<String, String> {
     value
         .get(key)
@@ -204,59 +188,6 @@ fn get_string_map(value: &Value, key: &str) -> HashMap<String, String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-// Extracts the session-detail filter toggles from the stored settings object.
-// If the whole `session_detail_filters` key is absent (upgrading from a build
-// that never persisted them) returns None so the workbench falls back to
-// defaults. If the key exists but only part of the nested booleans is present,
-// missing keys fall back to their per-type default (all visible) instead of
-// dropping the whole block.
-fn get_session_detail_filters(value: &Value) -> Option<SessionDetailFilters> {
-    let block = value.get("session_detail_filters")?.as_object()?;
-
-    let role_block = block
-        .get("role_filter")
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    let role_filter = SessionRoleFilter {
-        user: role_block
-            .get("user")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
-        assistant: role_block
-            .get("assistant")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
-    };
-
-    let content_block = block
-        .get("content_filter")
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    let content_filter = SessionContentFilter {
-        text: content_block
-            .get("text")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
-        thinking: content_block
-            .get("thinking")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
-        tool_call: content_block
-            .get("tool_call")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
-        command: content_block
-            .get("command")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
-    };
-
-    Some(SessionDetailFilters {
-        role_filter,
-        content_filter,
-    })
 }
 
 fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {

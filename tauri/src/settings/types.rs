@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use ai_toolbox_storage::ui_preferences::{
+    GatewayUsageRangeSelection, ProviderListState, SessionContentFilter, SessionDetailFilters,
+    SessionRoleFilter,
+};
+
 /// WebDAV configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebDAVConfig {
@@ -114,90 +119,6 @@ impl Default for BackupFileFilterRule {
     }
 }
 
-/// The gateway statistics page's time-range selection, persisted so the tray
-/// usage block can follow the same window.
-///
-/// `preset` is one of the frontend `GATEWAY_USAGE_RANGE_PRESETS` values. Only
-/// `custom` carries absolute bounds (`start_date` / `end_date`, unix seconds);
-/// relative presets are re-resolved from the current local clock every time the
-/// tray menu is built, so "today"/"this week" never freeze at save time.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GatewayUsageRangeSelection {
-    pub preset: String,
-    /// Unix seconds; only meaningful when `preset == "custom"`.
-    #[serde(default)]
-    pub start_date: Option<i64>,
-    /// Unix seconds; only meaningful when `preset == "custom"`.
-    #[serde(default)]
-    pub end_date: Option<i64>,
-}
-
-impl Default for GatewayUsageRangeSelection {
-    fn default() -> Self {
-        // Matches the statistics page's own default (`{ preset: 'today' }`).
-        Self {
-            preset: "today".to_string(),
-            start_date: None,
-            end_date: None,
-        }
-    }
-}
-
-/// Session-detail filter chip visibility persisted across app restarts.
-///
-/// Mirrors the frontend `SessionDetailWorkbench` role/content filters. All
-/// booleans are "visible" (true = show). Missing/None means "all visible".
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionDetailFilters {
-    pub role_filter: SessionRoleFilter,
-    pub content_filter: SessionContentFilter,
-}
-
-impl Default for SessionDetailFilters {
-    fn default() -> Self {
-        Self {
-            role_filter: SessionRoleFilter::default(),
-            content_filter: SessionContentFilter::default(),
-        }
-    }
-}
-
-/// Role-level visibility: user vs assistant messages.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionRoleFilter {
-    pub user: bool,
-    pub assistant: bool,
-}
-
-impl Default for SessionRoleFilter {
-    fn default() -> Self {
-        Self {
-            user: true,
-            assistant: true,
-        }
-    }
-}
-
-/// Content-level visibility: text, thinking, tool calls, commands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionContentFilter {
-    pub text: bool,
-    pub thinking: bool,
-    pub tool_call: bool,
-    pub command: bool,
-}
-
-impl Default for SessionContentFilter {
-    fn default() -> Self {
-        Self {
-            text: true,
-            thinking: true,
-            tool_call: true,
-            command: true,
-        }
-    }
-}
-
 /// Application settings
 ///
 /// Note: This struct is no longer directly serialized to/from database.
@@ -307,19 +228,6 @@ pub struct AppSettings {
     /// Gateway statistics page time range, mirrored into the tray usage block.
     #[serde(default)]
     pub gateway_usage_range: GatewayUsageRangeSelection,
-}
-
-/// Combined read model for the provider list UI: per-module sort preference,
-/// the last-used timestamp map consumed by the "recently used" sort mode, and
-/// the layout preference (list vs compact card grid).
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ProviderListState {
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub sort_modes: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub last_used: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub view_modes: HashMap<String, String>,
 }
 
 impl Default for AppSettings {

@@ -10,7 +10,7 @@
 ## 关键流程与边界
 
 - 保持启动顺序：先只读检查 user_version，再设置 PRAGMA，验证 JSONB，真实文件库按需创建迁移前快照，然后执行迁移、缓存 seed、内置 seed，最后 quick_check。未来 schema 拒绝、快照失败、迁移失败均不得被吞掉。
-- 缓存与 bundled seed、桌面远端同步均只用 INSERT OR IGNORE 补缺，不能覆盖用户已有价格。共享 parser、Decimal 校验与缓存写入只有一份；桌面网络请求继续走原 http_client 与代理设置，不把 HTTP 或应用设置引入这里。
+- 缓存与 bundled seed、桌面远端同步均只用 INSERT OR IGNORE 补缺，不能覆盖用户已有价格。共享 parser、Decimal 校验与缓存写入只有一份；桌面网络请求继续走原 http_client 与代理设置，不把 HTTP 或完整应用设置/运行时副作用引入这里。
 - CACHE_DIR 是进程级 OnceLock，当前生命周期仅支持启动时设置一次的单 profile。不要把同一进程内反复调用 set_cache_dir 当作切换 profile；不能据此宣称多 profile 隔离已经实现。
 - 该抽取不是进程 owner、daemon、CLI 管理入口或只读访问模式。open 仍可能设置 WAL、迁移并补 seed，不能用于承诺无文件变更的读取命令。WAL/SHM 与跨进程所有权方案须独立设计验证。
 - 共享连接可以保留一个无反向 management 依赖的 opaque owner lease；所有已有和后续 DB clone 共用它，最后先释放真实 Connection，再释放 lease。lease 不得引用 DB state，避免形成循环。只读验证与首次保留在同一个连接互斥内完成，验证失败不安装；同一 Arc 分配重复保留是幂等操作，不同分配必须拒绝，不能替换原 owner。
@@ -30,3 +30,10 @@
 - 必须显式运行 `cargo test --manifest-path crates/ai-toolbox-storage/Cargo.toml`。原同步 pricing 单测属于此 crate，桌面 cargo test 不会自动运行依赖 crate 的单测。
 - 同时保留并运行桌面的完整 `sqlite_jsonb` 集成测试和 `storage_reexports` 身份回归；新 smoke 不能代替旧完整套件。
 - 文件库、未来 schema、迁移前快照等边界必须用临时真实文件验证，不能仅用内存库。完整交付仍遵循根 AGENTS.md 的全量验证要求。
+
+## Narrow UI preference reads
+
+- `ui_preferences` owns only the existing session-detail filters, gateway time-range selection and provider-list UI DTOs and tolerant decoders. Desktop types re-export them and the full settings adapter calls the same decoder; no second preference semantics or module allowlist.
+- Readers take an already-open `Connection` and reuse the fixed `settings/app` JSONB helper. They do not open, initialize, seed, migrate, write, acquire an owner or synchronize the desktop manual-CLI registry. Raw records can contain secrets and stay internal; read errors use a static message. Arbitrary stored preference strings are not semantically guaranteed secret-free.
+- This is a service extraction only, not an owner host or GUI/CLI/MCP parity. No IPC, daemon, Windows ownership implementation or cold headless lifecycle is enabled. Existing ownership/admission remains the caller's responsibility.
+- The shared unit fixtures cover original defaults/type tolerance/dynamic map keys, unchanged records and total_changes, unrelated synthetic credential isolation, and reads from the supplied uncommitted transaction. Desktop wrapper fixtures cover adapter projection and preservation of registry refresh after an earlier full-load failure. GUI wrappers deliberately retain their original full-load effects/error propagation; only the DTO/decoder is shared with them so far. The standalone read functions are not connected to GUI/CLI/MCP. Authored fixtures are not execution evidence; run the storage suite and desktop settings/storage identity suites on the actual candidate.
