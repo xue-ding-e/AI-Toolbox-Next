@@ -128,13 +128,29 @@ export async function verifyCodexCredits({ send, evaluate, baseUrl, artifactRoot
 
     await click(first, 'sync');
     await waitFor('codexCardViewFixture.pendingUsageCount() === 1', 'usage before deferred list');
-    await evaluate('codexCardViewFixture.deferNextAccountList(), codexCardViewFixture.reloadAccounts(codexCardViewFixture.state.officialAccounts), true');
+    const snapshotMarker = `deferred-${language}-${theme}-${viewMode}@example.invalid`;
+    // This list is still the current load generation; only its usage revision
+    // becomes stale when the pending refresh completes. It must still apply.
+    // An extra synthetic row is delivered only by this captured list. Its DOM
+    // appearance proves application; the spinner now ends before enrichment.
+    await evaluate(`(() => {
+      const accounts = codexCardViewFixture.state.officialAccounts;
+      const source = accounts.find(a => a.email === ${JSON.stringify(first)});
+      if (!source) throw new Error('Missing synthetic source account');
+      codexCardViewFixture.deferNextAccountList();
+      codexCardViewFixture.reloadAccounts([...accounts, {
+        ...source, id: 'deferred-list-marker', email: ${JSON.stringify(snapshotMarker)},
+        accountId: 'deferred-list-marker', isApplied: false,
+      }]);
+      return true;
+    })()`);
     await waitFor('codexCardViewFixture.pendingAccountListCount() === 1', 'old list snapshot pending');
-    await waitFor(listLoading, 'old list is visibly loading');
+    await waitFor(`!(${listLoading})`, 'base providers ready while old list is pending');
+    check(prefix + ' deferred list marker is absent before delivery', await evaluate(`Boolean(${row(snapshotMarker)})`), false);
     await respond({ credits: { hasCredits: true, balance: 16 } });
     await evaluate('codexCardViewFixture.respondAccountList(), true');
-    // Wait for React to apply the released list, not a balance already on screen.
-    await waitFor(`!(${listLoading})`, 'old list finished applying');
+    // Wait for a new row from the released snapshot, not a balance already on screen.
+    await waitFor(`codexCardViewFixture.pendingAccountListCount() === 0 && ${row(snapshotMarker)}`, 'old list snapshot marker applied');
     check(prefix + ' late old account list cannot roll back a completed refresh', await evaluate(`${row(first)}.textContent.includes('16 ${unit}')`));
 
     await click(first, 'eye');
@@ -171,11 +187,24 @@ export async function verifyCodexCredits({ send, evaluate, baseUrl, artifactRoot
   await respond({ credits: { hasCredits: true, balance: 15.5 } }, undefined, live);
   check('virtual successful usage survives an intervening same-login list reload', await evaluate(`${row(live)}.textContent.includes('15.5 积分')`));
   // The real backend does not persist virtual usage: the next list omits it.
-  await evaluate('codexCardViewFixture.deferNextAccountList(), codexCardViewFixture.reloadAccounts(codexCardViewFixture.state.officialAccounts.map(a => a.isVirtual ? {...a, credits: undefined, lastLimitsFetchedAt: undefined} : a)), true');
+  const virtualSnapshotMarker = 'deferred-virtual-list@example.invalid';
+  await evaluate(`(() => {
+    const accounts = codexCardViewFixture.state.officialAccounts.map(a =>
+      a.isVirtual ? {...a, credits: undefined, lastLimitsFetchedAt: undefined} : a);
+    const source = accounts.find(a => a.email === ${JSON.stringify(live)});
+    if (!source) throw new Error('Missing synthetic virtual source account');
+    codexCardViewFixture.deferNextAccountList();
+    codexCardViewFixture.reloadAccounts([...accounts, {
+      ...source, id: 'deferred-virtual-marker', email: ${JSON.stringify(virtualSnapshotMarker)},
+      accountId: 'deferred-virtual-marker', kind: 'oauth', isVirtual: false, isApplied: false,
+    }]);
+    return true;
+  })()`);
   await waitFor('codexCardViewFixture.pendingAccountListCount() === 1', 'virtual list snapshot pending');
-  await waitFor(listLoading, 'virtual list is visibly loading');
+  await waitFor(`!(${listLoading})`, 'base providers ready while virtual list is pending');
+  check('virtual list marker is absent before delivery', await evaluate(`Boolean(${row(virtualSnapshotMarker)})`), false);
   await evaluate('codexCardViewFixture.respondAccountList(), true');
-  await waitFor(`!(${listLoading})`, 'virtual list finished applying');
+  await waitFor(`codexCardViewFixture.pendingAccountListCount() === 0 && ${row(virtualSnapshotMarker)}`, 'virtual list snapshot marker applied');
   check('virtual cached usage survives a later same-login list reload', await evaluate(`${row(live)}.textContent.includes('15.5 积分')`));
   await click(live, 'sync');
   await waitFor('codexCardViewFixture.pendingUsageCount() === 1', 'previous virtual login read');
