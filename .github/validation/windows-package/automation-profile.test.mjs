@@ -47,10 +47,11 @@ test('snapshot refuses dangling links rather than treating them as absent', () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('shell progress accepts only exact six markers and one terminal newline', () => {
-  const good = ['shell-fixture:add-type:start', 'shell-fixture:add-type:complete', 'shell-fixture:probe:start', 'shell-fixture:probe:complete', 'shell-fixture:create:start', 'shell-fixture:create:complete'].join('\n') + '\n';
+test('shell progress requires exact ordered phases and monotonic integer timings', () => {
+  const phases = ['add-type:start', 'add-type:complete', 'initial-links:start', 'initial-links:complete', 'initial-absence:start', 'initial-absence:complete', 'probe:start', 'probe:complete', 'create:start', 'create:complete'];
+  const good = phases.map((phase, index) => `shell-fixture:${phase} elapsed_ms=${index}`).join('\n') + '\n';
   assertShellProgress(good); assertShellProgress(good.replaceAll('\n', '\r\n'));
-  for (const bad of ['\n' + good, good + '\n', good + 'unknown\n', good.trimEnd(), good.replace('probe:start', 'unknown')]) assert.throws(() => assertShellProgress(bad));
+  for (const bad of ['\n' + good, good + '\n', good + 'unknown\n', good.trimEnd(), good.replace('probe:start', 'unknown'), good.replace('elapsed_ms=5', 'elapsed_ms=0'), good.replace('elapsed_ms=5', 'elapsed_ms=NaN'), good.replace('elapsed_ms=5', 'elapsed_ms=9007199254740992')]) assert.throws(() => assertShellProgress(bad));
 });
 
 test('parent pre-spawn guard rejects unsafe HOME and linked ancestors', () => {

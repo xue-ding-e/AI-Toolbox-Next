@@ -24,8 +24,19 @@ export const shellBaseline = {
 };
 export function assertShellBaseline(value) { assert.deepEqual(value, shellBaseline, 'Unexpected Windows shell initialization'); }
 export function assertShellProgress(stderr) {
-  const expected = ['shell-fixture:add-type:start', 'shell-fixture:add-type:complete', 'shell-fixture:probe:start', 'shell-fixture:probe:complete', 'shell-fixture:create:start', 'shell-fixture:create:complete'].join('\n') + '\n';
-  assert.equal(stderr.replace(/\r\n/g, '\n'), expected, 'Unexpected shell progress output');
+  const expected = ['add-type:start', 'add-type:complete', 'initial-links:start', 'initial-links:complete', 'initial-absence:start', 'initial-absence:complete', 'probe:start', 'probe:complete', 'create:start', 'create:complete'];
+  const lines = stderr.replace(/\r\n/g, '\n').split('\n');
+  assert.equal(lines.pop(), '', 'Shell progress must end in exactly one newline');
+  assert.equal(lines.length, expected.length, 'Unexpected shell progress line count');
+  let previous = -1;
+  lines.forEach((line, index) => {
+    const match = line.match(/^shell-fixture:([a-z-]+:(?:start|complete)) elapsed_ms=(0|[1-9][0-9]*)$/);
+    assert(match, 'Malformed shell progress');
+    assert.equal(match[1], expected[index], 'Unexpected shell progress order');
+    const elapsed = Number(match[2]);
+    assert(Number.isSafeInteger(elapsed) && elapsed >= previous, 'Non-monotonic shell progress');
+    previous = elapsed;
+  });
 }
 export function assertFreshShellHome(env, fixtureRoot) {
   assert(isAbsolute(fixtureRoot) && resolve(fixtureRoot) === fixtureRoot, 'Non-canonical fixture root');
