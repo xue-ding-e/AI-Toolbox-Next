@@ -1,0 +1,59 @@
+name: Read-only storage formatting validation
+on:
+  push:
+    branches: [validation/storage-schema31-format-20261102]
+permissions:
+  contents: read
+jobs:
+  storage-format:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/storage-schema31-format-20261102'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e8090bd4388f9278fac17e36bcd813d2d16a67bc
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact reviewed source and edition
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = e8090bd4388f9278fac17e36bcd813d2d16a67bc
+          python3 - <<'PY'
+          import pathlib, tomllib
+          manifest = tomllib.loads(pathlib.Path('crates/ai-toolbox-storage/Cargo.toml').read_text())
+          assert manifest['package']['edition'] == '2021'
+          PY
+          owned="$RUNNER_TEMP/storage-format-owned"
+          mkdir "$owned"
+          for name in home cargo config cache data tmp evidence; do mkdir "$owned/$name"; done
+          echo "FORMAT_OWNED=$owned" >> "$GITHUB_ENV"
+          printf 'source=%s\ncontrol=%s\nedition=2021\n' "$(git rev-parse HEAD)" "$GITHUB_SHA" > "$owned/evidence/source"
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: rustfmt
+      - name: Check formatting without changing source or compiling tests
+        shell: bash
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          owned="$FORMAT_OWNED"
+          safe_path="$(dirname "$(rustup which --toolchain 1.99.1 cargo)"):/usr/local/bin:/usr/bin:/bin"
+          env -i HOME="$owned/home" PATH="$safe_path" rustfmt --version | tee "$owned/evidence/rustfmt-version"
+          set +e
+          timeout 1m env -i HOME="$owned/home" PATH="$safe_path" XDG_CONFIG_HOME="$owned/config" XDG_CACHE_HOME="$owned/cache" XDG_DATA_HOME="$owned/data" TMPDIR="$owned/tmp" CARGO_HOME="$owned/cargo" CARGO_NET_OFFLINE=true cargo fmt --manifest-path crates/ai-toolbox-storage/Cargo.toml --check 2>&1 | tee "$owned/evidence/format-diff.log"
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > "$owned/evidence/format-exit-code"
+          git diff --exit-code
+          git diff --cached --exit-code
+          exit "$result"
+      - name: Preserve read-only formatting evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-format-e8090bd-${{ github.run_id }}
+          path: ${{ runner.temp }}/storage-format-owned/evidence
+          if-no-files-found: error
+          retention-days: 7
