@@ -46,6 +46,14 @@ jobs:
           node-version: '22'
           package-manager-cache: false
       - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: rustfmt
+      - name: Check full shared storage formatting
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          rustfmt --version | tee "$RUNNER_TEMP/acceptance-evidence/rustfmt-version.log"
+          CARGO_NET_OFFLINE=true cargo fmt --manifest-path crates/ai-toolbox-storage/Cargo.toml --check 2>&1 | tee "$RUNNER_TEMP/acceptance-evidence/storage-format.log"
       - name: Install Linux compile prerequisites
         timeout-minutes: 10
         run: |
@@ -141,7 +149,7 @@ jobs:
       - name: Source and packaging controls
         timeout-minutes: 5
         run: |
-          node --test .github/validation/windows-package/package.test.mjs .github/validation/windows-package/publish.test.mjs
+          node --test .github/validation/windows-package/package.test.mjs .github/validation/windows-package/publish.test.mjs .github/validation/windows-package/storage.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Packaging controls failed' }
           node .github/validation/windows-package/package.mjs verify
           if ($LASTEXITCODE -ne 0) { throw 'Source identity check failed' }
@@ -166,6 +174,9 @@ jobs:
       - name: Native account export and OAuth regression gates
         timeout-minutes: 45
         run: '& .github/validation/windows-package/test-native.ps1'
+      - name: Windows file-backed storage and desktop adapter regressions
+        timeout-minutes: 25
+        run: '& .github/validation/windows-package/test-storage.ps1'
       # Artifact-only: no signing secret, Release/tag, updater channel or Rust cache.
       # Passing these gates does not establish installation or real-account OAuth.
       - name: Build unsigned Next NSIS installer
@@ -192,6 +203,7 @@ jobs:
           path: |
             ${{ runner.temp }}/auth-browser-evidence/**/results.json
             ${{ runner.temp }}/native-tests-*.log
+            ${{ runner.temp }}/storage-tests-*.log
           if-no-files-found: warn
           retention-days: 14
   publish:
