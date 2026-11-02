@@ -142,6 +142,7 @@ fn initialize_connection_inner(
     db_path_for_migration_backup: Option<&Path>,
 ) -> Result<(), String> {
     let current_version = migrations::ensure_supported_user_version(conn)?;
+    let journal_missing = migrations::context_journal_needs_admission(conn)?;
 
     conn.busy_timeout(std::time::Duration::from_millis(5000))
         .map_err(|error| format!("Failed to set SQLite busy timeout: {error}"))?;
@@ -155,7 +156,7 @@ fn initialize_connection_inner(
 
     health::verify_jsonb_support(conn)?;
     if let Some(db_path) = db_path_for_migration_backup {
-        create_pre_migration_backup_if_needed(conn, db_path, current_version)?;
+        create_pre_migration_backup_if_needed(conn, db_path, current_version, journal_missing)?;
     }
     migrations::run_all(conn)?;
     let inserted_pricing_count = model_pricing_seed::ensure_seeded(conn)?;
@@ -173,8 +174,11 @@ fn create_pre_migration_backup_if_needed(
     conn: &Connection,
     db_path: &Path,
     current_version: i32,
+    journal_missing: bool,
 ) -> Result<Option<PathBuf>, String> {
-    if current_version <= 0 || current_version >= migrations::TARGET_SCHEMA_VERSION {
+    if current_version <= 0
+        || (current_version >= migrations::TARGET_SCHEMA_VERSION && !journal_missing)
+    {
         return Ok(None);
     }
 

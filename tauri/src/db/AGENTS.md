@@ -60,7 +60,7 @@ sequenceDiagram
 - **`db_query_by_field` 的类型语义是手写的**：bool 走 `CAST(... AS INTEGER) = 1/0`；整数/浮点分别 CAST；字符串按文本等值（JSON number 不会等于同值字符串）；数组/对象用 `json(a) = json(b)` 做结构比较；`Value::Null` 是 `IS NULL`。过滤/排序字段要有对应 JSON 索引（`is_applied`/`sort_index` 等由 `migrations` 建）。
 - **`data` 里是否带 `id` 不可依赖**：写入不会自动剔除，读取时 `db_get` 用列值覆盖 `id`，所以读回再写不会污染读取结果；`db_patch_fields` 在写回前显式移除 `id`。新代码不要假设 `data` 里有或没有 `id`。
 - **版本过新必须硬失败**：`ensure_supported_user_version` 在设置任何 PRAGMA 之前跑；`user_version > TARGET_SCHEMA_VERSION` 时返回带 `AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW` 前缀的错误，`lib.rs` 据此进入无数据库的恢复界面（`startup_recovery` + 前端 `get_startup_recovery`），既不降级 schema 也不 `panic!`。回归见 `tauri/tests/sqlite_jsonb.rs` 的「过新版本时文件不被改动」用例。
-- **迁移前快照只对真实文件库做**：`in_memory_for_test` / `initialize_connection` 不产生快照；文件库在 `0 < user_version < TARGET` 时写到 `<db 目录>/sqlite-migration-backups/`，写不出来就阻断升级（错误信息里带 from/to 版本）。
+- **迁移前快照只对真实文件库做**：`in_memory_for_test` / `initialize_connection` 不产生快照；文件库在 `0 < user_version < TARGET` 或受支持的同版本缺少 Next 专有账本时写到 `<db 目录>/sqlite-migration-backups/`，写不出来就阻断升级或能力补齐（错误信息里带 from/to 版本）。同版本账本检查与保守拒绝边界见共享存储模块；已有合法账本不重复备份。
 - **`change_hook` 目前只在测试里用**：`install_change_recorder` 记录 `(action, database, table, row_id)`，但生产启动路径没有安装它——**DB 层不发任何 Tauri 事件**。需要「改完通知前端」的模块必须自己 `emit`（如 `config-changed`），不要假设写库会触发同步或缓存失效。
 - **`backup::backup_to_path` 是唯一的安全拷贝入口**（先 `wal_checkpoint(TRUNCATE)` 再 `conn.backup`）：迁移前快照、备份 zip、恢复前回滚点都用它，不要另写 `conn.backup` 直调。`vacuum` 目前没有生产调用点。
 - **模型定价 seed 只增不改**：缓存文件、内置资源、远端同步一律 `INSERT OR IGNORE`，绝不覆盖用户改过的行；缓存文件解析失败只 `warn` 并跳过（不阻断启动）；远端同步成功后用 tmp + rename 写缓存。`set_cache_dir` 是 `OnceLock`，只能在启动时设置一次。

@@ -605,6 +605,7 @@ features/
 - 启动阶段必须先检测旧库迁移状态，再打开 SQLite。只有旧 `{app_data_dir}/database` 存在且需要导入时，才临时打开 SurrealDB 执行一次性全量导入。
 - 打开 SQLite 文件后必须先用 `PRAGMA user_version` 做只读兼容检查；如果版本高于当前 `TARGET_SCHEMA_VERSION`，立即显示阻塞错误并退出，不要继续设置 WAL、跑 health probe、seed 数据或迁移。
 - 对真实文件数据库执行 schema 升级前，必须先创建迁移前 SQLite 快照；快照失败时应阻断升级，避免在没有回退点的情况下修改用户数据库。
+- 相同 `user_version` 不证明不同维护分支具有相同能力。已支持版本缺少 Next 独有账本时，按共享存储模块的独立 admission 检查先保存原始快照再事务补齐；不重写历史迁移或仅为分支能力抬高上游版本号，未知同名结构必须保守拒绝而非覆盖。
 - 旧 SurrealDB 目录在导入、计数校验和完成标记成功前绝不能删除。完成标记必须在归档旧目录前写入；如果归档中途崩溃，下次启动应进入 `NeedsLegacyArchive` 而不是清理已导入的 SQLite。导入完成后压缩为 `{app_data_dir}/database.migrated.zip` 永久保留，并删除旧目录。
 - 迁移失败不能写完成标记；不完整 SQLite 文件需要清理，下次启动重试。连续 3 次失败后应向用户展示 `migration.log` 路径。
 - 备份恢复以 SQLite 单文件和 `db_manifest.json` 为准。旧 SurrealDB 备份只能作为恢复输入，恢复时导入 SQLite；新备份不要再包含旧 SurrealDB 快照作为事实源。

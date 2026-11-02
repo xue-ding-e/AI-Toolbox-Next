@@ -7,6 +7,9 @@ const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     let current_version = ensure_supported_user_version(conn)?;
+    // A supported upstream version can lack Next's independent journal. Reject
+    // an unrecognized existing object before any historical migration writes.
+    let journal_missing = context_journal_needs_admission(conn)?;
 
     if current_version < 1 {
         run_migration_step(conn, 1, migrate_v1)?;
@@ -101,6 +104,56 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
 
     if current_version < 31 {
         run_migration_step(conn, 31, migrate_v31)?;
+    }
+    if current_version == TARGET_SCHEMA_VERSION && journal_missing {
+        // File initialization has already made its original snapshot. Keep the
+        // same version and reuse the existing transactional migration boundary.
+        run_migration_step(conn, current_version, admit_context_journal)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn context_journal_needs_admission(conn: &Connection) -> Result<bool, String> {
+    let mut statement = conn
+        .prepare("SELECT type, sql FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE")
+        .map_err(|error| format!("Failed to inspect context journal schema: {error}"))?;
+    let objects = statement
+        .query_map([DbTable::CodexContextOperation.name()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(|error| format!("Failed to inspect context journal schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to inspect context journal schema: {error}"))?;
+    if objects.is_empty() {
+        return Ok(true);
+    }
+
+    // SQLite stores our published CREATE without IF NOT EXISTS or the final
+    // semicolon. Match that exact known definition, never normalize input SQL:
+    // quoted values, identifiers and CHECK expressions can be case-sensitive.
+    // Unknown, even equivalent hand-built schemas need explicit review; do not
+    // overwrite them or pretend a same-named object is a usable journal.
+    let expected = format!(
+        "CREATE TABLE {}",
+        jsonb_table_definition(DbTable::CodexContextOperation)
+    );
+    if objects.len() != 1
+        || objects[0].0 != "table"
+        || objects[0].1.as_deref() != Some(expected.as_str())
+    {
+        return Err("Unrecognized context journal schema; database was not admitted".to_string());
+    }
+    Ok(false)
+}
+
+fn admit_context_journal(conn: &Connection) -> Result<(), String> {
+    // Recheck inside the savepoint so another schema is never accepted by the
+    // idempotent CREATE alone. Any failed check rolls the admission back.
+    if context_journal_needs_admission(conn)? {
+        create_jsonb_table(conn, DbTable::CodexContextOperation)?;
+    }
+    if context_journal_needs_admission(conn)? {
+        return Err("Context journal is still missing after admission".to_string());
     }
     Ok(())
 }
@@ -692,14 +745,22 @@ fn migrate_v31(conn: &Connection) -> Result<(), String> {
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
     let table_name = table.name();
     conn.execute_batch(&format!(
-        "CREATE TABLE IF NOT EXISTS {table_name} (
+        "CREATE TABLE IF NOT EXISTS {};",
+        jsonb_table_definition(table)
+    ))
+    .map_err(|error| format!("Failed to create SQLite table {table_name}: {error}"))
+}
+
+fn jsonb_table_definition(table: DbTable) -> String {
+    let table_name = table.name();
+    format!(
+        "{table_name} (
             id TEXT PRIMARY KEY NOT NULL,
             data BLOB NOT NULL CHECK (json_valid(data, 4)),
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
-        );"
-    ))
-    .map_err(|error| format!("Failed to create SQLite table {table_name}: {error}"))
+        )"
+    )
 }
 
 fn create_initial_indexes(conn: &Connection) -> Result<(), String> {
