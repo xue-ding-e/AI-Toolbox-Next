@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use ai_toolbox_storage::change_hook::install_change_recorder;
 use ai_toolbox_storage::codex_context_journal::{
-    advance, insert_saved, lookup, read_status, AdvanceResult, FailureCode, InsertResult, JournalEntry,
-    JournalError, JournalInput, Lookup, Phase,
+    advance, insert_saved, lookup, read_status, AdvanceResult, FailureCode, InsertResult,
+    JournalEntry, JournalError, JournalInput, Lookup, Phase,
 };
 use ai_toolbox_storage::helpers::{db_count, db_get, db_patch_fields, db_put, db_transaction};
 use ai_toolbox_storage::schema::DbTable;
@@ -38,8 +38,9 @@ fn read(state: &SqliteDbState) -> JournalEntry {
     state
         .with_conn(|conn| {
             let request = input();
-            let Lookup::Replay(entry) = lookup(conn, &request.request_id, &request.request_fingerprint)
-                .map_err(|error| error.to_string())?
+            let Lookup::Replay(entry) =
+                lookup(conn, &request.request_id, &request.request_fingerprint)
+                    .map_err(|error| error.to_string())?
             else {
                 return Err("synthetic request missing".to_string());
             };
@@ -101,21 +102,28 @@ fn status_read_reopens_existing_row_without_writing_its_uncertain_interpretation
     drop(state);
     let reopened = SqliteDbState::open(path).unwrap();
     let changes = Arc::new(Mutex::new(Vec::new()));
-    reopened.with_conn(|conn| {
-        install_change_recorder(conn, changes.clone())?;
-        let before = db_get(conn, DbTable::CodexContextOperation, &input().request_id)?;
-        let total_changes = conn.total_changes();
-        conn.execute_batch("PRAGMA query_only = ON").map_err(|e| e.to_string())?;
-        let entry = read_status(conn, &input().request_id)
-            .map_err(|e| e.to_string())?.unwrap();
-        assert_eq!(entry.input, input());
-        assert_eq!(entry.phase, Phase::ProjectionStarted);
-        assert_eq!(entry.replay_phase(), Phase::ProjectionUncertain);
-        assert_eq!(entry.failure, None);
-        assert_eq!(db_get(conn, DbTable::CodexContextOperation, &input().request_id)?, before);
-        assert_eq!(conn.total_changes(), total_changes);
-        Ok(())
-    }).unwrap();
+    reopened
+        .with_conn(|conn| {
+            install_change_recorder(conn, changes.clone())?;
+            let before = db_get(conn, DbTable::CodexContextOperation, &input().request_id)?;
+            let total_changes = conn.total_changes();
+            conn.execute_batch("PRAGMA query_only = ON")
+                .map_err(|e| e.to_string())?;
+            let entry = read_status(conn, &input().request_id)
+                .map_err(|e| e.to_string())?
+                .unwrap();
+            assert_eq!(entry.input, input());
+            assert_eq!(entry.phase, Phase::ProjectionStarted);
+            assert_eq!(entry.replay_phase(), Phase::ProjectionUncertain);
+            assert_eq!(entry.failure, None);
+            assert_eq!(
+                db_get(conn, DbTable::CodexContextOperation, &input().request_id)?,
+                before
+            );
+            assert_eq!(conn.total_changes(), total_changes);
+            Ok(())
+        })
+        .unwrap();
     assert!(changes.lock().unwrap().is_empty());
 }
 
@@ -123,31 +131,46 @@ fn status_read_reopens_existing_row_without_writing_its_uncertain_interpretation
 fn status_read_checks_identifiers_before_storage_and_missing_is_not_created() {
     // An uninitialized connection proves invalid IDs fail before any table read.
     let empty = rusqlite::Connection::open_in_memory().unwrap();
-    for id in [String::new(), "x".repeat(129), "bad\nvalue".into(), "../value".into()] {
+    for id in [
+        String::new(),
+        "x".repeat(129),
+        "bad\nvalue".into(),
+        "../value".into(),
+    ] {
         assert_eq!(read_status(&empty, &id), Err(JournalError::InvalidId));
     }
     let state = SqliteDbState::in_memory_for_test().unwrap();
-    state.with_conn(|conn| {
-        let before = conn.total_changes();
-        assert_eq!(read_status(conn, "absent-request"), Ok(None));
-        assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
-        assert_eq!(conn.total_changes(), before);
-        Ok(())
-    }).unwrap();
+    state
+        .with_conn(|conn| {
+            let before = conn.total_changes();
+            assert_eq!(read_status(conn, "absent-request"), Ok(None));
+            assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
+            assert_eq!(conn.total_changes(), before);
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
 fn status_read_is_not_fingerprint_authorization_for_a_new_write() {
     let state = SqliteDbState::in_memory_for_test().unwrap();
     transact(&state, |tx| insert_saved(tx, input())).unwrap();
-    state.with_conn(|conn| {
-        assert_eq!(read_status(conn, &input().request_id).unwrap().unwrap().input, input());
-        assert_eq!(
-            lookup(conn, &input().request_id, &"d".repeat(64)),
-            Err(JournalError::FingerprintConflict)
-        );
-        Ok(())
-    }).unwrap();
+    state
+        .with_conn(|conn| {
+            assert_eq!(
+                read_status(conn, &input().request_id)
+                    .unwrap()
+                    .unwrap()
+                    .input,
+                input()
+            );
+            assert_eq!(
+                lookup(conn, &input().request_id, &"d".repeat(64)),
+                Err(JournalError::FingerprintConflict)
+            );
+            Ok(())
+        })
+        .unwrap();
     let mut different = input();
     different.request_fingerprint = "d".repeat(64);
     assert_eq!(
@@ -255,7 +278,13 @@ fn valid_phase_progression_rejects_backwards_and_stale_updates() {
         change(&state, Phase::SavedOnly, Phase::ProjectedUnverified, None),
         Err(JournalError::StalePhase.to_string())
     );
-    change(&state, Phase::ProjectionStarted, Phase::ProjectedUnverified, None).unwrap();
+    change(
+        &state,
+        Phase::ProjectionStarted,
+        Phase::ProjectedUnverified,
+        None,
+    )
+    .unwrap();
     change(&state, Phase::ProjectedUnverified, Phase::Verified, None).unwrap();
     assert_eq!(read(&state).replay_phase(), Phase::Verified);
     assert_eq!(
@@ -302,7 +331,12 @@ fn no_file_change_can_be_verified_without_claiming_a_write() {
         let changed_live = SqliteDbState::in_memory_for_test().unwrap();
         transact(&changed_live, |tx| insert_saved(tx, input())).unwrap();
         assert_eq!(
-            change(&changed_live, Phase::SavedOnly, Phase::SavedOnly, Some(failure)),
+            change(
+                &changed_live,
+                Phase::SavedOnly,
+                Phase::SavedOnly,
+                Some(failure)
+            ),
             Err(JournalError::InvalidTransition.to_string())
         );
         assert_eq!(read(&changed_live).failure, None);
@@ -315,7 +349,12 @@ fn uncertain_projection_is_terminal_and_cannot_be_called_saved_only() {
     transact(&state, |tx| insert_saved(tx, input())).unwrap();
     change(&state, Phase::SavedOnly, Phase::ProjectionStarted, None).unwrap();
     assert_eq!(
-        change(&state, Phase::ProjectionStarted, Phase::ProjectionUncertain, None),
+        change(
+            &state,
+            Phase::ProjectionStarted,
+            Phase::ProjectionUncertain,
+            None
+        ),
         Err(JournalError::InvalidTransition.to_string())
     );
     change(
@@ -330,7 +369,12 @@ fn uncertain_projection_is_terminal_and_cannot_be_called_saved_only() {
         Err(JournalError::InvalidTransition.to_string())
     );
     assert_eq!(
-        change(&state, Phase::ProjectionUncertain, Phase::ProjectionStarted, None),
+        change(
+            &state,
+            Phase::ProjectionUncertain,
+            Phase::ProjectionStarted,
+            None
+        ),
         Err(JournalError::InvalidTransition.to_string())
     );
     assert_eq!(read(&state).phase, Phase::ProjectionUncertain);
@@ -370,7 +414,13 @@ fn closed_failures_can_be_recorded_but_never_cleared_for_an_implicit_retry() {
         let state = SqliteDbState::in_memory_for_test().unwrap();
         transact(&state, |tx| insert_saved(tx, input())).unwrap();
         change(&state, Phase::SavedOnly, Phase::ProjectionStarted, None).unwrap();
-        change(&state, Phase::ProjectionStarted, Phase::ProjectedUnverified, None).unwrap();
+        change(
+            &state,
+            Phase::ProjectionStarted,
+            Phase::ProjectedUnverified,
+            None,
+        )
+        .unwrap();
         change(
             &state,
             Phase::ProjectedUnverified,
@@ -460,10 +510,26 @@ fn stored_schema_rejects_unknown_payloads_versions_and_invalid_phases() {
             JournalError::InvalidRecord,
         ),
         ("version", json!(2), JournalError::UnsupportedVersion),
-        ("entry.phase", json!("unknown_phase"), JournalError::InvalidRecord),
-        ("entry.failure", json!("arbitrary error"), JournalError::InvalidRecord),
-        ("entry.failure", json!("readback_failed"), JournalError::InvalidRecord),
-        ("entry.input.context", json!(u64::MAX), JournalError::InvalidRecord),
+        (
+            "entry.phase",
+            json!("unknown_phase"),
+            JournalError::InvalidRecord,
+        ),
+        (
+            "entry.failure",
+            json!("arbitrary error"),
+            JournalError::InvalidRecord,
+        ),
+        (
+            "entry.failure",
+            json!("readback_failed"),
+            JournalError::InvalidRecord,
+        ),
+        (
+            "entry.input.context",
+            json!(u64::MAX),
+            JournalError::InvalidRecord,
+        ),
     ] {
         let state = SqliteDbState::in_memory_for_test().unwrap();
         transact(&state, |tx| insert_saved(tx, input())).unwrap();

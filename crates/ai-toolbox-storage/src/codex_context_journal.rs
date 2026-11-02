@@ -185,10 +185,9 @@ fn validate_input(input: &JournalInput) -> Result<(), JournalError> {
 
 fn valid_failure(input: &JournalInput, phase: Phase, failure: Option<FailureCode>) -> bool {
     match (phase, failure) {
-        (
-            Phase::SavedOnly,
-            Some(FailureCode::ReadbackFailed | FailureCode::ReadbackMismatch),
-        ) => !input.live_changed,
+        (Phase::SavedOnly, Some(FailureCode::ReadbackFailed | FailureCode::ReadbackMismatch)) => {
+            !input.live_changed
+        }
         (Phase::SavedOnly, None | Some(FailureCode::ProjectionPreflightFailed))
         | (Phase::ProjectionStarted, None)
         | (
@@ -217,7 +216,11 @@ fn read_entry(conn: &Connection, id: &str) -> Result<Option<JournalEntry>, Journ
     }
     validate_input(&record.entry.input)?;
     if record.entry.input.request_id != id
-        || !valid_failure(&record.entry.input, record.entry.phase, record.entry.failure)
+        || !valid_failure(
+            &record.entry.input,
+            record.entry.phase,
+            record.entry.failure,
+        )
     {
         return Err(JournalError::InvalidRecord);
     }

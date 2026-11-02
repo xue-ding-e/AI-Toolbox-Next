@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 const CACHE_FILE_NAME: &str = "model_pricing.json";
 // This unpublished repository component embeds the single canonical resource.
-const BUNDLED_MODEL_PRICING_JSON: &str = include_str!("../../../tauri/resources/model_pricing.json");
+const BUNDLED_MODEL_PRICING_JSON: &str =
+    include_str!("../../../tauri/resources/model_pricing.json");
 
 static CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
