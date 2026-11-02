@@ -198,8 +198,7 @@ fn migration_snapshots(root: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 fn readonly_database(path: &std::path::Path) -> rusqlite::Connection {
-    rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .unwrap()
+    rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap()
 }
 
 #[test]
@@ -216,9 +215,15 @@ fn v30_file_without_journal_upgrades_with_original_snapshot() {
     let state = SqliteDbState::open(path.clone()).unwrap();
     state
         .with_conn(|conn| {
-            assert_eq!(migrations::get_user_version(conn)?, migrations::TARGET_SCHEMA_VERSION);
+            assert_eq!(
+                migrations::get_user_version(conn)?,
+                migrations::TARGET_SCHEMA_VERSION
+            );
             assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
-            assert_eq!(db_get(conn, DbTable::CodexCommonConfig, "common")?, original);
+            assert_eq!(
+                db_get(conn, DbTable::CodexCommonConfig, "common")?,
+                original
+            );
             Ok(())
         })
         .unwrap();
@@ -230,13 +235,18 @@ fn v30_file_without_journal_upgrades_with_original_snapshot() {
         let snapshot = readonly_database(&snapshots[0]);
         assert_eq!(migrations::get_user_version(&snapshot).unwrap(), 30);
         assert!(db_count(&snapshot, DbTable::CodexContextOperation).is_err());
-        assert_eq!(db_get(&snapshot, DbTable::CodexCommonConfig, "common").unwrap(), original);
+        assert_eq!(
+            db_get(&snapshot, DbTable::CodexCommonConfig, "common").unwrap(),
+            original
+        );
     }
     let reopened = SqliteDbState::open(path).unwrap();
-    reopened.with_conn(|conn| {
-        assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
-        Ok(())
-    }).unwrap();
+    reopened
+        .with_conn(|conn| {
+            assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
+            Ok(())
+        })
+        .unwrap();
     drop(reopened);
     assert_eq!(migration_snapshots(dir.path()), snapshots);
     assert_eq!(std::fs::read(&snapshots[0]).unwrap(), bytes);
@@ -258,34 +268,45 @@ fn v30_file_with_journal_preserves_row_bytes_and_snapshot_on_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("v30-existing-journal.db");
     let state = SqliteDbState::open(path.clone()).unwrap();
-    let original = state.with_conn_mut(|conn| {
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        insert_saved(&tx, JournalInput {
-            request_id: "synthetic-schema-upgrade".to_string(),
-            provider_id: "synthetic-provider".to_string(),
-            request_fingerprint: "a".repeat(64),
-            expected_revision: "b".repeat(64),
-            planned_live_digest: "c".repeat(64),
-            context: Some(1_000_000),
-            auto_compact: Some(900_000),
-            master_changed: true,
-            live_changed: true,
-        }).map_err(|error| error.to_string())?;
-        tx.commit().map_err(|error| error.to_string())?;
-        migrations::set_user_version(conn, 30)?;
-        Ok(raw_journal_row(conn))
-    }).unwrap();
+    let original = state
+        .with_conn_mut(|conn| {
+            let tx = conn.transaction().map_err(|error| error.to_string())?;
+            insert_saved(
+                &tx,
+                JournalInput {
+                    request_id: "synthetic-schema-upgrade".to_string(),
+                    provider_id: "synthetic-provider".to_string(),
+                    request_fingerprint: "a".repeat(64),
+                    expected_revision: "b".repeat(64),
+                    planned_live_digest: "c".repeat(64),
+                    context: Some(1_000_000),
+                    auto_compact: Some(900_000),
+                    master_changed: true,
+                    live_changed: true,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            tx.commit().map_err(|error| error.to_string())?;
+            migrations::set_user_version(conn, 30)?;
+            Ok(raw_journal_row(conn))
+        })
+        .unwrap();
     drop(state);
 
     let mut first_snapshot = None;
     for _ in 0..2 {
         let state = SqliteDbState::open(path.clone()).unwrap();
-        state.with_conn(|conn| {
-            assert_eq!(migrations::get_user_version(conn)?, migrations::TARGET_SCHEMA_VERSION);
-            assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 1);
-            assert_eq!(raw_journal_row(conn), original);
-            Ok(())
-        }).unwrap();
+        state
+            .with_conn(|conn| {
+                assert_eq!(
+                    migrations::get_user_version(conn)?,
+                    migrations::TARGET_SCHEMA_VERSION
+                );
+                assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 1);
+                assert_eq!(raw_journal_row(conn), original);
+                Ok(())
+            })
+            .unwrap();
         drop(state);
         let snapshots = migration_snapshots(dir.path());
         assert_eq!(snapshots.len(), 1);
@@ -335,7 +356,8 @@ fn make_upstream_v31_file(path: &std::path::Path) {
              (request_id, provider_id, app_type, model, created_at, native_tools_used)
          VALUES ('synthetic-native-tools', 'synthetic-provider', 'codex',
                  'synthetic-model', 1, '["web_search"]');"#,
-    ).unwrap();
+    )
+    .unwrap();
     migrations::set_user_version(&conn, 31).unwrap();
 }
 
@@ -355,14 +377,21 @@ fn upstream_v31_file_admission_requires_journal_and_prechange_snapshot() {
     // Admission must provide the storage capability promised by a successful
     // open. quick_check alone cannot detect the absent application table.
     let state = SqliteDbState::open(path.clone()).unwrap();
-    state.with_conn(|conn| {
-        assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
-        assert_eq!(db_get(conn, DbTable::CodexCommonConfig, "common")?, original);
-        assert_upstream_native_tools_fixture(conn);
-        let pricing: i64 = conn.query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0)).unwrap();
-        assert!(pricing > 0);
-        Ok(())
-    }).unwrap();
+    state
+        .with_conn(|conn| {
+            assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
+            assert_eq!(
+                db_get(conn, DbTable::CodexCommonConfig, "common")?,
+                original
+            );
+            assert_upstream_native_tools_fixture(conn);
+            let pricing: i64 = conn
+                .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
+                .unwrap();
+            assert!(pricing > 0);
+            Ok(())
+        })
+        .unwrap();
     drop(state);
     let snapshots = migration_snapshots(dir.path());
     assert_eq!(snapshots.len(), 1);
@@ -371,17 +400,24 @@ fn upstream_v31_file_admission_requires_journal_and_prechange_snapshot() {
         let snapshot = readonly_database(&snapshots[0]);
         assert_eq!(migrations::get_user_version(&snapshot).unwrap(), 31);
         assert!(db_count(&snapshot, DbTable::CodexContextOperation).is_err());
-        assert_eq!(db_get(&snapshot, DbTable::CodexCommonConfig, "common").unwrap(), original);
+        assert_eq!(
+            db_get(&snapshot, DbTable::CodexCommonConfig, "common").unwrap(),
+            original
+        );
         assert_upstream_native_tools_fixture(&snapshot);
-        let pricing: i64 = snapshot.query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0)).unwrap();
+        let pricing: i64 = snapshot
+            .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(pricing, 0, "snapshot must precede default-data writes");
     }
     let reopened = SqliteDbState::open(path).unwrap();
-    reopened.with_conn(|conn| {
-        assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
-        assert_upstream_native_tools_fixture(conn);
-        Ok(())
-    }).unwrap();
+    reopened
+        .with_conn(|conn| {
+            assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 0);
+            assert_upstream_native_tools_fixture(conn);
+            Ok(())
+        })
+        .unwrap();
     drop(reopened);
     assert_eq!(migration_snapshots(dir.path()), snapshots);
     assert_eq!(std::fs::read(&snapshots[0]).unwrap(), bytes);
@@ -400,17 +436,30 @@ fn upstream_v31_snapshot_failure_blocks_journal_and_pricing_writes() {
     let blocked = dir.path().join(SQLITE_MIGRATION_BACKUP_DIR);
     std::fs::write(&blocked, b"original occupied backup path").unwrap();
 
-    let error = SqliteDbState::open(path.clone()).err().expect("snapshot must fail");
+    let error = SqliteDbState::open(path.clone())
+        .err()
+        .expect("snapshot must fail");
     assert!(error.contains("Failed to create SQLite migration backup directory"));
-    assert_eq!(std::fs::read(&blocked).unwrap(), b"original occupied backup path");
+    assert_eq!(
+        std::fs::read(&blocked).unwrap(),
+        b"original occupied backup path"
+    );
     assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
     let conn = readonly_database(&path);
     assert_eq!(migrations::get_user_version(&conn).unwrap(), 31);
     assert!(db_count(&conn, DbTable::CodexContextOperation).is_err());
-    assert_eq!(db_get(&conn, DbTable::CodexCommonConfig, "common").unwrap(), original);
+    assert_eq!(
+        db_get(&conn, DbTable::CodexCommonConfig, "common").unwrap(),
+        original
+    );
     assert_upstream_native_tools_fixture(&conn);
-    let pricing: i64 = conn.query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0)).unwrap();
-    assert_eq!(pricing, 0, "default data must not precede the original snapshot");
+    let pricing: i64 = conn
+        .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        pricing, 0,
+        "default data must not precede the original snapshot"
+    );
 }
 
 #[test]
@@ -420,39 +469,52 @@ fn v31_existing_journal_preserves_rows_without_new_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("existing-v31.db");
     let state = SqliteDbState::open(path.clone()).unwrap();
-    let original = state.with_conn_mut(|conn| {
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        insert_saved(&tx, JournalInput {
-            request_id: "synthetic-v31-existing".to_string(),
-            provider_id: "synthetic-provider".to_string(),
-            request_fingerprint: "a".repeat(64),
-            expected_revision: "b".repeat(64),
-            planned_live_digest: "c".repeat(64),
-            context: Some(1_000_000),
-            auto_compact: Some(900_000),
-            master_changed: true,
-            live_changed: true,
-        }).map_err(|error| error.to_string())?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(raw_journal_row(conn))
-    }).unwrap();
+    let original = state
+        .with_conn_mut(|conn| {
+            let tx = conn.transaction().map_err(|error| error.to_string())?;
+            insert_saved(
+                &tx,
+                JournalInput {
+                    request_id: "synthetic-v31-existing".to_string(),
+                    provider_id: "synthetic-provider".to_string(),
+                    request_fingerprint: "a".repeat(64),
+                    expected_revision: "b".repeat(64),
+                    planned_live_digest: "c".repeat(64),
+                    context: Some(1_000_000),
+                    auto_compact: Some(900_000),
+                    master_changed: true,
+                    live_changed: true,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            tx.commit().map_err(|error| error.to_string())?;
+            Ok(raw_journal_row(conn))
+        })
+        .unwrap();
     let backups = dir.path().join(SQLITE_MIGRATION_BACKUP_DIR);
-    assert!(!backups.exists(), "fresh creation is not an existing-file migration");
+    assert!(
+        !backups.exists(),
+        "fresh creation is not an existing-file migration"
+    );
     std::fs::create_dir(&backups).unwrap();
     let retained = backups.join("retained-prior-snapshot.db");
-    state.with_conn(|conn| ai_toolbox_storage::backup::backup_to_path(conn, &retained)).unwrap();
+    state
+        .with_conn(|conn| ai_toolbox_storage::backup::backup_to_path(conn, &retained))
+        .unwrap();
     drop(state);
     let snapshot_bytes = std::fs::read(&retained).unwrap();
     assert_eq!(raw_journal_row(&readonly_database(&retained)), original);
     let before = migration_snapshots(dir.path());
     for _ in 0..2 {
         let state = SqliteDbState::open(path.clone()).unwrap();
-        state.with_conn(|conn| {
-            assert_eq!(migrations::get_user_version(conn)?, 31);
-            assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 1);
-            assert_eq!(raw_journal_row(conn), original);
-            Ok(())
-        }).unwrap();
+        state
+            .with_conn(|conn| {
+                assert_eq!(migrations::get_user_version(conn)?, 31);
+                assert_eq!(db_count(conn, DbTable::CodexContextOperation)?, 1);
+                assert_eq!(raw_journal_row(conn), original);
+                Ok(())
+            })
+            .unwrap();
         drop(state);
         assert_eq!(migration_snapshots(dir.path()), before);
         assert_eq!(std::fs::read(&retained).unwrap(), snapshot_bytes);
@@ -479,27 +541,44 @@ fn v31_unrecognized_journal_schema_is_not_overwritten() {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch(definition).unwrap();
         let original = db_get(&conn, DbTable::CodexCommonConfig, "common").unwrap();
-        let original_sql: String = conn.query_row(
-            "SELECT sql FROM sqlite_schema WHERE name = 'codex_context_operation'",
-            [], |row| row.get(0),
-        ).unwrap();
+        let original_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE name = 'codex_context_operation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         drop(conn);
         let bytes = std::fs::read(&path).unwrap();
         let backup_path = dir.path().join(SQLITE_MIGRATION_BACKUP_DIR);
         std::fs::write(&backup_path, b"existing backup path must remain unchanged").unwrap();
 
-        let error = SqliteDbState::open(path.clone()).err().expect("unknown schema must fail closed");
-        assert!(error.contains("Unrecognized context journal schema"), "{error}");
+        let error = SqliteDbState::open(path.clone())
+            .err()
+            .expect("unknown schema must fail closed");
+        assert!(
+            error.contains("Unrecognized context journal schema"),
+            "{error}"
+        );
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        assert_eq!(std::fs::read(&backup_path).unwrap(), b"existing backup path must remain unchanged");
+        assert_eq!(
+            std::fs::read(&backup_path).unwrap(),
+            b"existing backup path must remain unchanged"
+        );
         let conn = readonly_database(&path);
         assert_eq!(migrations::get_user_version(&conn).unwrap(), 31);
-        let after_sql: String = conn.query_row(
-            "SELECT sql FROM sqlite_schema WHERE name = 'codex_context_operation'",
-            [], |row| row.get(0),
-        ).unwrap();
+        let after_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE name = 'codex_context_operation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(after_sql, original_sql);
-        assert_eq!(db_get(&conn, DbTable::CodexCommonConfig, "common").unwrap(), original);
+        assert_eq!(
+            db_get(&conn, DbTable::CodexCommonConfig, "common").unwrap(),
+            original
+        );
         assert_upstream_native_tools_fixture(&conn);
     }
 }
