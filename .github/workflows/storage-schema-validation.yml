@@ -1,0 +1,74 @@
+name: Isolated storage schema validation
+on:
+  push:
+    branches: [validation/storage-schema31-red-20261102]
+permissions:
+  contents: read
+concurrency:
+  group: ai-toolbox-maintenance-validation
+  cancel-in-progress: false
+jobs:
+  storage-schema:
+    if: github.repository == 'xue-ding-e/AI-Toolbox-Next' && github.ref == 'refs/heads/validation/storage-schema31-red-20261102'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact baseline and test-only change
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = ef9d11727eafe8d832bbebe39914c45a04ad6460
+          python3 - <<'PY'
+          import subprocess
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'HEAD^', 'HEAD'], text=True).splitlines())
+          assert changed == {'crates/ai-toolbox-storage/tests/sqlite_jsonb.rs', '.github/workflows/storage-schema-validation.yml'}, changed
+          PY
+          git diff --check HEAD^ HEAD
+          test "$(df --output=avail -k "$RUNNER_TEMP" | tail -1)" -ge 2097152
+          command -v cc
+          owned="$RUNNER_TEMP/storage-schema-owned"
+          mkdir "$owned"
+          for name in home config cache data tmp cargo target evidence; do mkdir "$owned/$name"; done
+          echo "SCHEMA_OWNED=$owned" >> "$GITHUB_ENV"
+          printf 'source=%s\nbaseline=%s\n' "$GITHUB_SHA" ef9d11727eafe8d832bbebe39914c45a04ad6460 > "$owned/evidence/source"
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Compile only the locked storage integration target and verify selection
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          safe_path="$(dirname "$(rustup which --toolchain 1.99.1 cargo)"):/usr/local/bin:/usr/bin:/bin"
+          echo "SCHEMA_SAFE_PATH=$safe_path" >> "$GITHUB_ENV"
+          owned="$SCHEMA_OWNED"
+          env -i HOME="$owned/home" PATH="$safe_path" rustc --version | tee "$owned/evidence/rust-version"
+          timeout 8m env -i HOME="$owned/home" PATH="$safe_path" XDG_CONFIG_HOME="$owned/config" XDG_CACHE_HOME="$owned/cache" XDG_DATA_HOME="$owned/data" TMPDIR="$owned/tmp" CARGO_HOME="$owned/cargo" CARGO_TARGET_DIR="$owned/target" CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 LANG=C.UTF-8 cargo test --locked --manifest-path crates/ai-toolbox-storage/Cargo.toml --test sqlite_jsonb -- --list 2>&1 | tee "$owned/evidence/test-list.log"
+          for name in standalone_state_initializes_schema_jsonb_and_bundled_pricing standalone_file_open_rejects_future_schema_without_modifying_bytes v29_file_upgrade_creates_journal_and_preserves_original_snapshot_and_records v29_upgrade_snapshot_failure_blocks_schema_changes v30_file_without_journal_upgrades_with_original_snapshot v30_file_with_journal_preserves_row_bytes_and_snapshot_on_reopen upstream_v31_file_admission_requires_journal_and_prechange_snapshot; do
+            grep -Fx "$name: test" "$owned/evidence/test-list.log"
+          done
+          test "$(grep -c ': test$' "$owned/evidence/test-list.log")" -eq 7
+      - name: Execute the real file-backed storage regressions
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          owned="$SCHEMA_OWNED"
+          timeout 2m env -i HOME="$owned/home" PATH="$SCHEMA_SAFE_PATH" XDG_CONFIG_HOME="$owned/config" XDG_CACHE_HOME="$owned/cache" XDG_DATA_HOME="$owned/data" TMPDIR="$owned/tmp" CARGO_HOME="$owned/cargo" CARGO_TARGET_DIR="$owned/target" CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 LANG=C.UTF-8 cargo test --locked --offline --manifest-path crates/ai-toolbox-storage/Cargo.toml --test sqlite_jsonb -- --nocapture --test-threads=1 2>&1 | tee "$owned/evidence/test-results.log"
+      - name: Verify source and lockfiles stayed unchanged
+        if: always()
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+      - name: Preserve only source identity and synthetic test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-schema-${{ github.sha }}
+          path: ${{ runner.temp }}/storage-schema-owned/evidence
+          if-no-files-found: error
+          retention-days: 7
