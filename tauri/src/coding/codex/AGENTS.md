@@ -18,7 +18,8 @@
 
 - The usage-refresh command and its event helper share a generic `tauri::Runtime`; the production Wry handler and isolated MockRuntime admission actor call the same command body. Do not bypass admission or replace the production credential path to make the actor test compile.
 
-- Full auth.json export is read-only: preview and clipboard copy share the same guarded snapshot reader as token copy. Preserve the complete JSON Value (including unknown runtime fields); never refresh, apply, import, or reconstruct credentials from display metadata. Copy-only responses must not return secrets to the WebView. Tests use synthetic snapshots only.
+- Full auth.json export and token copy share `read_official_account_export_auth`: take `OAUTH_REFRESH_LOCK` before reading credentials, then re-read the selected account. Applied accounts use `newest_account_credential` to adopt a provably newer same-identity runtime credential and synchronize that database snapshot; unapplied accounts keep their own snapshot, and virtual `__local__` reads live auth. Never refresh, apply, import, write live auth, or reconstruct export fields from display metadata. Preserve the complete JSON Value, including unknown runtime fields. Copy-only responses must not return secrets to the WebView. The lock coordinates this process only; an exported snapshot does not prove its tokens remain usable in another application. Tests use synthetic snapshots only.
+- Saved-account matching must honor the same identity conflicts as runtime credential selection: reject different known workspaces, then prefer explicit stable user ids over email. Check the saved auth snapshot's workspace even when the account row's derived `account_id` is missing or stale. A shared workspace cannot hide different users, while a stable user's email change must remain valid. Legacy email/workspace/refresh-token fallbacks apply only when stronger identity fields are unavailable.
 
 - `config.toml` 不能靠字符串拼接合并 common/provider 配置，必须结构化 merge，避免顶层键被吞进 provider 表作用域。
 - 纯 TOML parse/common-provider merge 的唯一实现位于 `crates/ai-toolbox-codex-config`；桌面命令直接导入，不保留另一份 merger。该纯库不是 live 投影服务，不包含 runtime-owned 清理、auth、catalog、DB、事件或 owner；CLI 不能用它直接覆盖运行文件。
@@ -136,6 +137,8 @@ sequenceDiagram
   同时检查 apply 与 previous-managed 清理两条投影路径、Gateway 接管路径和 `__local__` 收编；回归 `cargo test --lib requires_openai_auth`。改优先级或 preserve 交互时必须同期核对三种组合：preserve=false、preserve=true + `auto`（应移除）、preserve=true + `keep`（应两个字段都在）。
 
 ## 最小验证
+
+- 改完整 auth.json 导出或 token 复制时，跑 `cargo test --lib auth_export_ --locked --offline --jobs 2 -- --test-threads=1`，覆盖共享 helper 等待轮换后重读、采纳同身份新 live、完整 JSON/未知字段保留、跨用户/工作区隔离、稳定 user id 下的邮箱变更、未应用账号与虚拟账号、不发 OAuth/usage 请求及归属/坏凭证错误；相关身份规则再核 `identity_matching_`（含账号元数据缺失/过时但 snapshot 仍有 workspace 的冲突）与同用户邮箱变更的 usage 回归。
 
 - 改额度刷新 / 凭证准备 / 401 恢复时，跑 `cargo test --lib usage_credential_tests -- --test-threads=1`：上游 19 个用例用于覆盖 issue #440 的凭证场景（复用库内凭证不交换、过期续期、采纳运行时新凭证、跨账号不借用、未应用不改 live、401 强制恢复、二次 401 要求重授权、refresh token 被拒/缺失、轮换先落库、瞬态错误不交换、`__local__` 续期与 401 恢复、后台收敛未应用账号、锁内重读、切换账号后不写 live、坏快照不发请求、账号头跟随最终凭证、失败保留旧窗口）。用例依赖 `TEST_AUTH_ROOT` 与 `TEST_ENDPOINTS` 两个进程级测试钩子，**必须串行执行**；新增用例要复用 `TestEnv` / `MockServer` 并拿 `TEST_GUARD`，`MockServer` 的 accept 循环已处理 Windows 上 accept 继承非阻塞的问题，别删 `set_nonblocking(false)`。
 

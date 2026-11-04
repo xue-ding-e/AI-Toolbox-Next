@@ -1424,18 +1424,50 @@ fn official_account_identity_matches_auth(account: &CodexOfficialAccount, auth: 
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty());
 
-    let account_refresh_token = account
+    let account_auth = account
         .auth_snapshot
         .as_deref()
-        .and_then(|snapshot| serde_json::from_str::<Value>(snapshot).ok())
-        .and_then(|snapshot| {
-            snapshot
-                .pointer("/tokens/refresh_token")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        });
+        .and_then(|snapshot| serde_json::from_str::<Value>(snapshot).ok());
+    let account_snapshot_id = account_auth.as_ref().and_then(usage_account_id_from_auth);
+    let account_refresh_token = account_auth.as_ref().and_then(|snapshot| {
+        snapshot
+            .pointer("/tokens/refresh_token")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    });
+
+    // Match the same workspace/user constraints as runtime credential selection.
+    // Explicit stable user ids allow an email change, but a shared workspace or
+    // matching email cannot erase a known conflict in the other identity fields.
+    if let (Some(local_id), Some(account_id)) =
+        (local_account_id.as_deref(), account.account_id.as_deref())
+    {
+        if local_id != account_id {
+            return false;
+        }
+    }
+    if let (Some(local_id), Some(snapshot_id)) =
+        (local_account_id.as_deref(), account_snapshot_id.as_deref())
+    {
+        if local_id != snapshot_id {
+            return false;
+        }
+    }
+    if let (Some(local_user), Some(account_user)) = (
+        auth_user_id(auth),
+        account_auth.as_ref().and_then(auth_user_id),
+    ) {
+        return local_user == account_user;
+    }
+    if let (Some(local_email), Some(account_email)) =
+        (local_email.as_deref(), account.email.as_deref())
+    {
+        if local_email != account_email.trim().to_ascii_lowercase() {
+            return false;
+        }
+    }
 
     if let (Some(local_refresh_token), Some(account_refresh_token)) =
         (local_refresh_token, account_refresh_token.as_deref())
@@ -1449,6 +1481,13 @@ fn official_account_identity_matches_auth(account: &CodexOfficialAccount, auth: 
         (local_account_id.as_deref(), account.account_id.as_deref())
     {
         if local_account_id == account_account_id {
+            return true;
+        }
+    }
+    if let (Some(local_account_id), Some(snapshot_id)) =
+        (local_account_id.as_deref(), account_snapshot_id.as_deref())
+    {
+        if local_account_id == snapshot_id {
             return true;
         }
     }
@@ -3133,13 +3172,17 @@ async fn request_usage_from_prepared(
     .await
 }
 
-/// Read-only credential selection shared by single-token and full auth.json exports.
-/// Never refresh, apply, import, or merge another account's runtime credentials here.
+/// Credential selection shared by single-token and full auth.json exports.
+/// Never exchange tokens or write live auth. An applied account may synchronize
+/// its database snapshot from a provably newer same-identity runtime credential.
 async fn read_official_account_export_auth(
     db: &SqliteDbState,
     provider_id: &str,
     account_id: &str,
 ) -> Result<Value, String> {
+    // Take the rotation lock before reading: a snapshot loaded while waiting
+    // may already hold a spent refresh token when the background writer exits.
+    let _refresh_guard = OAUTH_REFRESH_LOCK.lock().await;
     ensure_persisted_provider_id(provider_id)?;
     let provider = query_provider(db, provider_id).await?;
     if provider.category != "official" {
@@ -3159,11 +3202,8 @@ async fn read_official_account_export_auth(
         if account.provider_id != provider_id {
             return Err("Official account does not belong to the selected provider".to_string());
         }
-        let snapshot = account
-            .auth_snapshot
-            .as_deref()
-            .ok_or_else(|| "Official account snapshot is missing".to_string())?;
-        auth_json_from_snapshot(snapshot)?
+        let (_, auth) = newest_account_credential(db, &account).await?;
+        auth
     };
 
     Ok(auth)
@@ -4486,6 +4526,303 @@ mod usage_credential_tests {
         }
     }
 
+    fn assert_auth_export_matches(actual: &Value, expected: &Value) {
+        assert_eq!(actual, expected);
+        let content = serialize_official_auth_export(actual).expect("complete auth export");
+        assert_eq!(serde_json::from_str::<Value>(&content).unwrap(), *expected);
+        for kind in ["access", "refresh"] {
+            assert_eq!(
+                extract_token_from_auth_snapshot(actual, kind).unwrap(),
+                extract_token_from_auth_snapshot(expected, kind).unwrap(),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_export_adopts_newer_same_account_runtime_without_refreshing() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let server = MockServer::start(Vec::new(), Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+        let stored = auth_with(
+            &token("access-stored", 20 * 86400),
+            "refresh-stored",
+            "account-a",
+        );
+        let account = env.save_account(&stored, true).await;
+        let mut runtime = auth_with(
+            &token("access-runtime", 30 * 86400),
+            "refresh-runtime",
+            "account-a",
+        );
+        runtime["future_runtime"] = serde_json::json!({
+            "number": 9007199254740993u64, "nested": [null, false, "preserved"]
+        });
+        runtime["tokens"]["future_token"] = serde_json::json!({"preserved": true});
+        env.write_runtime_auth(&runtime);
+
+        let selected = read_official_account_export_auth(&env.db, &env.provider_id, &account.id)
+            .await
+            .unwrap();
+        assert_auth_export_matches(&selected, &runtime);
+        assert_eq!(env.stored_snapshot(&account.id).await, runtime);
+        assert_eq!(env.read_runtime_auth(), runtime);
+        assert_eq!(server.token_calls(), 0);
+        assert_eq!(server.usage_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn auth_export_waits_for_rotation_and_rereads_the_saved_snapshot() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let account = env
+            .save_account(
+                &auth_with(
+                    &token("access-before", -3600),
+                    "refresh-before",
+                    "account-a",
+                ),
+                false,
+            )
+            .await;
+        let rotation = OAUTH_REFRESH_LOCK.lock().await;
+        let export = read_official_account_export_auth(&env.db, &env.provider_id, &account.id);
+        tokio::pin!(export);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), export.as_mut())
+                .await
+                .is_err(),
+            "export must wait for the in-flight rotation to persist"
+        );
+        let rotated = auth_with(
+            &token("access-after", 30 * 86400),
+            "refresh-after",
+            "account-a",
+        );
+        persist_refreshed_account_snapshot(&env.db, &account, &rotated)
+            .await
+            .unwrap();
+        drop(rotation);
+        assert_auth_export_matches(&export.await.unwrap(), &rotated);
+        assert_eq!(env.stored_snapshot(&account.id).await, rotated);
+    }
+
+    #[tokio::test]
+    async fn auth_export_keeps_saved_credentials_when_runtime_is_older_or_another_account() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = auth_with(
+            &token("access-stored", 20 * 86400),
+            "refresh-stored",
+            "account-a",
+        );
+        let account = env.save_account(&stored, true).await;
+        for runtime in [
+            auth_with(
+                &token("access-other", 30 * 86400),
+                "refresh-other",
+                "account-b",
+            ),
+            auth_with(&token("access-older", -3600), "refresh-older", "account-a"),
+        ] {
+            env.write_runtime_auth(&runtime);
+            let selected =
+                read_official_account_export_auth(&env.db, &env.provider_id, &account.id)
+                    .await
+                    .unwrap();
+            assert_auth_export_matches(&selected, &stored);
+            assert_eq!(env.stored_snapshot(&account.id).await, stored);
+            assert_eq!(env.read_runtime_auth(), runtime);
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_export_does_not_confuse_users_sharing_a_workspace() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = auth_with(
+            &token("access-stored", 20 * 86400),
+            "refresh-stored",
+            "account-a",
+        );
+        let account = env.save_account(&stored, true).await;
+        let mut runtime = auth_with(
+            &token("access-other-user", 30 * 86400),
+            "refresh-other-user",
+            "account-a",
+        );
+        runtime["tokens"]["id_token"] =
+            identity_auth_with_claims(None, Some("other@example.invalid"), Some("account-a"))
+                ["tokens"]["id_token"]
+                .clone();
+        env.write_runtime_auth(&runtime);
+        assert!(!auth_identities_match(&stored, &runtime));
+        assert!(!official_account_identity_matches_auth(&account, &runtime));
+        assert!(should_show_virtual_local_account(
+            &[account.clone()],
+            &runtime
+        ));
+        let selected = read_official_account_export_auth(&env.db, &env.provider_id, &account.id)
+            .await
+            .unwrap();
+        assert_auth_export_matches(&selected, &stored);
+        assert_eq!(env.stored_snapshot(&account.id).await, stored);
+        assert_eq!(env.read_runtime_auth(), runtime);
+    }
+
+    #[tokio::test]
+    async fn auth_export_does_not_confuse_workspaces_sharing_an_email() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = auth_with(
+            &token("access-stored", 20 * 86400),
+            "refresh-stored",
+            "account-a",
+        );
+        let account = env.save_account(&stored, true).await;
+        let mut runtime = auth_with(
+            &token("access-other-workspace", 30 * 86400),
+            "refresh-other-workspace",
+            "account-b",
+        );
+        runtime["tokens"]["id_token"] =
+            identity_auth_with_claims(None, Some("account-a@example.com"), Some("account-b"))
+                ["tokens"]["id_token"]
+                .clone();
+        env.write_runtime_auth(&runtime);
+        assert!(!auth_identities_match(&stored, &runtime));
+        assert!(!official_account_identity_matches_auth(&account, &runtime));
+        assert!(should_show_virtual_local_account(
+            &[account.clone()],
+            &runtime
+        ));
+        let selected = read_official_account_export_auth(&env.db, &env.provider_id, &account.id)
+            .await
+            .unwrap();
+        assert_auth_export_matches(&selected, &stored);
+        assert_eq!(env.stored_snapshot(&account.id).await, stored);
+        assert_eq!(env.read_runtime_auth(), runtime);
+    }
+
+    #[tokio::test]
+    async fn auth_export_of_an_unapplied_account_never_refreshes_or_borrows_runtime() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let server = MockServer::start(Vec::new(), Vec::new());
+        set_test_endpoints(&server.usage_url, &server.token_url);
+        let stored = auth_with(
+            &token("access-stored", -3600),
+            "refresh-stored",
+            "account-a",
+        );
+        let account = env.save_account(&stored, false).await;
+        let runtime = auth_with(
+            &token("access-runtime", 30 * 86400),
+            "refresh-runtime",
+            "account-a",
+        );
+        env.write_runtime_auth(&runtime);
+        let selected = read_official_account_export_auth(&env.db, &env.provider_id, &account.id)
+            .await
+            .unwrap();
+        assert_auth_export_matches(&selected, &stored);
+        assert_eq!(env.stored_snapshot(&account.id).await, stored);
+        assert_eq!(env.read_runtime_auth(), runtime);
+        assert_eq!(server.token_calls(), 0);
+        assert_eq!(server.usage_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn auth_export_of_virtual_local_account_reads_runtime_without_saving() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let runtime = auth_with(&token("access-local", -3600), "refresh-local", "account-a");
+        env.write_runtime_auth(&runtime);
+        let selected =
+            read_official_account_export_auth(&env.db, &env.provider_id, LOCAL_OFFICIAL_ACCOUNT_ID)
+                .await
+                .unwrap();
+        assert_auth_export_matches(&selected, &runtime);
+        assert!(list_persisted_official_accounts(&env.db, &env.provider_id)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(env.read_runtime_auth(), runtime);
+    }
+
+    #[tokio::test]
+    async fn auth_export_rejects_mismatched_provider_and_missing_or_unsupported_tokens() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let mut content = build_account_content_from_auth_snapshot(
+            "provider-b",
+            &auth_with(&token("access-other", -3600), "refresh-other", "account-b"),
+            None,
+            None,
+        )
+        .unwrap();
+        let other = save_official_account(&env.db, &content).await.unwrap();
+        assert!(
+            read_official_account_export_auth(&env.db, &env.provider_id, &other.id)
+                .await
+                .unwrap_err()
+                .contains("does not belong")
+        );
+        content.provider_id = env.provider_id.clone();
+        content.auth_snapshot = serde_json::json!({
+            "auth_mode": "chatgpt", "tokens": {"access_token": "synthetic-access"}
+        })
+        .to_string();
+        let account = save_official_account(&env.db, &content).await.unwrap();
+        let selected = read_official_account_export_auth(&env.db, &env.provider_id, &account.id)
+            .await
+            .unwrap();
+        assert!(serialize_official_auth_export(&selected).is_err());
+        for kind in ["refresh", "unsupported"] {
+            assert!(extract_token_from_auth_snapshot(&selected, kind).is_err());
+        }
+        assert!(read_official_account_export_auth(
+            &env.db,
+            &env.provider_id,
+            LOCAL_OFFICIAL_ACCOUNT_ID,
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn auth_export_preserves_stable_user_identity_when_email_changes() {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = followup_identity_auth("synthetic-user-a", 20 * 86400);
+        let account = env.save_account(&stored, true).await;
+        let mut rotated = followup_identity_auth("synthetic-user-a", 30 * 86400);
+        rotated["tokens"]["id_token"] = identity_auth_with_claims(
+            Some("synthetic-user-a"),
+            Some("changed@example.invalid"),
+            Some("synthetic-shared-workspace"),
+        )["tokens"]["id_token"]
+            .clone();
+        assert!(official_account_identity_matches_auth(&account, &rotated));
+        let mut other_user = followup_identity_auth("synthetic-user-b", 30 * 86400);
+        other_user["tokens"]["id_token"] = identity_auth_with_claims(
+            Some("synthetic-user-b"),
+            Some("synthetic-user-a@example.invalid"),
+            Some("synthetic-shared-workspace"),
+        )["tokens"]["id_token"]
+            .clone();
+        assert!(!official_account_identity_matches_auth(
+            &account,
+            &other_user
+        ));
+        env.write_runtime_auth(&rotated);
+        let selected = read_official_account_export_auth(&env.db, &env.provider_id, &account.id)
+            .await
+            .unwrap();
+        assert_auth_export_matches(&selected, &rotated);
+        assert_eq!(env.stored_snapshot(&account.id).await, rotated);
+    }
+
     /// Scenario 1: usable stored credential, outside the refresh window.
     #[tokio::test]
     async fn usable_stored_credential_skips_exchange_and_persists_usage() {
@@ -5153,6 +5490,51 @@ mod usage_credential_tests {
         let mut rotated = auth(None, None, None);
         rotated["tokens"]["refresh_token"] = serde_json::json!("synthetic-rotated-refresh");
         assert!(!auth_identities_match(&auth(None, None, None), &rotated));
+    }
+
+    #[tokio::test]
+    async fn identity_matching_rejects_snapshot_workspace_conflict_with_missing_or_stale_metadata()
+    {
+        let _guard = TEST_GUARD.lock().await;
+        let env = TestEnv::new();
+        let stored = followup_identity_auth("synthetic-user-a", 20 * 86400);
+        let account = env.save_account(&stored, false).await;
+        let mut runtime = followup_identity_auth("synthetic-user-a", 30 * 86400);
+        runtime["tokens"]["account_id"] = serde_json::json!("synthetic-other-workspace");
+        runtime["tokens"]["id_token"] = identity_auth_with_claims(
+            Some("synthetic-user-a"),
+            Some("changed@example.invalid"),
+            Some("synthetic-other-workspace"),
+        )["tokens"]["id_token"]
+            .clone();
+        assert!(!auth_identities_match(&stored, &runtime));
+        let same_workspace_runtime = identity_auth_with_claims(
+            Some("synthetic-user-a"),
+            Some("changed@example.invalid"),
+            Some("synthetic-shared-workspace"),
+        );
+        for metadata in [None, Some("synthetic-other-workspace")] {
+            let mut legacy_account = account.clone();
+            legacy_account.account_id = metadata.map(str::to_string);
+            assert!(!official_account_identity_matches_auth(
+                &legacy_account,
+                &runtime
+            ));
+            assert!(should_show_virtual_local_account(
+                &[legacy_account],
+                &runtime
+            ));
+        }
+        let mut legacy_account = account;
+        legacy_account.account_id = None;
+        assert!(official_account_identity_matches_auth(
+            &legacy_account,
+            &same_workspace_runtime
+        ));
+        assert!(!should_show_virtual_local_account(
+            &[legacy_account],
+            &same_workspace_runtime
+        ));
     }
 
     #[tokio::test]
